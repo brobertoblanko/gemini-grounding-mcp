@@ -142,10 +142,12 @@ Antwort.
 MCP-Server beim nächsten Aufruf arbeitet — beabsichtigt, denn so ist ein
 Modellwechsel möglich, ohne den Client dazu aufzufordern.
 
-**Fehler werden nicht abgefangen.** Anders als der MCP-Server, der jeden
+**Fehler bleiben vollständig sichtbar.** Anders als der MCP-Server, der jeden
 Fehler auf eine Zeile für den Client verdichten muss, gibt die CLI den
-vollständigen Stacktrace samt Original-Fehlermeldung der Google-API aus. Beim
-Testen ist genau das gewollt.
+kompletten Stacktrace samt Original-Fehlermeldung der Google-API aus und endet
+mit Exit-Code 1. Beim Testen ist genau das gewollt: Eine Meldung wie
+`ApiError: {"error":{"code":503, ...}}` besagt, dass die Anfrage bei Google
+nicht durchkam — kein Fehler der eigenen Installation.
 
 `config` prüft nur, ob überhaupt ein Key in der Umgebung ankommt, und gibt
 dessen Länge aus — **nie den Wert selbst**. Ob der Key gültig ist, zeigt erst

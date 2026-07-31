@@ -73,72 +73,83 @@ if (thinkingFlag !== undefined) requireThinkingLevel(thinkingFlag, "--thinking")
 
 const [command, ...rest] = args;
 
-switch (command) {
-  case undefined:
-    // Aufruf ohne Argumente ist ein Bedienfehler: Hilfe nach stderr, Exit 1.
-    console.error(HELP);
-    process.exit(1);
+try {
+  switch (command) {
+    case undefined:
+      // Aufruf ohne Argumente ist ein Bedienfehler: Hilfe nach stderr, Exit 1.
+      console.error(HELP);
+      process.exit(1);
 
-  case "help":
-  case "--help":
-  case "-h":
-    console.log(HELP);
-    break;
+    case "help":
+    case "--help":
+    case "-h":
+      console.log(HELP);
+      break;
 
-  case "config": {
-    const apiKey = process.env.GEMINI_API_KEY;
-    // Der Wert des Keys wird nie ausgegeben, auch nicht gekuerzt — nur seine
-    // Laenge, weil sich daran ein abgeschnittenes Einfuegen erkennen laesst.
-    const keyStatus = apiKey
-      ? `set (${apiKey.length} chars)`
-      : "NOT SET — set the GEMINI_API_KEY environment variable";
-    console.log(`${"Model:".padEnd(16)}${getSavedModel()}`);
-    console.log(`${"Thinking level:".padEnd(16)}${getSavedThinkingLevel()}`);
-    console.log(`${"API key:".padEnd(16)}${keyStatus}`);
-    break;
-  }
-
-  case "models":
-    console.log(await listModels());
-    break;
-
-  case "set-model": {
-    const model = rest[0];
-    if (model === undefined) fail("Usage: gemini-grounding set-model <model-id>");
-    setSavedConfig({ model });
-    console.log(`Saved — Model: ${model}`);
-    break;
-  }
-
-  case "set-thinking": {
-    const level = rest[0];
-    if (level === undefined) {
-      fail(`Usage: gemini-grounding set-thinking <${THINKING_LEVELS.join("|")}>`);
+    case "config": {
+      const apiKey = process.env.GEMINI_API_KEY;
+      // Der Wert des Keys wird nie ausgegeben, auch nicht gekuerzt — nur seine
+      // Laenge, weil sich daran ein abgeschnittenes Einfuegen erkennen laesst.
+      const keyStatus = apiKey
+        ? `set (${apiKey.length} chars)`
+        : "NOT SET — set the GEMINI_API_KEY environment variable";
+      console.log(`${"Model:".padEnd(16)}${getSavedModel()}`);
+      console.log(`${"Thinking level:".padEnd(16)}${getSavedThinkingLevel()}`);
+      console.log(`${"API key:".padEnd(16)}${keyStatus}`);
+      break;
     }
-    requireThinkingLevel(level, "set-thinking");
-    setSavedConfig({ thinkingLevel: level });
-    console.log(`Saved — Thinking level: ${level}`);
-    break;
-  }
 
-  default: {
-    // Alles, was kein bekannter Unterbefehl ist, gilt als Suchanfrage. Das
-    // join(" ") setzt eine unquotierte Frage wieder zusammen, die die Shell
-    // an den Leerzeichen in mehrere Argumente zerlegt hat.
-    const query = args.join(" ");
+    case "models":
+      console.log(await listModels());
+      break;
 
-    // Gleiches Muster wie im MCP-Handler (index.js): ein Flag gilt nur fuer
-    // diesen Aufruf, sonst greift der gespeicherte Standard. config.json wird
-    // dabei nicht angefasst.
-    //
-    // Bewusst kein try/catch: beim Testen soll der vollstaendige Stacktrace
-    // samt Google-Fehlermeldung sichtbar werden, statt wie in index.js auf
-    // eine Zeile fuer den Client verdichtet zu werden.
-    const text = await runSearch({
-      query,
-      model: modelFlag ?? getSavedModel(),
-      thinkingLevel: thinkingFlag ?? getSavedThinkingLevel(),
-    });
-    console.log(text);
+    case "set-model": {
+      const model = rest[0];
+      if (model === undefined) fail("Usage: gemini-grounding set-model <model-id>");
+      setSavedConfig({ model });
+      console.log(`Saved — Model: ${model}`);
+      break;
+    }
+
+    case "set-thinking": {
+      const level = rest[0];
+      if (level === undefined) {
+        fail(`Usage: gemini-grounding set-thinking <${THINKING_LEVELS.join("|")}>`);
+      }
+      requireThinkingLevel(level, "set-thinking");
+      setSavedConfig({ thinkingLevel: level });
+      console.log(`Saved — Thinking level: ${level}`);
+      break;
+    }
+
+    default: {
+      // Alles, was kein bekannter Unterbefehl ist, gilt als Suchanfrage. Das
+      // join(" ") setzt eine unquotierte Frage wieder zusammen, die die Shell
+      // an den Leerzeichen in mehrere Argumente zerlegt hat.
+      const query = args.join(" ");
+
+      // Gleiches Muster wie im MCP-Handler (index.js): ein Flag gilt nur fuer
+      // diesen Aufruf, sonst greift der gespeicherte Standard. config.json wird
+      // dabei nicht angefasst.
+      const text = await runSearch({
+        query,
+        model: modelFlag ?? getSavedModel(),
+        thinkingLevel: thinkingFlag ?? getSavedThinkingLevel(),
+      });
+      console.log(text);
+    }
   }
+} catch (error) {
+  // console.error(error) gibt denselben vollstaendigen Stacktrace aus, den Node
+  // bei einem unbehandelten Fehler zeigen wuerde — beim Testen ist genau das
+  // gewollt, im Gegensatz zu index.js, das den Fehler fuer den Client auf eine
+  // Zeile verdichten muss.
+  //
+  // Gefangen wird er trotzdem, weil Node den Prozess bei einer unbehandelten
+  // Rejection hart beendet: haengt dabei noch eine offene Netzwerkverbindung,
+  // bricht libuv unter Windows mit "Assertion failed ... src\win\async.c" ab
+  // und der Prozess endet mit 0xC0000409 statt mit dem vereinbarten Code 1.
+  // process.exitCode statt process.exit(), damit Node regulaer herunterfaehrt.
+  console.error(error);
+  process.exitCode = 1;
 }
