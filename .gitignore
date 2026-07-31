@@ -5,3 +5,9 @@ node_modules/
 npm-debug.log*
 .DS_Store
 config.json
+
+# Lokale, nicht zu veroeffentlichende Projektnotizen fuer Claude Code
+CLAUDE.local.md
+
+# Lokale Planungsnotizen, nicht Teil des veroeffentlichten Repos
+plans/

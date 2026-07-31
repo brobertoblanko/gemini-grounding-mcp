@@ -239,14 +239,14 @@ const urlContextEntries = candidate?.urlContextMetadata?.urlMetadata ?? []
 
 ### Felder im Detail
 
-| Feld              | Pfad in der Antwort                                  | Bedeutung                                          |
-| ----------------- | ----------------------------------------------------- | --------------------------------------------------- |
-| Input-Tokens      | `usageMetadata.promptTokenCount`                       | Tokens der gesendeten Anfrage                        |
-| Output-Tokens     | `usageMetadata.candidatesTokenCount`                   | Tokens der generierten Antwort                       |
-| Thinking-Tokens    | `usageMetadata.thoughtsTokenCount`                     | Reine Denk-Tokens (Reasoning), separat ausgewiesen   |
-| Such-Quellen       | `candidates[0].groundingMetadata.groundingChunks`      | Array der bei der Google-Suche gefundenen Webquellen |
-| Such-Quell-URL     | `groundingChunks[i].web.uri`                           | URL der einzelnen Suchquelle                         |
-| Such-Quell-Titel   | `groundingChunks[i].web.title`                         | Titel der einzelnen Suchquelle                       |
+| Feld               | Pfad in der Antwort                                            | Bedeutung                                                     |
+| ------------------ | -------------------------------------------------------------- | ------------------------------------------------------------- |
+| Input-Tokens       | `usageMetadata.promptTokenCount`                               | Tokens der gesendeten Anfrage                                 |
+| Output-Tokens      | `usageMetadata.candidatesTokenCount`                           | Tokens der generierten Antwort                                |
+| Thinking-Tokens    | `usageMetadata.thoughtsTokenCount`                             | Reine Denk-Tokens (Reasoning), separat ausgewiesen            |
+| Such-Quellen       | `candidates[0].groundingMetadata.groundingChunks`              | Array der bei der Google-Suche gefundenen Webquellen          |
+| Such-Quell-URL     | `groundingChunks[i].web.uri`                                   | URL der einzelnen Suchquelle                                  |
+| Such-Quell-Titel   | `groundingChunks[i].web.title`                                 | Titel der einzelnen Suchquelle                                |
 | URL-Context-Quelle | `candidates[0].urlContextMetadata.urlMetadata[i].retrievedUrl` | URL einer von Gemini gezielt gelesenen Seite (kein Grounding) |
 
 Beide Quell-Arrays sind nur vorhanden, wenn das jeweilige Tool tatsächlich
@@ -298,7 +298,7 @@ return {
 
 Beispielausgabe am Ende jeder Antwort:
 
-```
+```text
 Quellen:
 [1] Gemini API Docs — https://ai.google.dev/gemini-api/docs/models
 [2] Google Gen AI SDK — https://googleapis.github.io/js-genai/
@@ -322,21 +322,17 @@ Ruft über den offiziellen `models.list`-Endpunkt alle für den aktuellen
 API-Key verfügbaren Modelle ab, inklusive Token-Limits [web:547].
 
 ```javascript
-server.registerTool(
-  "gemini-list-models",
-  { inputSchema: {} },
-  async () => {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    const models = await ai.models.list({ config: { pageSize: 50 } });
+server.registerTool("gemini-list-models", { inputSchema: {} }, async () => {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const models = await ai.models.list({ config: { pageSize: 50 } });
 
-    const list = [];
-    for await (const model of models) {
-      list.push(`${model.name} (Input: ${model.inputTokenLimit} Tokens)`);
-    }
+  const list = [];
+  for await (const model of models) {
+    list.push(`${model.name} (Input: ${model.inputTokenLimit} Tokens)`);
+  }
 
-    return { content: [{ type: "text", text: list.join("\n") }] };
-  },
-);
+  return { content: [{ type: "text", text: list.join("\n") }] };
+});
 ```
 
 ### gemini-set-model
@@ -352,9 +348,12 @@ server.registerTool(
   "gemini-set-model",
   {
     inputSchema: {
-      model: z.string().optional().describe(
-        "Modell-ID, z. B. gemini-flash-latest oder ein fest gepinntes Modell wie gemini-3.5-flash",
-      ),
+      model: z
+        .string()
+        .optional()
+        .describe(
+          "Modell-ID, z. B. gemini-flash-latest oder ein fest gepinntes Modell wie gemini-3.5-flash",
+        ),
       thinkingLevel: z
         .enum(["minimal", "low", "medium", "high"])
         .optional()
@@ -365,7 +364,12 @@ server.registerTool(
     // mindestens ein Parameter ist Pflicht, sonst Fehler
     setSavedConfig({ model, thinkingLevel }); // Merge statt Ueberschreiben, siehe config.js
     return {
-      content: [{ type: "text", text: `Gespeichert — Modell: ${model}, Thinking-Level: ${thinkingLevel}` }],
+      content: [
+        {
+          type: "text",
+          text: `Gespeichert — Modell: ${model}, Thinking-Level: ${thinkingLevel}`,
+        },
+      ],
     };
   },
 );

@@ -21,6 +21,22 @@ keine Anbindung an sensible Systeme (kein CRM, keine Firmendaten, keine Zahlunge
 Der Server dient nur dazu, Claude bei Bedarf eine aktuelle Websuche via Gemini
 durchführen zu lassen.
 
+## Öffentliches Repo — was hier nicht hineingehört
+
+Dieses Repository ist zur Veröffentlichung bestimmt. Jede getrackte Datei
+(`CLAUDE.md`, `README.md`, `specs.md`, der Code, Commit-Messages) muss so
+formuliert sein, dass ein fremder Leser sie ohne Kenntnis des
+Entwicklungsrechners versteht.
+
+**Alles Private oder auch nur potenziell Riskante gehört ausschließlich in
+`CLAUDE.local.md`** — diese Datei steht in `.gitignore`, wird nie committet
+und von Claude Code zusätzlich geladen. Das betrifft insbesondere absolute
+Pfade des lokalen Rechners, Klarnamen und E-Mail-Adressen, alles rund um den
+Gemini-API-Key sowie maschinenspezifisches Setup. In getrackten Dateien
+stattdessen Platzhalter verwenden. Im Zweifel gehört ein Inhalt nach
+`CLAUDE.local.md` — nachträgliches Bereinigen der Git-Historie ist aufwendig
+und unzuverlässig.
+
 ## Verhaltensregeln für Claude Code in diesem Projekt
 
 **Modellwahl und Thinking-Level:**
