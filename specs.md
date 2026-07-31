@@ -49,9 +49,10 @@ Umgesetzt in drei flachen Modulen ohne `src/`-Layout und ohne Build-Step
 
 Diese Werte wurden vor der Umsetzung gegen die aktuelle Gemini-API- und
 `@google/genai`-SDK-Dokumentation geprüft, damit die Codebasis nicht auf
-veralteten Trainingsdaten aufbaut. Für laufend aktualisiertes, gegen die
-tatsächlich installierten Paketversionen verifiziertes Wissen siehe
-`~/.claude/memory/gemini-api.md`, `js-genai.md` und `mcp-typescript-sdk.md`.
+veralteten Trainingsdaten aufbaut. Maßgeblich sind immer die offiziellen
+Quellen: [Gemini API Docs](https://ai.google.dev/gemini-api/docs),
+[js-genai SDK](https://googleapis.github.io/js-genai/) und das
+[MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk).
 
 - `gemini-flash-latest` ist ein von Google gepflegter Alias und zeigt aktuell
   auf `gemini-3.5-flash`. Der Alias wird bei jedem neuen Flash-Release
@@ -102,7 +103,7 @@ Standardmodell (`gemini-flash-latest`) verfügbar und werden **gemeinsam in
 einem einzigen MCP-Tool `gemini-search`** aktiviert — es gibt bewusst nur
 diesen einen Einstiegspunkt, Gemini entscheidet innerhalb des Aufrufs selbst,
 welche der drei Fähigkeiten (Suchen → Lesen → Auswerten) es für die jeweilige
-Anfrage tatsächlich braucht [web:507].
+Anfrage tatsächlich braucht ([Doku: Tools](https://ai.google.dev/gemini-api/docs/tools)).
 
 Bewusst NICHT genutzt werden: Google Maps (nicht relevant für Web-Research),
 File Search (nur für eigene hochgeladene Dokumente), Computer Use (experimentell,
@@ -113,7 +114,8 @@ Browser-Steuerung, kein Research-Anwendungsfall) und Function Calling
 
 Verbindet das Modell in Echtzeit mit aktuellen Webinhalten. Gemini entscheidet
 selbst, wann eine Suche nötig ist, formuliert die Suchanfrage(n) eigenständig
-und liefert eine Antwort mit Quellenangaben (Zitationen) zurück [web:484].
+und liefert eine Antwort mit Quellenangaben (Zitationen) zurück
+([Doku: Grounding with Google Search](https://ai.google.dev/gemini-api/docs/google-search)).
 
 ```javascript
 tools: [{ googleSearch: {} }];
@@ -125,7 +127,8 @@ innerhalb des Tools `gemini-search`.
 ### 2. URL Context
 
 Ermöglicht Gemini, gezielt den Inhalt einer oder mehrerer konkreter URLs zu lesen
-und auszuwerten — inklusive PDFs, Bildern und HTML, bis zu 34 MB pro Anfrage [web:519].
+und auszuwerten — inklusive PDFs, Bildern und HTML, bis zu 34 MB pro Anfrage
+([Doku: URL Context](https://ai.google.dev/gemini-api/docs/url-context)).
 Läuft komplett innerhalb des API-Aufrufs, ohne dass Claude selbst die Seite laden muss.
 
 ```javascript
@@ -141,7 +144,8 @@ ruft dieses Built-in bei Bedarf automatisch mit auf.
 
 Lässt Gemini eigenständig Python-Code schreiben und in einer isolierten Sandbox
 ausführen, um z. B. Berechnungen, Datenauswertungen oder einfache Statistiken
-aus zuvor gefundenen/gelesenen Daten zu erstellen [web:510]. Die Sandbox hat
+aus zuvor gefundenen/gelesenen Daten zu erstellen
+([Doku: Code Execution](https://ai.google.dev/gemini-api/docs/code-execution)). Die Sandbox hat
 keinen eigenen Internetzugang — sie arbeitet nur mit Daten, die bereits im
 Kontext vorliegen (z. B. aus Google Search oder URL Context).
 
@@ -157,7 +161,8 @@ werden sollen (z. B. Durchschnittswerte, Vergleiche, einfache Diagrammdaten).
 
 Alle drei Tools können und sollen in einem einzigen Aufruf gleichzeitig aktiviert werden,
 sodass Gemini selbst entscheidet, welche Schritte (Suchen → Lesen → Auswerten)
-für die jeweilige Anfrage nötig sind [web:506]:
+für die jeweilige Anfrage nötig sind
+([Doku: Tools](https://ai.google.dev/gemini-api/docs/tools)):
 
 ```javascript
 config: {
@@ -219,8 +224,11 @@ berechnet oder geschätzt):
 ### Woher die Werte kommen
 
 Jede `generateContent`-Antwort liefert automatisch ein `usageMetadata`-Objekt
-mit der Token-Aufschlüsselung [web:470] sowie — bei aktiviertem Google Search
-Tool — ein `groundingMetadata`-Objekt mit den gefundenen Quellen [web:617].
+mit der Token-Aufschlüsselung
+([Doku: Token counting](https://ai.google.dev/gemini-api/docs/tokens)) sowie —
+bei aktiviertem Google Search Tool — ein `groundingMetadata`-Objekt mit den
+gefundenen Quellen
+([Doku: Grounding with Google Search](https://ai.google.dev/gemini-api/docs/google-search)).
 Bei aktiviertem URL-Context-Tool liegen die gelesenen Seiten zusätzlich unter
 `urlContextMetadata`. **Wichtig:** Beide Metadaten-Objekte hängen am ersten
 Kandidaten (`candidates[0]`), nicht direkt an `candidates`.
@@ -319,7 +327,8 @@ bearbeiten zu müssen.
 ### gemini-list-models
 
 Ruft über den offiziellen `models.list`-Endpunkt alle für den aktuellen
-API-Key verfügbaren Modelle ab, inklusive Token-Limits [web:547].
+API-Key verfügbaren Modelle ab, inklusive Token-Limits
+([API-Referenz: Models](https://ai.google.dev/api/models)).
 
 ```javascript
 server.registerTool("gemini-list-models", { inputSchema: {} }, async () => {

@@ -1,0 +1,4 @@
+# Zeilenenden vereinheitlichen: im Repository immer LF, im Arbeitsverzeichnis
+# das jeweils plattformübliche Format. Verhindert, dass ein Klon unter Windows
+# und einer unter Linux dieselbe Datei unterschiedlich sieht.
+* text=auto eol=lf
