@@ -5,12 +5,12 @@
 // nicht zum Arbeitsverzeichnis — die CLI funktioniert daher aus jedem Ordner.
 
 import { runSearch, listModels } from "./gemini.js";
-import { getSavedModel, getSavedThinkingLevel, setSavedConfig } from "./config.js";
-
-// Spiegelt bewusst das z.enum([...]) aus index.js (gemini-search und
-// gemini-set-model). Ein gemeinsamer Export wuerde die CLI an zod koppeln,
-// das sie sonst nicht braucht. Bei einer Erweiterung: beide Stellen anpassen.
-const THINKING_LEVELS = ["minimal", "low", "medium", "high"];
+import {
+  getSavedModel,
+  getSavedThinkingLevel,
+  setSavedConfig,
+  THINKING_LEVELS,
+} from "./config.js";
 
 const HELP = `gemini-grounding — CLI for the Gemini grounding MCP server
 

@@ -3,7 +3,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 import { runSearch, listModels } from "./gemini.js";
-import { getSavedModel, getSavedThinkingLevel, setSavedConfig } from "./config.js";
+import {
+  getSavedModel,
+  getSavedThinkingLevel,
+  setSavedConfig,
+  THINKING_LEVELS,
+} from "./config.js";
 
 const server = new McpServer(
   {
@@ -50,7 +55,7 @@ server.registerTool(
             "default; only set when the user explicitly asks for a specific model.",
         ),
       thinkingLevel: z
-        .enum(["minimal", "low", "medium", "high"])
+        .enum(THINKING_LEVELS)
         .optional()
         .describe(
           "Model reasoning depth. Omit to use the saved default; only set " +
@@ -128,10 +133,7 @@ server.registerTool(
         .describe(
           "Model ID, e.g. gemini-flash-latest or a pinned model like gemini-3.5-flash",
         ),
-      thinkingLevel: z
-        .enum(["minimal", "low", "medium", "high"])
-        .optional()
-        .describe("Model reasoning depth"),
+      thinkingLevel: z.enum(THINKING_LEVELS).optional().describe("Model reasoning depth"),
     },
   },
   async ({ model, thinkingLevel }) => {

@@ -12,6 +12,14 @@ const CONFIG_PATH = path.join(
 const FALLBACK_MODEL = "gemini-flash-latest";
 const FALLBACK_THINKING_LEVEL = "high";
 
+/**
+ * Die von der Gemini-API akzeptierten Thinking-Level — einzige Quelle fuer
+ * MCP-Server und CLI, damit beide dieselben Werte zulassen. index.js macht
+ * daraus die Zod-Schemas (z.enum nimmt dieses Array direkt), cli.js prueft
+ * damit seine Kommandozeilenargumente.
+ */
+export const THINKING_LEVELS = ["minimal", "low", "medium", "high"];
+
 function readConfig() {
   try {
     return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
