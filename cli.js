@@ -20,7 +20,8 @@ Usage:
 
 Commands:
   config                 Show saved model, thinking level and API key status
-  models                 List models available for the current API key
+  models [--all]         List models usable with this server; --all lists every
+                         model the API key exposes, including unusable ones
   set-model <id>         Persist the default model
   set-thinking <level>   Persist the default thinking level
   help                   Show this help
@@ -63,12 +64,21 @@ function takeFlag(args, name) {
   return value;
 }
 
+/** Wie takeFlag, aber fuer Schalter ohne Wert. */
+function takeSwitch(args, name) {
+  const index = args.indexOf(`--${name}`);
+  if (index === -1) return false;
+  args.splice(index, 1);
+  return true;
+}
+
 // argv[0] ist der Node-Interpreter, argv[1] das Skript selbst — erst ab
 // Index 2 stehen die vom Benutzer uebergebenen Argumente.
 const args = process.argv.slice(2);
 
 const modelFlag = takeFlag(args, "model");
 const thinkingFlag = takeFlag(args, "thinking");
+const allFlag = takeSwitch(args, "all");
 if (thinkingFlag !== undefined) requireThinkingLevel(thinkingFlag, "--thinking");
 
 const [command, ...rest] = args;
@@ -100,7 +110,7 @@ try {
     }
 
     case "models":
-      console.log(await listModels());
+      console.log(await listModels({ all: allFlag }));
       break;
 
     case "set-model": {

@@ -120,7 +120,7 @@ genauso mit `node cli.js` statt `gemini-grounding`.
 |---|---|
 | `gemini-grounding "<frage>"` | Suche mit den gespeicherten Standardwerten, Ausgabe inkl. Quellenliste und Token-Footer |
 | `gemini-grounding config` | zeigt gespeichertes Modell, Thinking-Level und ob ein API-Key in der Umgebung liegt |
-| `gemini-grounding models` | listet die für den Key verfügbaren Modelle mit Token-Limit |
+| `gemini-grounding models [--all]` | listet die mit diesem Server nutzbaren Modelle mit Token-Limits; `--all` zeigt alle |
 | `gemini-grounding set-model <id>` | setzt das Standardmodell dauerhaft |
 | `gemini-grounding set-thinking <level>` | setzt das Thinking-Level dauerhaft (`minimal`, `low`, `medium`, `high`) |
 | `gemini-grounding help` | Kurzhilfe |
@@ -157,13 +157,44 @@ eine echte Anfrage.
 
 - **`gemini-search`** — Recherche via Google Search, URL Context und Code
   Execution in einem Aufruf. Antwort enthält Quellenliste und Token-Footer.
-- **`gemini-list-models`** — Listet die für den API-Key verfügbaren Modelle.
+- **`gemini-list-models`** — Listet die für den API-Key verfügbaren Modelle mit
+  Token-Limits. Standardmäßig nur die mit diesem Server nutzbaren (siehe unten),
+  mit `all: true` alle.
 - **`gemini-set-model`** — Legt Standardmodell und/oder Standard-Thinking-Level
   dauerhaft in `config.json` fest (nur diese beiden Werte, niemals der API-Key).
 
 `config.json` wird erst beim ersten `gemini-set-model` angelegt und ist nicht
 Teil des Repositorys. Ohne sie gelten die Defaults aus `config.js`
 (`gemini-flash-latest`, Thinking-Level `high`).
+
+### Welche Modelle nutzbar sind
+
+Der API-Key gibt deutlich mehr Modelle frei, als hier funktionieren. Die
+Modellliste zeigt deshalb standardmäßig nur die, die zwei Bedingungen
+erfüllen — beide aus den Angaben der API selbst, nicht aus dem Modellnamen:
+
+- **`generateContent`** in `supportedActions` — das Modell erzeugt überhaupt
+  Text. Embedding-, Bild- (Imagen), Video- (Veo) und Live-/Audio-Modelle
+  fallen damit weg.
+- **`thinking: true`** — das Modell akzeptiert ein Thinking-Level. Da jede
+  Suche eines mitschickt, antwortet die API sonst mit
+  `400 Thinking level is not supported for this model.`
+
+Nach Namensmustern zu filtern wäre unzuverlässig: Google vergibt Codenamen,
+die nichts über die Fähigkeiten verraten — `nano-banana-pro-preview` ist ein
+Bildmodell.
+
+Zwei Einschränkungen bleiben:
+
+- Die Bedingungen sagen, was **technisch** durchläuft, nicht was für
+  Recherche sinnvoll ist. Auch Bild-, Sprach- und Robotikmodelle erfüllen sie
+  teilweise und erscheinen in der Liste.
+- **Gelistet heißt nicht verfügbar.** Abgekündigte Modelle bleiben in der
+  Liste und antworten mit `404 ... is no longer available`. Ein Feld, das das
+  vorab anzeigt, gibt es nicht — Gewissheit gibt nur ein echter Aufruf.
+
+Deshalb blendet `--all` bzw. `all: true` nichts aus, sondern zeigt die
+vollständige Liste mit einer Statusspalte.
 
 ## Lizenz
 

@@ -342,23 +342,42 @@ bearbeiten zu müssen.
 
 ### gemini-list-models
 
-Ruft über den offiziellen `models.list`-Endpunkt alle für den aktuellen
+Ruft über den offiziellen `models.list`-Endpunkt die für den aktuellen
 API-Key verfügbaren Modelle ab, inklusive Token-Limits
-([API-Referenz: Models](https://ai.google.dev/api/models)).
+([API-Referenz: Models](https://ai.google.dev/api/models)). Der Pager des SDK
+holt weitere Seiten selbstständig nach; `pageSize` bestimmt nur die Größe der
+einzelnen Anfrage, nicht die Gesamtzahl.
 
-```javascript
-server.registerTool("gemini-list-models", { inputSchema: {} }, async () => {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const models = await ai.models.list({ config: { pageSize: 50 } });
+**Standardmäßig gefiltert.** Der Key gibt erheblich mehr Modelle frei, als
+hier funktionieren — beim Stand dieser Messung 58 insgesamt, davon 32
+nutzbar. Gefiltert wird über zwei Angaben, die jedes Modell selbst
+mitliefert:
 
-  const list = [];
-  for await (const model of models) {
-    list.push(`${model.name} (Input: ${model.inputTokenLimit} Tokens)`);
-  }
+| Feld | Bedingung | Andernfalls |
+|---|---|---|
+| `supportedActions` | enthält `generateContent` | Modell erzeugt keinen Text — Embeddings, Imagen, Veo, Live/Audio |
+| `thinking` | `true` | `400 Thinking level is not supported for this model.`, da `runSearch` immer ein `thinkingConfig` sendet |
 
-  return { content: [{ type: "text", text: list.join("\n") }] };
-});
-```
+Beide Felder sind im `Model`-Interface des SDK dokumentiert. Bewusst **nicht**
+über Namensmuster gefiltert: Google vergibt Codenamen, die nichts über die
+Fähigkeiten aussagen (`nano-banana-pro-preview` ist ein Bildmodell), sodass
+jede Musterliste bei der nächsten Modellfamilie veraltet.
+
+Grenzen, die der Filter nicht auflöst:
+
+- Er trennt technische Lauffähigkeit, nicht Eignung. Bild-, Sprach- und
+  Robotikmodelle erfüllen die Bedingungen teilweise ebenfalls.
+- **Gelistet heißt nicht verfügbar.** Abgekündigte Modelle bleiben in der
+  Antwort und liefern bei Nutzung `404 ... is no longer available` — nachweisbar
+  an der 2.0-Generation. Ein Feld, das den Zustand vorab anzeigt, existiert
+  nicht.
+
+Deshalb ist `all` kein reiner Komfortschalter: Da die Liste ohnehin keine
+Garantie gibt, darf die gefilterte Sicht nie die einzige sein. `all: true`
+zeigt die vollständige Liste mit einer Statusspalte. Ergibt der Filter kein
+einziges Modell — etwa weil die API die ausgewerteten Felder nicht mehr
+liefert — fällt `listModels` selbsttätig auf die vollständige Liste zurück und
+weist im Hinweistext darauf hin, statt eine leere Ausgabe zu erzeugen.
 
 ### gemini-set-model
 
