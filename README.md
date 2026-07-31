@@ -165,7 +165,7 @@ eine echte Anfrage.
 
 `config.json` wird erst beim ersten `gemini-set-model` angelegt und ist nicht
 Teil des Repositorys. Ohne sie gelten die Defaults aus `config.js`
-(`gemini-flash-latest`, Thinking-Level `high`).
+(`gemini-flash-latest`, Thinking-Level `medium`).
 
 ### Welche Modelle nutzbar sind
 

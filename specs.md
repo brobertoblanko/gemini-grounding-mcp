@@ -217,7 +217,9 @@ Wichtige Parameter-Hinweise aus der Dokumentation:
 - `thinkingLevel` ersetzt das ältere `thinkingBudget` (Integer) — bei
   `gemini-3.5-flash` gilt der Enum-Wert (`minimal`, `low`, `medium`, `high`)
 - Ohne explizite Angabe ist Thinking bei diesem Modell standardmäßig auf
-  `medium` gesetzt — daher hier bewusst auf `high` fixiert
+  `medium` gesetzt. Dieser Server sendet trotzdem immer ein Level mit, damit
+  der Footer den tatsächlich genutzten Wert ausweisen kann — ohne
+  `config.json` ebenfalls `medium`
 - Der API-Key kann per Header (`X-goog-api-key`) oder als Query-Parameter
   (`?key=...`) übergeben werden; Header-Variante wird bevorzugt
 
@@ -435,7 +437,7 @@ function getSavedModel() {
 }
 
 function getSavedThinkingLevel() {
-  return readConfig().thinkingLevel ?? FALLBACK_THINKING_LEVEL; // "high" ohne config.json
+  return readConfig().thinkingLevel ?? FALLBACK_THINKING_LEVEL; // "medium" ohne config.json
 }
 ```
 

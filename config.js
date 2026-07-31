@@ -10,7 +10,11 @@ const CONFIG_PATH = path.join(
 );
 
 const FALLBACK_MODEL = "gemini-flash-latest";
-const FALLBACK_THINKING_LEVEL = "high";
+// Bewusst "medium" und nicht "high": der Fallback greift bei jedem neuen
+// Nutzer ohne config.json, und ein hoeheres Level kostet ungefragt mehr
+// Thinking-Tokens. Wer mehr will, setzt es per gemini-set-model dauerhaft
+// oder pro Aufruf.
+const FALLBACK_THINKING_LEVEL = "medium";
 
 /**
  * Die von der Gemini-API akzeptierten Thinking-Level — einzige Quelle fuer
