@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Minimaler MCP-Server fuer Google-Websuche via Gemini API mit Grounding.",
   "main": "index.js",
+  "bin": {
+    "gemini-grounding": "cli.js"
+  },
   "scripts": {
     "start": "node index.js"
   },

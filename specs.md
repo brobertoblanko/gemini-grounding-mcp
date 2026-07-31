@@ -33,7 +33,7 @@ wenn ich selbst etwas anpasse — kein automatischer Versionswechsel im Hintergr
 
 ## Implementierung
 
-Umgesetzt in drei flachen Modulen ohne `src/`-Layout und ohne Build-Step
+Umgesetzt in flachen Modulen ohne `src/`-Layout und ohne Build-Step
 (für die Projektgröße bringt `src/` in Node ohne Build-Step keinen Vorteil):
 
 - `index.js` — Server-Bootstrap, registriert die drei Tools über
@@ -44,6 +44,14 @@ Umgesetzt in drei flachen Modulen ohne `src/`-Layout und ohne Build-Step
   scriptrelativen `config.json` (nicht `./config.json`, da das
   Arbeitsverzeichnis eines per stdio gestarteten MCP-Servers nicht garantiert
   der Projektordner ist).
+- `cli.js` — zweites Frontend auf denselben Kern: dieselben Exporte aus
+  `gemini.js` und `config.js`, die auch `index.js` nutzt, über die
+  Kommandozeile erreichbar. Ohne zusätzliche Abhängigkeit (ein `switch` über
+  `process.argv` genügt), ohne zweiten Ort für den API-Key. Zwei bewusste
+  Unterschiede zum MCP-Server: Fehler werden nicht abgefangen, damit beim
+  Testen der volle Stacktrace der Google-API sichtbar bleibt, und die Ausgabe
+  geht auf stdout — beim stdio-Transport wäre das unmöglich, weil dort
+  JSON-RPC darüber läuft. Aufruf und Unterbefehle: siehe README.
 
 ## Verifizierte API-Fakten (Stand 07/2026)
 

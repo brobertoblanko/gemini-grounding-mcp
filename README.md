@@ -92,6 +92,65 @@ Prüfen, ob der Server läuft:
 claude mcp list
 ```
 
+## Kommandozeilen-Werkzeug
+
+Der Server lässt sich auch ohne MCP-Client bedienen — nützlich, um vor der
+Registrierung zu prüfen, ob API-Key und Modellwahl funktionieren, und um beim
+Entwickeln eine Änderung zu testen, ohne den Client neu zu starten. Sämtliche
+Ausgaben der CLI sind englisch.
+
+```bash
+node cli.js config
+```
+
+Optional lässt sich der Befehl systemweit verfügbar machen:
+
+```bash
+npm link
+gemini-grounding config
+```
+
+`npm link` legt im globalen npm-Ordner einen Verweis auf `cli.js` an (unter
+Windows als `.cmd`/`.ps1`, sonst als Symlink). Da es ein Verweis und keine
+Kopie ist, wirken Änderungen an `cli.js` sofort. Rückgängig machen mit
+`npm unlink -g gemini-grounding`. Alle folgenden Beispiele funktionieren
+genauso mit `node cli.js` statt `gemini-grounding`.
+
+| Befehl | Wirkung |
+|---|---|
+| `gemini-grounding "<frage>"` | Suche mit den gespeicherten Standardwerten, Ausgabe inkl. Quellenliste und Token-Footer |
+| `gemini-grounding config` | zeigt gespeichertes Modell, Thinking-Level und ob ein API-Key in der Umgebung liegt |
+| `gemini-grounding models` | listet die für den Key verfügbaren Modelle mit Token-Limit |
+| `gemini-grounding set-model <id>` | setzt das Standardmodell dauerhaft |
+| `gemini-grounding set-thinking <level>` | setzt das Thinking-Level dauerhaft (`minimal`, `low`, `medium`, `high`) |
+| `gemini-grounding help` | Kurzhilfe |
+
+Alles, was kein bekannter Unterbefehl ist, wird als Suchanfrage behandelt.
+
+**Einmalige Overrides.** Für einen einzelnen Aufruf lassen sich Modell und
+Thinking-Level abweichend setzen, ohne den gespeicherten Standard zu ändern:
+
+```bash
+gemini-grounding "frage" --model gemini-3-pro-preview --thinking minimal
+```
+
+Welche Werte tatsächlich zum Einsatz kamen, steht im Footer unter jeder
+Antwort.
+
+**Gemeinsame Konfiguration.** CLI und MCP-Server lesen und schreiben dieselbe
+`config.json`. Ein `set-model` im Terminal ändert damit auch, womit der
+MCP-Server beim nächsten Aufruf arbeitet — beabsichtigt, denn so ist ein
+Modellwechsel möglich, ohne den Client dazu aufzufordern.
+
+**Fehler werden nicht abgefangen.** Anders als der MCP-Server, der jeden
+Fehler auf eine Zeile für den Client verdichten muss, gibt die CLI den
+vollständigen Stacktrace samt Original-Fehlermeldung der Google-API aus. Beim
+Testen ist genau das gewollt.
+
+`config` prüft nur, ob überhaupt ein Key in der Umgebung ankommt, und gibt
+dessen Länge aus — **nie den Wert selbst**. Ob der Key gültig ist, zeigt erst
+eine echte Anfrage.
+
 ## Tools
 
 - **`gemini-search`** — Recherche via Google Search, URL Context und Code
