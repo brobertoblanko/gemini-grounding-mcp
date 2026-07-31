@@ -113,7 +113,9 @@ gemini-grounding config
 `npm link` legt im globalen npm-Ordner einen Verweis auf `cli.js` an (unter
 Windows als `.cmd`/`.ps1`, sonst als Symlink). Da es ein Verweis und keine
 Kopie ist, wirken Änderungen an `cli.js` sofort. Rückgängig machen mit
-`npm unlink -g gemini-grounding`. Alle folgenden Beispiele funktionieren
+`npm unlink -g gemini-grounding-mcp` — npm erwartet dort den Paketnamen, nicht
+den Befehlsnamen `gemini-grounding`. Mit dem Befehlsnamen meldet npm lediglich
+`up to date` und entfernt nichts. Alle folgenden Beispiele funktionieren
 genauso mit `node cli.js` statt `gemini-grounding`.
 
 | Befehl | Wirkung |
