@@ -49,6 +49,80 @@ function formatSourcesBlock(sources) {
   return `\n\nSources:\n${list}`;
 }
 
+/**
+ * Baut den Antworttext aus den Parts der Antwort, statt `response.text` zu
+ * nutzen. Der `.text`-Getter des SDK verwirft alles, was kein Textteil ist —
+ * bei aktiviertem Code Execution also gerade den ausgefuehrten Code und dessen
+ * Ergebnis — und schreibt dabei pro Aufruf eine Warnung nach stderr. Hier
+ * kommen beide als Codebloecke mit in die Antwort, damit nachvollziehbar
+ * bleibt, wie eine berechnete Zahl zustande gekommen ist.
+ *
+ * Code und Ergebnis kommen dabei ans ENDE, hinter den Antworttext. Die API
+ * liefert die Parts in Ausfuehrungsreihenfolge, sodass die Antwort sonst mit
+ * einem Codeblock beginnt und die eigentliche Auskunft erst darunter steht.
+ * Der Rechenweg ist ein Beleg und gehoert damit dorthin, wo auch die
+ * Quellenliste steht: hinter die Antwort, nicht davor.
+ */
+function buildText(candidate) {
+  const textBlocks = [];
+  const codeBlocks = [];
+
+  for (const part of candidate?.content?.parts ?? []) {
+    // Denk-Parts gehoeren nicht in die Ausgabe — ihr Umfang steht bereits als
+    // Thinking-Tokens im Footer.
+    if (part.thought) continue;
+
+    if (part.text) {
+      textBlocks.push(part.text);
+    } else if (part.executableCode?.code) {
+      // language ist das Language-Enum ("PYTHON"); LANGUAGE_UNSPECIFIED ergibt
+      // keine sinnvolle Sprachangabe fuer den Codeblock.
+      const language = (part.executableCode.language ?? "").toLowerCase();
+      const fence = language.includes("unspecified") ? "" : language;
+      // trimEnd, weil Code und Ausgabe mit einem Zeilenumbruch enden — sonst
+      // steht eine Leerzeile vor dem schliessenden Codeblock.
+      codeBlocks.push(`\`\`\`${fence}\n${part.executableCode.code.trimEnd()}\n\`\`\``);
+    } else if (part.codeExecutionResult) {
+      // outcome ist "OUTCOME_OK", "OUTCOME_FAILED", ... — das Praefix traegt
+      // keine Information.
+      const outcome =
+        (part.codeExecutionResult.outcome ?? "").replace(/^OUTCOME_/, "") || "UNKNOWN";
+      const output = (part.codeExecutionResult.output ?? "").trimEnd();
+      codeBlocks.push(`Result (${outcome}):\n\`\`\`\n${output}\n\`\`\``);
+    }
+  }
+
+  // Ueberschrift wie bei der Quellenliste, damit der nachgestellte Rechenweg
+  // nicht als Fortsetzung des Antworttextes gelesen wird.
+  if (codeBlocks.length > 0) codeBlocks.unshift("Code execution:");
+
+  return [...textBlocks, ...codeBlocks].join("\n\n");
+}
+
+/**
+ * Weist auf eine Antwort hin, die nicht regulaer zu Ende gelaufen ist. Ohne
+ * diesen Hinweis saehe eine blockierte oder abgeschnittene Antwort wie ein
+ * Erfolg aus: der Text fehlt oder bricht mitten im Satz ab, Quellenliste und
+ * Footer stehen trotzdem unveraendert darunter.
+ */
+function formatNotice({ text, candidate, promptFeedback }) {
+  const blockReason = promptFeedback?.blockReason;
+  if (blockReason) {
+    return `\n\n⚠️ Request blocked by the API — blockReason: ${blockReason}`;
+  }
+
+  const finishReason = candidate?.finishReason;
+  if (text === "") {
+    return `\n\n⚠️ The response contained no text — finishReason: ${finishReason ?? "unknown"}`;
+  }
+  // STOP ist der regulaere Abschluss. Alles andere — vor allem MAX_TOKENS —
+  // bedeutet eine abgeschnittene Antwort, die sonst vollstaendig wirkt.
+  if (finishReason && finishReason !== "STOP") {
+    return `\n\n⚠️ The response is incomplete — finishReason: ${finishReason}`;
+  }
+  return "";
+}
+
 function formatFooter({ usageMetadata, model, thinkingLevel, sourceCount }) {
   const inputTokens = usageMetadata?.promptTokenCount ?? 0;
   const outputTokens = usageMetadata?.candidatesTokenCount ?? 0;
@@ -79,7 +153,12 @@ export async function runSearch({ query, model, thinkingLevel }) {
   const candidate = response.candidates?.[0];
   const sources = buildSourceList(candidate);
 
-  const text = response.text ?? "";
+  const text = buildText(candidate);
+  const notice = formatNotice({
+    text,
+    candidate,
+    promptFeedback: response.promptFeedback,
+  });
   const sourcesBlock = formatSourcesBlock(sources);
   const footer = formatFooter({
     usageMetadata: response.usageMetadata,
@@ -88,7 +167,8 @@ export async function runSearch({ query, model, thinkingLevel }) {
     sourceCount: sources.length,
   });
 
-  return text + sourcesBlock + footer;
+  // Der Footer bleibt in jedem Fall der letzte Bestandteil der Antwort.
+  return text + notice + sourcesBlock + footer;
 }
 
 /** Kuerzt eine Tokenzahl lesbar ab: 1048576 -> 1M, 65536 -> 64k. */

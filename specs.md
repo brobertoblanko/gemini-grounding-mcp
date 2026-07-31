@@ -48,10 +48,10 @@ Umgesetzt in flachen Modulen ohne `src/`-Layout und ohne Build-Step
   `gemini.js` und `config.js`, die auch `index.js` nutzt, über die
   Kommandozeile erreichbar. Ohne zusätzliche Abhängigkeit (ein `switch` über
   `process.argv` genügt), ohne zweiten Ort für den API-Key. Zwei bewusste
-  Unterschiede zum MCP-Server: Fehler werden mit vollem Stacktrace ausgegeben
-  statt wie in `index.js` auf eine Zeile für den Client verdichtet, und die
-  Ausgabe geht auf stdout — beim stdio-Transport wäre das unmöglich, weil dort
-  JSON-RPC darüber läuft. Aufruf und Unterbefehle: siehe README.
+  Unterschiede zum MCP-Server: Laufzeitfehler werden mit vollem Stacktrace
+  ausgegeben statt wie in `index.js` auf eine Zeile für den Client verdichtet,
+  und die Ausgabe geht auf stdout — beim stdio-Transport wäre das unmöglich,
+  weil dort JSON-RPC darüber läuft. Aufruf und Unterbefehle: siehe README.
 
   Der Fehler wird dabei trotzdem per `try`/`catch` abgefangen, obwohl die
   Ausgabe dieselbe bleibt: Beendet Node den Prozess wegen einer unbehandelten
@@ -60,6 +60,26 @@ Umgesetzt in flachen Modulen ohne `src/`-Layout und ohne Build-Step
   endet mit `0xC0000409` statt mit Code 1. Deshalb `console.error(error)` —
   identisch zu Nodes eigener Ausgabe — gefolgt von `process.exitCode = 1`
   statt `process.exit()`, damit Node regulär herunterfährt.
+
+  Das gilt **ausnahmslos**: `cli.js` enthält kein `process.exit()`. Ein
+  Bedienfehler wirft stattdessen einen `UsageError`, den derselbe `catch`-Block
+  abfängt und mit nur seiner Meldung ausgibt — für einen Tippfehler auf der
+  Kommandozeile ist ein Stacktrace sinnlos. Zweiter Grund gegen `process.exit()`:
+  stdout und stderr sind unter Windows auf einem TTY asynchron, ein sofortiges
+  Beenden kann eine längere Ausgabe wie die Hilfe abschneiden. Weil `fail()`
+  wirft statt zu beenden, liegen Argumentauswertung und `switch` gemeinsam in
+  einer `main()`-Funktion innerhalb des `try`.
+
+  Argumente werden dabei strikt geprüft, weil jede Nachsicht hier still
+  danebengeht: Eine Suchanfrage muss **genau ein** Argument sein — Optionen
+  werden per `indexOf` aus der Argumentliste geschnitten, sodass ein
+  `--thinking high` mitten in einer unquotiert getippten Frage sonst
+  unbemerkt Wörter aus der Anfrage entfernt hätte. Ein leeres Argument
+  (etwa aus einer nicht gesetzten Shell-Variablen) ist ebenfalls ein Fehler,
+  statt Tokens für eine leere Anfrage auszugeben. Was nach der Auswertung noch
+  mit `--` beginnt, ist eine unbekannte Option und bricht ab — `models --al`
+  hätte sonst kommentarlos die gefilterte Liste gezeigt, die man für die
+  vollständige hält. Überzählige Argumente lehnt jeder Unterbefehl ab.
 
 ## Verifizierte API-Fakten (Stand 07/2026)
 
@@ -239,6 +259,46 @@ berechnet oder geschätzt):
    tatsächlichen Ressourcenverbrauch und die genutzte Modell-/Thinking-Wahl
    des Tool-Calls — der User soll nie raten müssen, was verwendet wurde.
 
+### Antworttext: eigener Aufbau statt `response.text`
+
+`gemini.js` setzt den Antworttext selbst aus `candidates[0].content.parts`
+zusammen (`buildText`), statt den `.text`-Getter des SDK zu nutzen. Der Getter
+verkettet ausschließlich Textteile, verwirft alles andere und schreibt dabei
+pro Aufruf eine Warnung nach stderr. Bei aktiviertem Code Execution fällt damit
+genau der Teil weg, der zeigt, wie ein Rechenergebnis zustande kam — die
+Antwort behauptet ein Ergebnis, ohne den Weg dorthin zu belegen. `buildText`
+übernimmt deshalb zusätzlich `executableCode` und `codeExecutionResult` als
+Codeblöcke. Teile mit `thought: true` bleiben außen vor; ihr Umfang steht
+bereits als Thinking-Tokens im Footer.
+
+Die Reihenfolge wird dabei bewusst umgestellt: Die API liefert die Parts in
+Ausführungsreihenfolge, sodass Code und Ergebnis **vor** dem erklärenden Text
+stehen — die Antwort begänne also mit einem Codeblock, die eigentliche Auskunft
+käme darunter. `buildText` sammelt Text- und Codeblöcke getrennt und hängt die
+Codeblöcke unter der Überschrift `Code execution:` hinten an. Der Rechenweg ist
+ein Beleg und steht damit dort, wo auch die Quellenliste steht: hinter der
+Antwort, nicht davor.
+
+Bewusst **nicht** begrenzt wird die Länge von `codeExecutionResult.output`:
+Auch eine lange Ausgabe ist Teil des Rechenwegs, und ein Umfang, der im
+Research-Kontext stören würde, ist die seltene Ausnahme.
+
+### Hinweis bei nicht regulär beendeter Antwort
+
+Fehlt der Text ganz oder bricht er ab, sähe die Antwort mit Quellenliste und
+Footer trotzdem wie ein Erfolg aus. `formatNotice` fügt deshalb zwischen Text
+und Quellenliste eine Zeile mit ⚠️ ein, wenn einer dieser Fälle vorliegt:
+
+| Bedingung | Hinweis |
+|---|---|
+| `response.promptFeedback.blockReason` gesetzt | Anfrage von der API blockiert |
+| Text leer | Antwort ohne Text, mit `candidates[0].finishReason` |
+| `finishReason` gesetzt und ≠ `STOP` | unvollständige Antwort, vor allem `MAX_TOKENS` |
+
+`STOP` ist der reguläre Abschluss; die übrigen Werte des `FinishReason`-Enums
+(`MAX_TOKENS`, `SAFETY`, `RECITATION`, `BLOCKLIST`, …) bedeuten einen Abbruch.
+Der Footer bleibt in jedem Fall der letzte Bestandteil der Antwort.
+
 ### Woher die Werte kommen
 
 Jede `generateContent`-Antwort liefert automatisch ein `usageMetadata`-Objekt
@@ -318,9 +378,12 @@ const footer =
 const sourcesBlock = sourceList ? `\n\nQuellen:\n${sourceList}` : "";
 
 return {
-  content: [{ type: "text", text: response.text + sourcesBlock + footer }],
+  content: [{ type: "text", text: text + notice + sourcesBlock + footer }],
 };
 ```
+
+`text` stammt dabei aus `buildText(candidate)`, `notice` aus `formatNotice(...)` —
+siehe die beiden Abschnitte oben.
 
 Beispielausgabe am Ende jeder Antwort:
 
@@ -333,8 +396,8 @@ Quellen:
 🔢 245 Input / 89 Output / 40 Thinking Tokens | 🔍 2 Quellen | 🤖 gemini-flash-latest (thinking: high)
 ```
 
-Tatsächlich implementiert in `gemini.js` (`buildSourceList`, `formatSourcesBlock`,
-`formatFooter`).
+Tatsächlich implementiert in `gemini.js` (`buildText`, `formatNotice`,
+`buildSourceList`, `formatSourcesBlock`, `formatFooter`).
 
 ## Konfigurierbare Modell- und Thinking-Level-Wahl
 

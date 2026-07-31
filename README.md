@@ -125,7 +125,14 @@ genauso mit `node cli.js` statt `gemini-grounding`.
 | `gemini-grounding set-thinking <level>` | setzt das Thinking-Level dauerhaft (`minimal`, `low`, `medium`, `high`) |
 | `gemini-grounding help` | Kurzhilfe |
 
-Alles, was kein bekannter Unterbefehl ist, wird als Suchanfrage behandelt.
+Alles, was kein bekannter Unterbefehl ist, wird als Suchanfrage behandelt — und
+zwar als **genau ein Argument**. Eine Frage mit Leerzeichen gehört deshalb in
+Anführungszeichen. Unquotiert bricht der Aufruf mit einer Meldung ab, statt eine
+Anfrage abzuschicken, aus der die Optionserkennung einzelne Wörter
+herausgeschnitten hat (`… was bedeutet --thinking high …` wäre sonst als
+`was bedeutet …` gelaufen). Auch eine unbekannte Option (`--al` statt `--all`)
+und überzählige Argumente sind ein Fehler mit Exit-Code 1 — nichts davon wird
+stillschweigend übergangen.
 
 **Einmalige Overrides.** Für einen einzelnen Aufruf lassen sich Modell und
 Thinking-Level abweichend setzen, ohne den gespeicherten Standard zu ändern:
@@ -147,7 +154,10 @@ Fehler auf eine Zeile für den Client verdichten muss, gibt die CLI den
 kompletten Stacktrace samt Original-Fehlermeldung der Google-API aus und endet
 mit Exit-Code 1. Beim Testen ist genau das gewollt: Eine Meldung wie
 `ApiError: {"error":{"code":503, ...}}` besagt, dass die Anfrage bei Google
-nicht durchkam — kein Fehler der eigenen Installation.
+nicht durchkam — kein Fehler der eigenen Installation. Ein reiner Bedienfehler
+(falsches Argument, unbekannte Option, leere Anfrage) gibt dagegen nur die eine
+erklärende Zeile aus, ebenfalls mit Exit-Code 1 — für einen Tippfehler auf der
+Kommandozeile braucht niemand einen Stacktrace.
 
 `config` prüft nur, ob überhaupt ein Key in der Umgebung ankommt, und gibt
 dessen Länge aus — **nie den Wert selbst**. Ob der Key gültig ist, zeigt erst
@@ -157,6 +167,12 @@ eine echte Anfrage.
 
 - **`gemini-search`** — Recherche via Google Search, URL Context und Code
   Execution in einem Aufruf. Antwort enthält Quellenliste und Token-Footer.
+  Hat Gemini dabei Code ausgeführt, stehen der Code und sein Ergebnis unter
+  `Code execution:` hinter dem Antworttext — der Rechenweg ist ein Beleg und
+  steht deshalb dort, wo auch die Quellen stehen. Lief die Antwort nicht
+  regulär zu Ende — blockiert oder an der Token-Grenze
+  abgeschnitten — weist eine Zeile mit ⚠️ und dem Grund darauf hin, statt eine
+  leere oder halbe Antwort wie einen Erfolg aussehen zu lassen.
 - **`gemini-list-models`** — Listet die für den API-Key verfügbaren Modelle mit
   Token-Limits. Standardmäßig nur die mit diesem Server nutzbaren (siehe unten),
   mit `all: true` alle.

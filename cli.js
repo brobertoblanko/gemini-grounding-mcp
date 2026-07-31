@@ -32,13 +32,20 @@ Options (search only, never persisted):
 
 Thinking levels: ${THINKING_LEVELS.join(", ")}
 
-Anything that is not a known command is treated as a search query.
+Anything that is not a known command is treated as a search query. The query
+must be a single argument — put it in quotes if it contains spaces.
 The API key is read from the GEMINI_API_KEY environment variable.
 The saved defaults live in config.json and are shared with the MCP server.`;
 
+/**
+ * Bedienfehler — falsche Argumente, unbekannte Option, leere Anfrage. Wird
+ * anders behandelt als ein echter Laufzeitfehler: nur die Meldung, kein
+ * Stacktrace, weil ein Tippfehler auf der Kommandozeile keinen braucht.
+ */
+class UsageError extends Error {}
+
 function fail(message) {
-  console.error(message);
-  process.exit(1);
+  throw new UsageError(message);
 }
 
 function requireThinkingLevel(value, origin) {
@@ -72,31 +79,48 @@ function takeSwitch(args, name) {
   return true;
 }
 
-// argv[0] ist der Node-Interpreter, argv[1] das Skript selbst — erst ab
-// Index 2 stehen die vom Benutzer uebergebenen Argumente.
-const args = process.argv.slice(2);
+async function main() {
+  // argv[0] ist der Node-Interpreter, argv[1] das Skript selbst — erst ab
+  // Index 2 stehen die vom Benutzer uebergebenen Argumente.
+  const args = process.argv.slice(2);
 
-const modelFlag = takeFlag(args, "model");
-const thinkingFlag = takeFlag(args, "thinking");
-const allFlag = takeSwitch(args, "all");
-if (thinkingFlag !== undefined) requireThinkingLevel(thinkingFlag, "--thinking");
+  const modelFlag = takeFlag(args, "model");
+  const thinkingFlag = takeFlag(args, "thinking");
+  const allFlag = takeSwitch(args, "all");
+  if (thinkingFlag !== undefined) requireThinkingLevel(thinkingFlag, "--thinking");
 
-const [command, ...rest] = args;
+  // Was jetzt noch wie eine Option aussieht, kennt die CLI nicht. Ohne diese
+  // Pruefung bliebe ein Tippfehler folgenlos liegen: "models --al" haette
+  // stillschweigend die gefilterte Liste gezeigt, die man fuer die
+  // vollstaendige haelt. Bewusst nur "--", damit eine Anfrage wie
+  // "-5 Grad in Fahrenheit" weiterhin durchgeht; "--help" ist ausgenommen,
+  // weil es unten als Unterbefehl behandelt wird.
+  const unknownOption = args.find((arg) => arg.startsWith("--") && arg !== "--help");
+  if (unknownOption) fail(`Unknown option "${unknownOption}".`);
 
-try {
+  const [command, ...rest] = args;
+
+  // Jeder Zweig prueft, dass nichts Ueberzaehliges uebrig bleibt — sonst
+  // wuerde "set-thinking low unsinn" klaglos speichern und den Rest verwerfen.
+  const requireNoArgs = () => {
+    if (rest.length > 0) fail(`"${command}" takes no arguments.`);
+  };
+
   switch (command) {
     case undefined:
       // Aufruf ohne Argumente ist ein Bedienfehler: Hilfe nach stderr, Exit 1.
-      console.error(HELP);
-      process.exit(1);
+      fail(HELP);
+      break;
 
     case "help":
     case "--help":
     case "-h":
+      requireNoArgs();
       console.log(HELP);
       break;
 
     case "config": {
+      requireNoArgs();
       const apiKey = process.env.GEMINI_API_KEY;
       // Der Wert des Keys wird nie ausgegeben, auch nicht gekuerzt — nur seine
       // Laenge, weil sich daran ein abgeschnittenes Einfuegen erkennen laesst.
@@ -110,33 +134,41 @@ try {
     }
 
     case "models":
+      requireNoArgs();
       console.log(await listModels({ all: allFlag }));
       break;
 
     case "set-model": {
+      if (rest.length !== 1) fail("Usage: gemini-grounding set-model <model-id>");
       const model = rest[0];
-      if (model === undefined) fail("Usage: gemini-grounding set-model <model-id>");
       setSavedConfig({ model });
       console.log(`Saved — Model: ${model}`);
       break;
     }
 
     case "set-thinking": {
-      const level = rest[0];
-      if (level === undefined) {
+      if (rest.length !== 1) {
         fail(`Usage: gemini-grounding set-thinking <${THINKING_LEVELS.join("|")}>`);
       }
-      requireThinkingLevel(level, "set-thinking");
+      const level = requireThinkingLevel(rest[0], "set-thinking");
       setSavedConfig({ thinkingLevel: level });
       console.log(`Saved — Thinking level: ${level}`);
       break;
     }
 
     default: {
-      // Alles, was kein bekannter Unterbefehl ist, gilt als Suchanfrage. Das
-      // join(" ") setzt eine unquotierte Frage wieder zusammen, die die Shell
-      // an den Leerzeichen in mehrere Argumente zerlegt hat.
-      const query = args.join(" ");
+      // Alles, was kein bekannter Unterbefehl ist, gilt als Suchanfrage — und
+      // zwar als genau ein Argument. Eine unquotiert getippte Frage wieder
+      // zusammenzusetzen waere truegerisch: takeFlag hat vorher ein
+      // "--thinking high" mitten aus ihr herausgeschnitten, sodass eine
+      // sinnentstellte Anfrage abgeschickt wuerde, ohne dass es auffaellt.
+      if (rest.length > 0) {
+        fail("The query must be a single argument — put it in quotes.");
+      }
+      const query = command.trim();
+      // Ohne diese Pruefung ginge ein leeres Argument — etwa aus einer nicht
+      // gesetzten Shell-Variablen — als Anfrage an die API und kostet Tokens.
+      if (query === "") fail("The query is empty.");
 
       // Gleiches Muster wie im MCP-Handler (index.js): ein Flag gilt nur fuer
       // diesen Aufruf, sonst greift der gespeicherte Standard. config.json wird
@@ -149,17 +181,27 @@ try {
       console.log(text);
     }
   }
+}
+
+try {
+  await main();
 } catch (error) {
-  // console.error(error) gibt denselben vollstaendigen Stacktrace aus, den Node
-  // bei einem unbehandelten Fehler zeigen wuerde — beim Testen ist genau das
-  // gewollt, im Gegensatz zu index.js, das den Fehler fuer den Client auf eine
-  // Zeile verdichten muss.
+  // Bei einem echten Laufzeitfehler gibt console.error(error) denselben
+  // vollstaendigen Stacktrace aus, den Node bei einem unbehandelten Fehler
+  // zeigen wuerde — beim Testen ist genau das gewollt, im Gegensatz zu
+  // index.js, das den Fehler fuer den Client auf eine Zeile verdichten muss.
+  // Ein Bedienfehler braucht dagegen keinen Stacktrace, nur die Meldung.
   //
   // Gefangen wird er trotzdem, weil Node den Prozess bei einer unbehandelten
   // Rejection hart beendet: haengt dabei noch eine offene Netzwerkverbindung,
   // bricht libuv unter Windows mit "Assertion failed ... src\win\async.c" ab
   // und der Prozess endet mit 0xC0000409 statt mit dem vereinbarten Code 1.
-  // process.exitCode statt process.exit(), damit Node regulaer herunterfaehrt.
-  console.error(error);
+  //
+  // process.exitCode statt process.exit(), damit Node regulaer herunterfaehrt —
+  // das gilt ausnahmslos, deshalb wirft auch fail() nur einen UsageError,
+  // statt selbst zu beenden: stdout und stderr sind unter Windows auf einem
+  // TTY asynchron, sodass process.exit() eine laengere Ausgabe wie HELP
+  // abschneiden koennte.
+  console.error(error instanceof UsageError ? error.message : error);
   process.exitCode = 1;
 }
