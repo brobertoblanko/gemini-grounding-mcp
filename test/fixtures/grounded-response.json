@@ -1,0 +1,360 @@
+{
+  "text": "In **Python 3.13** hat sich bei der Standardbibliothek viel getan. Neben zahlreichen Detailverbesserungen und Performance-Optimierungen stehen vor allem das **große Aufräumen veralteter Module (PEP 594)** sowie **neue Utilities für Typing und Objektbehandlung** im Vordergrund.\n\n---\n\n### 1. Entfernung veralteter Module (PEP 594 – „Dead Batteries“)\nIm Rahmen von PEP 594 wurden **19 veraltete Module** endgültig aus der Standardbibliothek entfernt, nachdem sie seit Python 3.11 als *deprecated* markiert waren:\n\n*   **Audio & Medien:** `aifc`, `audioop`, `chunk`, `imghdr`, `ossaudiodev`, `sndhdr`, `sunau`\n*   **Web, CGI & Netzwerk:** `cgi`, `cgitb`, `mailcap`, `nntplib`, `telnetlib`, `uu`\n*   **System, Plattform & Sicherheit:** `crypt`, `msilib`, `nis`, `pipes`, `spwd`, `xdrlib`\n\n*Hinweis:* Falls Ihr Code diese Module noch verwendet hat, müssen Sie auf externe Drittanbieter-Bibliotheken (PyPI) oder modernere Standardmodule (wie `subprocess` statt `pipes` oder `hashlib` statt `crypt`) umsteigen.\n\n---\n\n### 2. Neue Module\n*   **`dbm.sqlite3`**: Ein neues SQLite-basiertes Backend für das `dbm`-Modul. Es ermöglicht die Verwendung von SQLite als Datenbank-Engine für Schlüssel-Wert-Speicher in `dbm`.\n\n---\n\n### 3. Wichtige Funktionsneuerungen & Modulverbesserungen\n\n#### **`warnings` / `typing`**\n*   **`@warnings.deprecated()` (PEP 702):** Ein neuer offizieller Dekorator, um Funktionen, Methoden oder Klassen als veraltet zu markieren. Er wird sowohl von statischen Typprüfern (wie MyPy oder Pyright) erkannt als auch zur Laufzeit (durch Auslösen einer `DeprecationWarning`) ausgewertet.\n*   **`typing.TypeIs` (PEP 742):** Eine neue Alternative zu `TypeGuard` für eine präzisere und intuitivere Typverfeinerung (*Type Narrowing*) in statischen Typecheckern.\n*   **`typing.ReadOnly`:** Bietet die Möglichkeit, einzelne Felder in einem `TypedDict` explizit als schreibgeschützt zu kennzeichnen.\n*   **Default-Werte für Typ-Parameter (PEP 696):** Generic TypeVars können nun Standardtypen besitzen (z. B. `T = TypeVar(\"T\", default=int)`).\n\n#### **`copy`**\n*   **`copy.replace()`:** Eine neue allgemeine Hilfsfunktion zum Kopieren eines Objekts mit geänderten Attributwerten. Sie ruft intern die `__replace__()`-Methode auf und funktioniert z. B. mit `dataclasses`, `namedtuple` oder benutzerdefinierten Klassen.\n\n#### **`argparse`**\n*   **Markierung veralteter CLI-Argumente:** Die Methoden `add_argument()` und `add_parser()` unterstützen nun das Argument `deprecated=...`. Damit lassen sich Befehlszeilenoptionen oder Subbefehle als veraltet deklarieren, ohne benutzerdefinierten Code schreiben zu müssen.\n\n#### **`os`**\n*   **`os.process_cpu_count()`:** Eine neue Funktion, die im Gegensatz zu `os.cpu_count()` die Anzahl der CPUs zurückgibt, die dem **aktuellen Prozess** tatsächlich zugewiesen sind (sehr nützlich bei Ausführung in Docker-Containern oder cgroups).\n\n#### **`pathlib`**\n*   **`Path.full_match()`:** Bietet bessere Musterübereinstimmungen (Regex/Glob) für Pfade.\n*   Zudem wurden Performance-Optimierungen und Erweiterungen bei Methoden wie `glob()` und `walk()` vorgenommen.\n\n#### **`array`**\n*   **Neuer Typcode `'w'`:** Hinzugefügt für `Py_UCS4` Unicode-Zeichen. Er ersetzt den bisherigen, nun veralteten Typcode `'u'`.\n\n#### **`random`**\n*   **CLI-Unterstützung:** Das Modul kann nun direkt über die Befehlszeile aufgerufen werden (z. B. `python -m random`), um Zufallswerte oder -auswahlen im Terminal zu generieren.\n\n#### **`asyncio`**\n*   Vermeidung unnötiger Datenkopien beim Schreiben auf Sockets (Nutzung von `sendmsg()` auf unterstützten UNIX-Plattformen) für eine spürbar bessere Netzwerk-Performance.\n\n#### **`dis`**\n*   Verbesserte Disassemblierung von CPython-Bytecode für bessere Introspektion und Debugging.\n\n---\n\n### 4. Neue Deprecations (Ankündigung künftiger Entfernungen)\nIn Python 3.13 wurden weitere ältere Schnittstellen als veraltet markiert, darunter:\n*   Einige historische Methoden in `wave` (wie `getmark()`, `setmark()`).\n*   Verwendungsformen von `typing.no_type_check_decorator()`.\n*   Nicht dokumentierte interne C-Helper im `ctypes`-Modul.\n\n---\n\n### Zusammenfassung\nPython 3.13 konzentriert sich in der Standardbibliothek stark darauf, den Altlasten-Ballast abzuwerfen (PEP 594) und moderne Entwicklungs-Workflows rund um **Typisierung (PEP 702, PEP 742)** sowie **Objektmanipulation (`copy.replace`)** robuster und schlanker zu gestalten.",
+  "supports": [
+    {
+      "segment": {
+        "endIndex": 65,
+        "text": "In **Python 3.13** hat sich bei der Standardbibliothek viel getan"
+      },
+      "groundingChunkIndices": [
+        0
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 67,
+        "endIndex": 206,
+        "text": "Neben zahlreichen Detailverbesserungen und Performance-Optimierungen stehen vor allem das **große Aufräumen veralteter Module (PEP 594)**"
+      },
+      "groundingChunkIndices": [
+        0,
+        1
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 67,
+        "endIndex": 279,
+        "text": "Neben zahlreichen Detailverbesserungen und Performance-Optimierungen stehen vor allem das **große Aufräumen veralteter Module (PEP 594)** sowie **neue Utilities für Typing und Objektbehandlung** im Vordergrund"
+      },
+      "groundingChunkIndices": [
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 294,
+        "endIndex": 519,
+        "text": "Entfernung veralteter Module (PEP 594 – „Dead Batteries“)\nIm Rahmen von PEP 594 wurden **19 veraltete Module** endgültig aus der Standardbibliothek entfernt, nachdem sie seit Python 3.11 als *deprecated* markiert waren"
+      },
+      "groundingChunkIndices": [
+        0,
+        1
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 522,
+        "endIndex": 616,
+        "text": "*   **Audio & Medien:** `aifc`, `audioop`, `chunk`, `imghdr`, `ossaudiodev`, `sndhdr`, `sunau`"
+      },
+      "groundingChunkIndices": [
+        1,
+        5
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 522,
+        "endIndex": 701,
+        "text": "*   **Audio & Medien:** `aifc`, `audioop`, `chunk`, `imghdr`, `ossaudiodev`, `sndhdr`, `sunau`\n*   **Web, CGI & Netzwerk:** `cgi`, `cgitb`, `mailcap`, `nntplib`, `telnetlib`, `uu`"
+      },
+      "groundingChunkIndices": [
+        1,
+        5
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 522,
+        "endIndex": 793,
+        "text": "*   **Audio & Medien:** `aifc`, `audioop`, `chunk`, `imghdr`, `ossaudiodev`, `sndhdr`, `sunau`\n*   **Web, CGI & Netzwerk:** `cgi`, `cgitb`, `mailcap`, `nntplib`, `telnetlib`, `uu`\n*   **System, Plattform & Sicherheit:** `crypt`, `msilib`, `nis`, `pipes`, `spwd`, `xdrlib`"
+      },
+      "groundingChunkIndices": [
+        1,
+        5
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 806,
+        "endIndex": 1013,
+        "text": "Falls Ihr Code diese Module noch verwendet hat, müssen Sie auf externe Drittanbieter-Bibliotheken (PyPI) oder modernere Standardmodule (wie `subprocess` statt `pipes` oder `hashlib` statt `crypt`) umsteigen"
+      },
+      "groundingChunkIndices": [
+        5
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 1051,
+        "endIndex": 1118,
+        "text": "sqlite3`**: Ein neues SQLite-basiertes Backend für das `dbm`-Modul"
+      },
+      "groundingChunkIndices": [
+        6
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 1120,
+        "endIndex": 1220,
+        "text": "Es ermöglicht die Verwendung von SQLite als Datenbank-Engine für Schlüssel-Wert-Speicher in `dbm`"
+      },
+      "groundingChunkIndices": [
+        6
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 1335,
+        "endIndex": 1457,
+        "text": "deprecated()` (PEP 702):** Ein neuer offizieller Dekorator, um Funktionen, Methoden oder Klassen als veraltet zu markieren"
+      },
+      "groundingChunkIndices": [
+        3,
+        7
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 1459,
+        "endIndex": 1611,
+        "text": "Er wird sowohl von statischen Typprüfern (wie MyPy oder Pyright) erkannt als auch zur Laufzeit (durch Auslösen einer `DeprecationWarning`) ausgewertet"
+      },
+      "groundingChunkIndices": [
+        3,
+        7
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 1627,
+        "endIndex": 1783,
+        "text": "TypeIs` (PEP 742):** Eine neue Alternative zu `TypeGuard` für eine präzisere und intuitivere Typverfeinerung (*Type Narrowing*) in statischen Typecheckern"
+      },
+      "groundingChunkIndices": [
+        8,
+        9
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 2096,
+        "endIndex": 2202,
+        "text": "replace()`:** Eine neue allgemeine Hilfsfunktion zum Kopieren eines Objekts mit geänderten Attributwerten"
+      },
+      "groundingChunkIndices": [
+        10
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 2204,
+        "endIndex": 2251,
+        "text": "Sie ruft intern die `__replace__()`-Methode auf"
+      },
+      "groundingChunkIndices": [
+        4
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 2275,
+        "endIndex": 2339,
+        "text": "mit `dataclasses`, `namedtuple` oder benutzerdefinierten Klassen"
+      },
+      "groundingChunkIndices": [
+        4,
+        11
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 2342,
+        "endIndex": 2503,
+        "text": "#### **`argparse`**\n*   **Markierung veralteter CLI-Argumente:** Die Methoden `add_argument()` und `add_parser()` unterstützen nun das Argument `deprecated=...`"
+      },
+      "groundingChunkIndices": [
+        12,
+        6
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 2505,
+        "endIndex": 2637,
+        "text": "Damit lassen sich Befehlszeilenoptionen oder Subbefehle als veraltet deklarieren, ohne benutzerdefinierten Code schreiben zu müssen"
+      },
+      "groundingChunkIndices": [
+        12,
+        6
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 3133,
+        "endIndex": 3222,
+        "text": "#### **`array`**\n*   **Neuer Typcode `'w'`:** Hinzugefügt für `Py_UCS4` Unicode-Zeichen"
+      },
+      "groundingChunkIndices": [
+        12
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 3224,
+        "endIndex": 3279,
+        "text": "Er ersetzt den bisherigen, nun veralteten Typcode `'u'`"
+      },
+      "groundingChunkIndices": [
+        13
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 3402,
+        "endIndex": 3480,
+        "text": "`python -m random`), um Zufallswerte oder -auswahlen im Terminal zu generieren"
+      },
+      "groundingChunkIndices": [
+        14
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 3803,
+        "endIndex": 4018,
+        "text": "Neue Deprecations (Ankündigung künftiger Entfernungen)\nIn Python 3.13 wurden weitere ältere Schnittstellen als veraltet markiert, darunter:\n*   Einige historische Methoden in `wave` (wie `getmark()`, `setmark()`)"
+      },
+      "groundingChunkIndices": [
+        15
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 4054,
+        "endIndex": 4080,
+        "text": "no_type_check_decorator()`"
+      },
+      "groundingChunkIndices": [
+        16
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 4082,
+        "endIndex": 4140,
+        "text": "*   Nicht dokumentierte interne C-Helper im `ctypes`-Modul"
+      },
+      "groundingChunkIndices": [
+        15
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 4148,
+        "endIndex": 4280,
+        "text": "### Zusammenfassung\nPython 3.13 konzentriert sich in der Standardbibliothek stark darauf, den Altlasten-Ballast abzuwerfen (PEP 594)"
+      },
+      "groundingChunkIndices": [
+        0,
+        1
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 4148,
+        "endIndex": 4358,
+        "text": "### Zusammenfassung\nPython 3.13 konzentriert sich in der Standardbibliothek stark darauf, den Altlasten-Ballast abzuwerfen (PEP 594) und moderne Entwicklungs-Workflows rund um **Typisierung (PEP 702, PEP 742)**"
+      },
+      "groundingChunkIndices": [
+        3,
+        8
+      ]
+    },
+    {
+      "segment": {
+        "startIndex": 4393,
+        "endIndex": 4440,
+        "text": "replace`)** robuster und schlanker zu gestalten"
+      },
+      "groundingChunkIndices": [
+        10
+      ]
+    }
+  ],
+  "chunkNumbers": [
+    [
+      0,
+      1
+    ],
+    [
+      1,
+      2
+    ],
+    [
+      2,
+      3
+    ],
+    [
+      3,
+      4
+    ],
+    [
+      4,
+      4
+    ],
+    [
+      5,
+      5
+    ],
+    [
+      6,
+      4
+    ],
+    [
+      7,
+      6
+    ],
+    [
+      8,
+      4
+    ],
+    [
+      9,
+      7
+    ],
+    [
+      10,
+      8
+    ],
+    [
+      11,
+      9
+    ],
+    [
+      12,
+      10
+    ],
+    [
+      13,
+      11
+    ],
+    [
+      14,
+      12
+    ],
+    [
+      15,
+      13
+    ],
+    [
+      16,
+      14
+    ]
+  ],
+  "sourceCount": 14
+}

@@ -40,6 +40,12 @@ Umgesetzt in flachen Modulen ohne `src/`-Layout und ohne Build-Step
   `server.registerTool(...)`, baut den stdio-Transport auf.
 - `gemini.js` — kapselt den `GoogleGenAI`-Aufruf inkl. der drei kombinierten
   Built-in-Tools, baut Quellenliste und Footer aus der API-Antwort.
+- `citations.js` — setzt die Belegmarker in den Antworttext. Eigene Datei, weil
+  dieser Code als einziger im Projekt **ohne Netzwerk und ohne API-Key
+  vollständig prüfbar** ist: Rein gehen Text und Metadaten, heraus kommt Text —
+  kein `getClient()`, keine Konfiguration, kein Zufall. Getestet gegen eine
+  gespeicherte echte Antwort in `test/citations.test.js` (`npm test`, über
+  Nodes eingebauten Test-Runner, ohne zusätzliche Abhängigkeit).
 - `config.js` — liest/schreibt die dauerhafte Modellwahl in einer
   scriptrelativen `config.json` (nicht `./config.json`, da das
   Arbeitsverzeichnis eines per stdio gestarteten MCP-Servers nicht garantiert
@@ -245,7 +251,7 @@ Wichtige Parameter-Hinweise aus der Dokumentation:
 
 ## Antwort: Quellenliste und Token-Footer
 
-Jede Antwort des MCP-Servers enthält neben dem eigentlichen Antworttext zwei
+Jede Antwort des MCP-Servers enthält neben dem eigentlichen Antworttext drei
 zusätzliche, direkt aus der Gemini-API-Antwort ausgelesene Teile (nicht selbst
 berechnet oder geschätzt):
 
@@ -254,7 +260,10 @@ berechnet oder geschätzt):
    oder die Aussage einer Quelle zuordnen), nicht nur eine reine Zahl. Sie
    führt Google-Search-Treffer und per URL Context gelesene Seiten
    zusammen und dedupliziert nach URL.
-2. Einen **Footer** mit Input-/Output-/Thinking-Tokens, Quellenanzahl sowie
+2. **Belegmarker** (`[1]`, `[1][3]`) im Fließtext an den Stellen, für die die
+   API eine Quelle ausweist — damit sichtbar wird, welche Aussagen belegt sind
+   und welche das Modell aus eigenem Wissen ergänzt hat.
+3. Einen **Footer** mit Input-/Output-/Thinking-Tokens, Quellenanzahl sowie
    dem verwendeten Modell und Thinking-Level, zur Transparenz über den
    tatsächlichen Ressourcenverbrauch und die genutzte Modell-/Thinking-Wahl
    des Tool-Calls — der User soll nie raten müssen, was verwendet wurde.
@@ -282,6 +291,102 @@ Antwort, nicht davor.
 Bewusst **nicht** begrenzt wird die Länge von `codeExecutionResult.output`:
 Auch eine lange Ausgabe ist Teil des Rechenwegs, und ein Umfang, der im
 Research-Kontext stören würde, ist die seltene Ausnahme.
+
+### Belegmarker im Fließtext
+
+Zusätzlich zur Quellenliste am Ende stehen Marker direkt im Antworttext, an
+den Stellen, für die die API über `groundingMetadata.groundingSupports` eine
+Quelle ausweist:
+
+```text
+In Python 3.13 wurde `date_parser` entfernt[1]. Der Typcode 'w' ist neu[1][3].
+Das Standardverhalten des C-Parsers ist unverändert.
+```
+
+Format: `[1]` direkt am Ende der belegten Textstelle, mehrere Quellen als
+`[1][3]` (entspricht Googles Referenzimplementierung in der Gemini CLI). Die
+Nummern sind dieselben wie in der Quellenliste.
+
+**Der Zweck ist nicht in erster Linie, *welche* Quelle einen Satz stützt,
+sondern *ob* er überhaupt belegt ist.** Gemessen an einer echten Antwort waren
+27 % des Textes durch keinen einzigen Support gedeckt — Aussagen aus dem
+Modellgedächtnis, optisch nicht von den recherchierten zu unterscheiden. Der
+Leser dieses Servers schreibt gegen solche Sätze anschließend Code.
+
+#### Semantik — wichtig
+
+| Aussage | Gilt |
+| --- | --- |
+| Marker vorhanden ⇒ Stelle ist belegt | zuverlässig |
+| Marker fehlt ⇒ Stelle ist unbelegt | **nur ein Indiz, kein Beweis** |
+
+Ein Marker kann aus vier Gründen fehlen, von denen nur der erste die gemeinte
+Bedeutung hat:
+
+1. Die Stelle ist tatsächlich ungegroundet.
+2. Die Verifikation gegen `segment.text` schlug fehl (siehe unten).
+3. Die Position lag in einem Markdown-Codeabschnitt.
+4. Die Quelle stammt **ausschließlich** aus `urlContextMetadata` — zu solchen
+   Einträgen liefert die API keine `groundingSupports`, sie können also keinen
+   Marker tragen.
+
+Die Fälle 2 und 3 sind zählbar und stehen als `⚠️ n markers dropped` im Footer,
+sobald sie über null liegen. Fall 4 ist an der Quellenliste erkennbar.
+
+Zu Fall 4 eine Messung, die gegen die naheliegende Erwartung ausfiel: Bei einer
+Anfrage mit konkreter URL hat URL Context nachweislich gefeuert
+(`urlRetrievalStatus: URL_RETRIEVAL_STATUS_SUCCESS`) — die gelesene Seite stand
+aber **zusätzlich als `groundingChunk`** in der Antwort, mit echtem Seitentitel,
+direkter URL statt vertexaisearch-Weiterleitung und drei eigenen
+`groundingSupports`. Sie war damit vollständig durch Marker abgedeckt und kam
+über die Deduplizierung nach URL gar nicht mehr im URL-Context-Zweig an.
+
+Fall 4 greift also nur, wenn eine per URL Context gelesene Seite **nicht**
+zugleich unter den `groundingChunks` auftaucht. Ob und wann das vorkommt, ist
+offen — beobachtet wurde bisher nur der günstige Fall. „Kein Marker ⇒ unbelegt"
+bleibt deshalb ein Indiz, ist aber weniger stumpf als beim Aufstellen dieser
+Regel angenommen.
+
+#### Umsetzung (`citations.js`)
+
+- **Byte-Offsets, nicht Zeichenpositionen.** `startIndex`/`endIndex` sind laut
+  SDK-Typdefinition „measured in bytes". An einer deutschen Testantwort stimmte
+  keine einzige von 28 Positionen zeichenbasiert, alle 28 bytebasiert; Text und
+  Bytes liefen am Ende um 44 Stellen auseinander. Eingefügt wird deshalb über
+  `Buffer`. Google selbst hatte diesen Fehler in der Gemini CLI
+  ([PR #5956](https://github.com/google-gemini/gemini-cli/pull/5956),
+  aufgefallen an japanischem Text).
+- **Pro Part, vor dem Zusammenfügen.** Die Offsets zählen ab dem Anfang jedes
+  einzelnen Parts (`Segment.partIndex`, „Offset from the start of the Part"),
+  nicht ab dem Anfang des zusammengesetzten Textes. `buildText` setzt die Marker
+  deshalb innerhalb der Schleife über die Parts — vor dem `join("\n\n")` und vor
+  den Code-Execution-Blöcken, die vom Server erzeugt werden und in der Zählung
+  der API gar nicht existieren.
+- **Verifikation gegen `segment.text`.** Die API liefert den erwarteten
+  Ausschnitt mit. Passt er nicht zur berechneten Position, wird der Marker
+  verworfen statt geraten. Folge: **Ein Marker kann nie an der falschen Stelle
+  landen — er kann nur fehlen.** Das ist zugleich das Sicherheitsnetz gegen eine
+  stille Änderung der Offset-Semantik durch Google.
+- **Keine Marker in Codeabschnitten.** Ein Marker mitten in einem Codebeispiel
+  macht aus `copy.replace(obj, x=1)` ein `copy.replace(obj[3], x=1)` —
+  syntaktisch gültig, inhaltlich falsch, und unauffällig. Umzäunte Blöcke und
+  Inline-Code werden in einem Durchlauf als Intervalle bestimmt (die Zäune
+  stehen in der Alternation vorn und schlucken damit alles, was in ihnen steht);
+  fällt die Zielposition hinein, wird der Marker verworfen. Nicht erkannt werden eingerückte Codeblöcke (vier Leerzeichen) —
+  die einzige bekannte Lücke.
+- **Nummern über `chunkNumbers`, nie über `index + 1`.** Siehe „Quellenliste
+  erzeugen" unten.
+
+Protobuf lässt Defaultwerte weg: `startIndex` und `partIndex` fehlen im JSON,
+wenn sie 0 sind — beide brauchen `?? 0`. `confidenceScores` und `renderedParts`
+wurden als Qualitätsfilter geprüft und verworfen: bei Gemini 3.x in der Praxis
+leer (0 von 28 befüllt).
+
+Bewusst **nicht** zusammengefasst werden redundante Marker. Verschachtelte
+Supports (gemessen: vier Supports mit gleichem Startpunkt, verschiedenen
+Endpunkten und derselben Quelle) erzeugen mehrere identische Marker in einem
+Absatz. Zusammenfassen verwürfe Auflösung, und für einen maschinellen Leser ist
+Rauschen billiger als eine fehlende Markierung.
 
 ### Hinweis bei nicht regulär beendeter Antwort
 
@@ -333,6 +438,9 @@ const urlContextEntries = candidate?.urlContextMetadata?.urlMetadata ?? []
 | Such-Quellen       | `candidates[0].groundingMetadata.groundingChunks`              | Array der bei der Google-Suche gefundenen Webquellen          |
 | Such-Quell-URL     | `groundingChunks[i].web.uri`                                   | URL der einzelnen Suchquelle                                  |
 | Such-Quell-Titel   | `groundingChunks[i].web.title`                                 | Titel der einzelnen Suchquelle                                |
+| Belegzuordnung     | `candidates[0].groundingMetadata.groundingSupports`            | Textstelle → Quelle, Grundlage der Belegmarker                |
+| Belegte Textstelle | `groundingSupports[i].segment`                                 | `startIndex`/`endIndex` (in **Bytes**), `text`, `partIndex`   |
+| Belegte Quellen    | `groundingSupports[i].groundingChunkIndices`                   | Indizes in `groundingChunks` — **nicht** in der Quellenliste  |
 | URL-Context-Quelle | `candidates[0].urlContextMetadata.urlMetadata[i].retrievedUrl` | URL einer von Gemini gezielt gelesenen Seite (kein Grounding) |
 
 Beide Quell-Arrays sind nur vorhanden, wenn das jeweilige Tool tatsächlich
@@ -343,24 +451,39 @@ absichern.
 
 Such-Treffer und URL-Context-Seiten werden zu einer Liste zusammengeführt und
 nach URL entduplifiziert (Such-Treffer haben Vorrang, da sie einen echten
-Seitentitel mitbringen — URL-Context-Einträge liefern nur die URL selbst):
+Seitentitel mitbringen — URL-Context-Einträge liefern nur die URL selbst).
+
+`buildSourceList` liefert dabei **zwei** Dinge: die Liste selbst und die
+Zuordnung `chunkNumbers` vom Index in `groundingChunks` auf die Nummer in der
+ausgegebenen Liste. Beide Zählungen laufen auseinander, weil `groundingChunks`
+Suchtreffer abbildet und nicht Quellen — gemessen 17 Treffer bei 14 eindeutigen
+URLs, in einem früheren Lauf sogar 14 bei 4. Die Belegmarker dürfen deshalb
+**niemals** über `index + 1` nummeriert werden; sie liefen sonst über das Ende
+der Quellenliste hinaus oder verwiesen auf die falsche Quelle.
 
 ```javascript
-const seen = new Set();
+const numberByUri = new Map();
+const chunkNumbers = new Map();
 const sources = [];
 
-for (const chunk of searchChunks) {
-  const uri = chunk.web?.uri;
-  if (!uri || seen.has(uri)) continue;
-  seen.add(uri);
-  sources.push({ title: chunk.web?.title ?? uri, uri });
-}
+const addSource = (title, uri) => {
+  if (!numberByUri.has(uri)) {
+    sources.push({ title, uri });
+    numberByUri.set(uri, sources.length);
+  }
+  return numberByUri.get(uri);
+};
 
+searchChunks.forEach((chunk, index) => {
+  const uri = chunk.web?.uri;
+  if (!uri) return;
+  chunkNumbers.set(index, addSource(chunk.web?.title ?? uri, uri));
+});
+
+// URL-Context-Quellen stehen hinter den Suchtreffern und erzeugen keine
+// Marker — sie beeinflussen die Nummerierung damit nicht.
 for (const entry of urlContextEntries) {
-  const uri = entry.retrievedUrl;
-  if (!uri || seen.has(uri)) continue;
-  seen.add(uri);
-  sources.push({ title: uri, uri });
+  if (entry.retrievedUrl) addSource(entry.retrievedUrl, entry.retrievedUrl);
 }
 
 const sourceList = sources
@@ -368,36 +491,50 @@ const sourceList = sources
   .join("\n");
 ```
 
+Chunks ohne `uri` schaffen es weder in die Liste noch in `chunkNumbers` und
+erzeugen folglich keinen Marker.
+
 ### Footer-Format im Tool-Ergebnis
 
 ```javascript
-const footer =
-  `\n\n---\n🔢 ${inputTokens} Input / ${outputTokens} Output / ${thinkingTokens} Thinking Tokens ` +
-  `| 🔍 ${sources.length} Quellen | 🤖 ${model} (thinking: ${thinkingLevel})`;
+// Verworfene Belegmarker nur, wenn es welche gab — der Normalfall soll den
+// Footer nicht verlaengern.
+const droppedNote = dropped > 0 ? ` | ⚠️ ${dropped} markers dropped` : "";
 
-const sourcesBlock = sourceList ? `\n\nQuellen:\n${sourceList}` : "";
+const footer =
+  `\n\n---\n🔢 ${inputTokens} input / ${outputTokens} output / ${thinkingTokens} thinking tokens ` +
+  `| 🔍 ${sources.length} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}`;
+
+const sourcesBlock = sourceList ? `\n\nSources:\n${sourceList}` : "";
 
 return {
   content: [{ type: "text", text: text + notice + sourcesBlock + footer }],
 };
 ```
 
-`text` stammt dabei aus `buildText(candidate)`, `notice` aus `formatNotice(...)` —
-siehe die beiden Abschnitte oben.
+`text` und `dropped` stammen dabei aus `buildText(candidate, { supports,
+chunkNumbers })`, `notice` aus `formatNotice(...)` — siehe die Abschnitte oben.
 
 Beispielausgabe am Ende jeder Antwort:
 
 ```text
-Quellen:
+Sources:
 [1] Gemini API Docs — https://ai.google.dev/gemini-api/docs/models
 [2] Google Gen AI SDK — https://googleapis.github.io/js-genai/
 
 ---
-🔢 245 Input / 89 Output / 40 Thinking Tokens | 🔍 2 Quellen | 🤖 gemini-flash-latest (thinking: high)
+🔢 245 input / 89 output / 40 thinking tokens | 🔍 2 sources | 🤖 gemini-flash-latest (thinking: high)
 ```
 
+Die Zahl der verworfenen Marker gehört in den Footer, weil sie die
+Aussagekraft der Antwort verändert: Fehlt ein Marker, kann die Stelle
+ungegroundet sein — oder die Prüfung hat ihn verworfen. Das entspricht dem
+Zweck des Footers, den tatsächlichen Zustand jedes einzelnen Aufrufs sichtbar
+zu machen.
+
 Tatsächlich implementiert in `gemini.js` (`buildText`, `formatNotice`,
-`buildSourceList`, `formatSourcesBlock`, `formatFooter`).
+`buildSourceList`, `formatSourcesBlock`, `formatFooter`) und `citations.js`
+(`insertCitations`).
 
 ## Konfigurierbare Modell- und Thinking-Level-Wahl
 

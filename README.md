@@ -8,7 +8,7 @@ kein automatischer Versionswechsel im Hintergrund.
 **Nutzungsrahmen:** Ausschließlich für Research- und Rechercheanfragen. Kein
 produktiver Einsatz, keine Anbindung an sensible Systeme.
 
-Details zu Architektur und Entscheidungen: siehe [specs.md](./specs.md).
+Details zu Architektur und Entscheidungen: siehe [specs.md](./docs/specs.md).
 Verhaltensregeln für Claude Code in diesem Projekt: siehe [CLAUDE.md](./CLAUDE.md).
 
 ## Voraussetzungen

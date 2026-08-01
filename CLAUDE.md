@@ -10,7 +10,7 @@ um sich nicht rein auf Trainingsdaten verlassen zu müssen. Dies ist eine Ergän
 zum bereits implementierten lokalen Memory-System.
 
 Architektur, genutzte Gemini-API-Tools, Antwortformat und technische
-Referenzen: siehe [specs.md](./specs.md). Installation und Registrierung:
+Referenzen: siehe [specs.md](./docs/specs.md). Installation und Registrierung:
 siehe [README.md](./README.md).
 
 ## Nutzungsrahmen — WICHTIG

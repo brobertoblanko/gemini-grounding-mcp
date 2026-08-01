@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { insertCitations } from "./citations.js";
 
 function getClient() {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -16,29 +17,49 @@ function getClient() {
  * - groundingChunks: Treffer der Google-Suche
  * - urlContextMetadata: Seiten, die Gemini gezielt per URL Context gelesen hat
  * Beide Listen werden zusammengefuehrt und nach URL entduplifiziert.
+ *
+ * Liefert zusaetzlich chunkNumbers: die Zuordnung vom Index in
+ * groundingChunks auf die Nummer in der AUSGEGEBENEN Liste. Beide Zaehlungen
+ * laufen auseinander, weil groundingChunks Suchtreffer abbildet und nicht
+ * Quellen — gemessen 17 Treffer bei 14 eindeutigen URLs. Ohne diese Zuordnung
+ * verwiesen die Marker im Text auf Nummern, die es in der Liste nicht gibt.
  */
 function buildSourceList(candidate) {
   const searchChunks = candidate?.groundingMetadata?.groundingChunks ?? [];
   const urlContextEntries = candidate?.urlContextMetadata?.urlMetadata ?? [];
 
-  const seen = new Set();
+  const numberByUri = new Map();
+  const chunkNumbers = new Map();
   const sources = [];
 
-  for (const chunk of searchChunks) {
+  const addSource = (title, uri) => {
+    if (!numberByUri.has(uri)) {
+      sources.push({ title, uri });
+      numberByUri.set(uri, sources.length);
+    }
+    return numberByUri.get(uri);
+  };
+
+  searchChunks.forEach((chunk, index) => {
     const uri = chunk.web?.uri;
-    if (!uri || seen.has(uri)) continue;
-    seen.add(uri);
-    sources.push({ title: chunk.web?.title ?? uri, uri });
-  }
+    if (!uri) return;
+    chunkNumbers.set(index, addSource(chunk.web?.title ?? uri, uri));
+  });
 
+  // URL-Context-Quellen stehen hinter den Suchtreffern und beeinflussen die
+  // Nummerierung der Marker deshalb nicht.
+  //
+  // Gemessen an einer Anfrage mit konkreter URL: Die gelesene Seite stand
+  // zusaetzlich als groundingChunk in der Antwort — mit echtem Seitentitel,
+  // direkter URL und eigenen Supports. Sie kam ueber die Deduplizierung hier
+  // also gar nicht mehr an und bekam trotzdem Marker. Hier landet nur eine
+  // Seite, die NICHT zugleich Chunk ist; die bleibt dann ohne Marker, weil es
+  // zu ihr keine Supports gibt.
   for (const entry of urlContextEntries) {
-    const uri = entry.retrievedUrl;
-    if (!uri || seen.has(uri)) continue;
-    seen.add(uri);
-    sources.push({ title: uri, uri });
+    if (entry.retrievedUrl) addSource(entry.retrievedUrl, entry.retrievedUrl);
   }
 
-  return sources;
+  return { sources, chunkNumbers };
 }
 
 function formatSourcesBlock(sources) {
@@ -62,18 +83,34 @@ function formatSourcesBlock(sources) {
  * einem Codeblock beginnt und die eigentliche Auskunft erst darunter steht.
  * Der Rechenweg ist ein Beleg und gehoert damit dorthin, wo auch die
  * Quellenliste steht: hinter die Antwort, nicht davor.
+ *
+ * Hier werden ausserdem die Belegmarker gesetzt (siehe citations.js) —
+ * bewusst an dieser Stelle, weil die Parts nur hier noch einzeln vorliegen:
+ * Die Offsets der API zaehlen ab dem Anfang JEDES Parts, nach dem
+ * join("\n\n") waeren sie ab dem zweiten Part um zwei Bytes verschoben.
  */
-function buildText(candidate) {
+function buildText(candidate, { supports, chunkNumbers }) {
   const textBlocks = [];
   const codeBlocks = [];
+  let dropped = 0;
 
-  for (const part of candidate?.content?.parts ?? []) {
+  // forEach statt for...of: Der Schleifenindex IST der partIndex, auf den sich
+  // segment.partIndex bezieht. Denk-Parts werden zwar uebersprungen, zaehlen
+  // dabei aber mit — partIndex zaehlt ueber ALLE Parts des Kandidaten.
+  (candidate?.content?.parts ?? []).forEach((part, partIndex) => {
     // Denk-Parts gehoeren nicht in die Ausgabe — ihr Umfang steht bereits als
     // Thinking-Tokens im Footer.
-    if (part.thought) continue;
+    if (part.thought) return;
 
     if (part.text) {
-      textBlocks.push(part.text);
+      // partIndex fehlt im JSON, wenn er 0 ist (Protobuf-Default), daher ?? 0.
+      const result = insertCitations({
+        text: part.text,
+        supports: supports.filter((s) => (s.segment?.partIndex ?? 0) === partIndex),
+        chunkNumbers,
+      });
+      textBlocks.push(result.text);
+      dropped += result.dropped;
     } else if (part.executableCode?.code) {
       // language ist das Language-Enum ("PYTHON"); LANGUAGE_UNSPECIFIED ergibt
       // keine sinnvolle Sprachangabe fuer den Codeblock.
@@ -90,13 +127,13 @@ function buildText(candidate) {
       const output = (part.codeExecutionResult.output ?? "").trimEnd();
       codeBlocks.push(`Result (${outcome}):\n\`\`\`\n${output}\n\`\`\``);
     }
-  }
+  });
 
   // Ueberschrift wie bei der Quellenliste, damit der nachgestellte Rechenweg
   // nicht als Fortsetzung des Antworttextes gelesen wird.
   if (codeBlocks.length > 0) codeBlocks.unshift("Code execution:");
 
-  return [...textBlocks, ...codeBlocks].join("\n\n");
+  return { text: [...textBlocks, ...codeBlocks].join("\n\n"), dropped };
 }
 
 /**
@@ -123,20 +160,27 @@ function formatNotice({ text, candidate, promptFeedback }) {
   return "";
 }
 
-function formatFooter({ usageMetadata, model, thinkingLevel, sourceCount }) {
+function formatFooter({ usageMetadata, model, thinkingLevel, sourceCount, dropped }) {
   const inputTokens = usageMetadata?.promptTokenCount ?? 0;
   const outputTokens = usageMetadata?.candidatesTokenCount ?? 0;
   const thinkingTokens = usageMetadata?.thoughtsTokenCount ?? 0;
+
+  // Verworfene Marker gehoeren in den Footer, weil sie die Aussagekraft der
+  // Antwort veraendern: Fehlt ein Marker, kann die Stelle ungegroundet sein —
+  // oder die Pruefung hat ihn verworfen. Nur sichtbar, wenn es welche gab,
+  // damit der Normalfall den Footer nicht verlaengert.
+  const droppedNote = dropped > 0 ? ` | ⚠️ ${dropped} markers dropped` : "";
+
   return (
     `\n\n---\n🔢 ${inputTokens} input / ${outputTokens} output / ${thinkingTokens} thinking tokens ` +
-    `| 🔍 ${sourceCount} sources | 🤖 ${model} (thinking: ${thinkingLevel})`
+    `| 🔍 ${sourceCount} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}`
   );
 }
 
 /**
  * Fuehrt eine Gemini-Recherche mit allen drei Built-in-Tools durch
- * (Google Search, URL Context, Code Execution) und haengt Quellenliste
- * sowie Token-Footer an den Antworttext an.
+ * (Google Search, URL Context, Code Execution), setzt die Belegmarker in den
+ * Antworttext und haengt Quellenliste sowie Token-Footer an.
  */
 export async function runSearch({ query, model, thinkingLevel }) {
   const ai = getClient();
@@ -151,9 +195,15 @@ export async function runSearch({ query, model, thinkingLevel }) {
   });
 
   const candidate = response.candidates?.[0];
-  const sources = buildSourceList(candidate);
+  const { sources, chunkNumbers } = buildSourceList(candidate);
 
-  const text = buildText(candidate);
+  // Das ?? [] ist die Absicherung gegen eine Antwort ohne groundingMetadata —
+  // dann laeuft alles unveraendert durch, nur ohne Marker.
+  const { text, dropped } = buildText(candidate, {
+    supports: candidate?.groundingMetadata?.groundingSupports ?? [],
+    chunkNumbers,
+  });
+
   const notice = formatNotice({
     text,
     candidate,
@@ -165,6 +215,7 @@ export async function runSearch({ query, model, thinkingLevel }) {
     model,
     thinkingLevel,
     sourceCount: sources.length,
+    dropped,
   });
 
   // Der Footer bleibt in jedem Fall der letzte Bestandteil der Antwort.
