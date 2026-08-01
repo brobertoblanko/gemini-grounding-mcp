@@ -1,18 +1,45 @@
 {
-  "name": "gemini-grounding-mcp",
-  "version": "1.0.0",
-  "private": true,
+  "name": "@brobertoblanko/gemini-grounding-mcp",
+  "version": "1.1.0",
   "type": "module",
-  "description": "Minimaler MCP-Server fuer Google-Websuche via Gemini API mit Grounding.",
-  "main": "index.js",
+  "description": "Minimal MCP server for Google web search via the Gemini API with grounding, inline citation markers and a token footer.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "gemini",
+    "grounding",
+    "web-search",
+    "citations",
+    "claude"
+  ],
+  "homepage": "https://github.com/srzsn22q6d-sys/gemini-grounding-mcp#readme",
+  "bugs": "https://github.com/srzsn22q6d-sys/gemini-grounding-mcp/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srzsn22q6d-sys/gemini-grounding-mcp.git"
+  },
+  "author": "Broberto Blanko <246734967+srzsn22q6d-sys@users.noreply.github.com>",
+  "license": "MIT",
   "bin": {
+    "gemini-grounding-mcp": "index.js",
     "gemini-grounding": "cli.js"
+  },
+  "files": [
+    "index.js",
+    "cli.js",
+    "config.js",
+    "gemini.js",
+    "citations.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "start": "node index.js",
     "test": "node --test"
   },
-  "license": "MIT",
   "engines": {
     "node": ">=20"
   },

@@ -11,7 +11,7 @@ const support = (start, end, text, chunks) => ({
 
 test("setzt den Marker an der Byte- und nicht an der Zeichenposition", () => {
   const text = "Änderungen kamen früh. Der Rest blieb.";
-  // 22 Zeichen, aber 24 Bytes — Ä und ü brauchen je zwei. Zeichenbasiert
+  // 22 Zeichen, aber 24 Bytes - Ä und ü brauchen je zwei. Zeichenbasiert
   // landete der Marker zwei Stellen zu weit rechts, also hinter "D".
   const end = Buffer.byteLength("Änderungen kamen früh.", "utf8");
 
@@ -101,7 +101,7 @@ test("uebersetzt Chunk-Indizes auf die Nummern der deduplizierten Liste", () => 
 });
 
 test("fasst mehrere Quellen als [1][3] zusammen und dedupliziert dabei", () => {
-  // Chunks 0 und 2 zeigen auf dieselbe Quelle — sie darf nur einmal erscheinen.
+  // Chunks 0 und 2 zeigen auf dieselbe Quelle - sie darf nur einmal erscheinen.
   const result = insertCitations({
     text: "Eine Aussage.",
     supports: [support(0, 13, "Eine Aussage.", [0, 2, 1])],
@@ -117,7 +117,7 @@ test("fasst mehrere Quellen als [1][3] zusammen und dedupliziert dabei", () => {
 
 test("erzeugt keinen Marker fuer einen Chunk ohne Nummer", () => {
   // Ein Chunk ohne uri schafft es nicht in die Quellenliste. Er darf keinen
-  // Marker erzeugen und zaehlt auch nicht als verworfen — es gab nichts.
+  // Marker erzeugen und zaehlt auch nicht als verworfen - es gab nichts.
   const result = insertCitations({
     text: "Eine Aussage.",
     supports: [support(0, 13, "Eine Aussage.", [7])],
@@ -170,7 +170,7 @@ test("verarbeitet eine echte API-Antwort ohne Verluste", () => {
 
   assert.equal(result.dropped, 0, "kein Support darf an der Verifikation scheitern");
   assert.match(result.text, /\[\d+\]/, "mindestens ein Marker wurde gesetzt");
-  // Keine Marker-Nummer darf ueber die Laenge der Quellenliste hinausgehen —
+  // Keine Marker-Nummer darf ueber die Laenge der Quellenliste hinausgehen -
   // genau das waere der Fehler, den ein naives index + 1 erzeugt.
   for (const match of result.text.matchAll(/\[(\d+)\]/g)) {
     assert.ok(Number(match[1]) <= fixture.sourceCount, `Marker [${match[1]}] zeigt ins Leere`);

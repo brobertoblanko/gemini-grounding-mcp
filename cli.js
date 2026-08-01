@@ -2,17 +2,18 @@
 // Kommandozeilen-Frontend auf denselben Kern, den auch index.js nutzt:
 // gemini.js fuer die API-Aufrufe, config.js fuer die gespeicherten Defaults.
 // Die relativen Imports loesen in ES-Modulen relativ zu DIESER Datei auf,
-// nicht zum Arbeitsverzeichnis — die CLI funktioniert daher aus jedem Ordner.
+// nicht zum Arbeitsverzeichnis - die CLI funktioniert daher aus jedem Ordner.
 
 import { runSearch, listModels } from "./gemini.js";
 import {
+  CONFIG_PATH,
   getSavedModel,
   getSavedThinkingLevel,
   setSavedConfig,
   THINKING_LEVELS,
 } from "./config.js";
 
-const HELP = `gemini-grounding — CLI for the Gemini grounding MCP server
+const HELP = `gemini-grounding - CLI for the Gemini grounding MCP server
 
 Usage:
   gemini-grounding "<query>" [--model <id>] [--thinking <level>]
@@ -33,12 +34,12 @@ Options (search only, never persisted):
 Thinking levels: ${THINKING_LEVELS.join(", ")}
 
 Anything that is not a known command is treated as a search query. The query
-must be a single argument — put it in quotes if it contains spaces.
+must be a single argument - put it in quotes if it contains spaces.
 The API key is read from the GEMINI_API_KEY environment variable.
-The saved defaults live in config.json and are shared with the MCP server.`;
+The saved defaults are shared with the MCP server; "config" prints their location.`;
 
 /**
- * Bedienfehler — falsche Argumente, unbekannte Option, leere Anfrage. Wird
+ * Bedienfehler - falsche Argumente, unbekannte Option, leere Anfrage. Wird
  * anders behandelt als ein echter Laufzeitfehler: nur die Meldung, kein
  * Stacktrace, weil ein Tippfehler auf der Kommandozeile keinen braucht.
  */
@@ -80,7 +81,7 @@ function takeSwitch(args, name) {
 }
 
 async function main() {
-  // argv[0] ist der Node-Interpreter, argv[1] das Skript selbst — erst ab
+  // argv[0] ist der Node-Interpreter, argv[1] das Skript selbst - erst ab
   // Index 2 stehen die vom Benutzer uebergebenen Argumente.
   const args = process.argv.slice(2);
 
@@ -100,7 +101,7 @@ async function main() {
 
   const [command, ...rest] = args;
 
-  // Jeder Zweig prueft, dass nichts Ueberzaehliges uebrig bleibt — sonst
+  // Jeder Zweig prueft, dass nichts Ueberzaehliges uebrig bleibt - sonst
   // wuerde "set-thinking low unsinn" klaglos speichern und den Rest verwerfen.
   const requireNoArgs = () => {
     if (rest.length > 0) fail(`"${command}" takes no arguments.`);
@@ -122,14 +123,18 @@ async function main() {
     case "config": {
       requireNoArgs();
       const apiKey = process.env.GEMINI_API_KEY;
-      // Der Wert des Keys wird nie ausgegeben, auch nicht gekuerzt — nur seine
+      // Der Wert des Keys wird nie ausgegeben, auch nicht gekuerzt - nur seine
       // Laenge, weil sich daran ein abgeschnittenes Einfuegen erkennen laesst.
       const keyStatus = apiKey
         ? `set (${apiKey.length} chars)`
-        : "NOT SET — set the GEMINI_API_KEY environment variable";
+        : "NOT SET - set the GEMINI_API_KEY environment variable";
       console.log(`${"Model:".padEnd(16)}${getSavedModel()}`);
       console.log(`${"Thinking level:".padEnd(16)}${getSavedThinkingLevel()}`);
       console.log(`${"API key:".padEnd(16)}${keyStatus}`);
+      // Der Pfad wird immer genannt, auch wenn die Datei noch gar nicht
+      // existiert - dann steht dort, wo sie beim ersten set-model entstehen
+      // wird, und die obigen Werte sind die eingebauten Defaults.
+      console.log(`${"Config file:".padEnd(16)}${CONFIG_PATH}`);
       break;
     }
 
@@ -142,7 +147,7 @@ async function main() {
       if (rest.length !== 1) fail("Usage: gemini-grounding set-model <model-id>");
       const model = rest[0];
       setSavedConfig({ model });
-      console.log(`Saved — Model: ${model}`);
+      console.log(`Saved - Model: ${model}`);
       break;
     }
 
@@ -152,22 +157,22 @@ async function main() {
       }
       const level = requireThinkingLevel(rest[0], "set-thinking");
       setSavedConfig({ thinkingLevel: level });
-      console.log(`Saved — Thinking level: ${level}`);
+      console.log(`Saved - Thinking level: ${level}`);
       break;
     }
 
     default: {
-      // Alles, was kein bekannter Unterbefehl ist, gilt als Suchanfrage — und
+      // Alles, was kein bekannter Unterbefehl ist, gilt als Suchanfrage - und
       // zwar als genau ein Argument. Eine unquotiert getippte Frage wieder
       // zusammenzusetzen waere truegerisch: takeFlag hat vorher ein
       // "--thinking high" mitten aus ihr herausgeschnitten, sodass eine
       // sinnentstellte Anfrage abgeschickt wuerde, ohne dass es auffaellt.
       if (rest.length > 0) {
-        fail("The query must be a single argument — put it in quotes.");
+        fail("The query must be a single argument - put it in quotes.");
       }
       const query = command.trim();
-      // Ohne diese Pruefung ginge ein leeres Argument — etwa aus einer nicht
-      // gesetzten Shell-Variablen — als Anfrage an die API und kostet Tokens.
+      // Ohne diese Pruefung ginge ein leeres Argument - etwa aus einer nicht
+      // gesetzten Shell-Variablen - als Anfrage an die API und kostet Tokens.
       if (query === "") fail("The query is empty.");
 
       // Gleiches Muster wie im MCP-Handler (index.js): ein Flag gilt nur fuer
@@ -188,7 +193,7 @@ try {
 } catch (error) {
   // Bei einem echten Laufzeitfehler gibt console.error(error) denselben
   // vollstaendigen Stacktrace aus, den Node bei einem unbehandelten Fehler
-  // zeigen wuerde — beim Testen ist genau das gewollt, im Gegensatz zu
+  // zeigen wuerde - beim Testen ist genau das gewollt, im Gegensatz zu
   // index.js, das den Fehler fuer den Client auf eine Zeile verdichten muss.
   // Ein Bedienfehler braucht dagegen keinen Stacktrace, nur die Meldung.
   //
@@ -197,7 +202,7 @@ try {
   // bricht libuv unter Windows mit "Assertion failed ... src\win\async.c" ab
   // und der Prozess endet mit 0xC0000409 statt mit dem vereinbarten Code 1.
   //
-  // process.exitCode statt process.exit(), damit Node regulaer herunterfaehrt —
+  // process.exitCode statt process.exit(), damit Node regulaer herunterfaehrt -
   // das gilt ausnahmslos, deshalb wirft auch fail() nur einen UsageError,
   // statt selbst zu beenden: stdout und stderr sind unter Windows auf einem
   // TTY asynchron, sodass process.exit() eine laengere Ausgabe wie HELP

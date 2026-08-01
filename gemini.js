@@ -21,7 +21,7 @@ function getClient() {
  * Liefert zusaetzlich chunkNumbers: die Zuordnung vom Index in
  * groundingChunks auf die Nummer in der AUSGEGEBENEN Liste. Beide Zaehlungen
  * laufen auseinander, weil groundingChunks Suchtreffer abbildet und nicht
- * Quellen — gemessen 17 Treffer bei 14 eindeutigen URLs. Ohne diese Zuordnung
+ * Quellen - gemessen 17 Treffer bei 14 eindeutigen URLs. Ohne diese Zuordnung
  * verwiesen die Marker im Text auf Nummern, die es in der Liste nicht gibt.
  */
 function buildSourceList(candidate) {
@@ -50,7 +50,7 @@ function buildSourceList(candidate) {
   // Nummerierung der Marker deshalb nicht.
   //
   // Gemessen an einer Anfrage mit konkreter URL: Die gelesene Seite stand
-  // zusaetzlich als groundingChunk in der Antwort — mit echtem Seitentitel,
+  // zusaetzlich als groundingChunk in der Antwort - mit echtem Seitentitel,
   // direkter URL und eigenen Supports. Sie kam ueber die Deduplizierung hier
   // also gar nicht mehr an und bekam trotzdem Marker. Hier landet nur eine
   // Seite, die NICHT zugleich Chunk ist; die bleibt dann ohne Marker, weil es
@@ -65,16 +65,16 @@ function buildSourceList(candidate) {
 function formatSourcesBlock(sources) {
   if (sources.length === 0) return "";
   const list = sources
-    .map((s, i) => `[${i + 1}] ${s.title} — ${s.uri}`)
+    .map((s, i) => `[${i + 1}] ${s.title} - ${s.uri}`)
     .join("\n");
   return `\n\nSources:\n${list}`;
 }
 
 /**
  * Baut den Antworttext aus den Parts der Antwort, statt `response.text` zu
- * nutzen. Der `.text`-Getter des SDK verwirft alles, was kein Textteil ist —
+ * nutzen. Der `.text`-Getter des SDK verwirft alles, was kein Textteil ist -
  * bei aktiviertem Code Execution also gerade den ausgefuehrten Code und dessen
- * Ergebnis — und schreibt dabei pro Aufruf eine Warnung nach stderr. Hier
+ * Ergebnis - und schreibt dabei pro Aufruf eine Warnung nach stderr. Hier
  * kommen beide als Codebloecke mit in die Antwort, damit nachvollziehbar
  * bleibt, wie eine berechnete Zahl zustande gekommen ist.
  *
@@ -84,7 +84,7 @@ function formatSourcesBlock(sources) {
  * Der Rechenweg ist ein Beleg und gehoert damit dorthin, wo auch die
  * Quellenliste steht: hinter die Antwort, nicht davor.
  *
- * Hier werden ausserdem die Belegmarker gesetzt (siehe citations.js) —
+ * Hier werden ausserdem die Belegmarker gesetzt (siehe citations.js) -
  * bewusst an dieser Stelle, weil die Parts nur hier noch einzeln vorliegen:
  * Die Offsets der API zaehlen ab dem Anfang JEDES Parts, nach dem
  * join("\n\n") waeren sie ab dem zweiten Part um zwei Bytes verschoben.
@@ -96,9 +96,9 @@ function buildText(candidate, { supports, chunkNumbers }) {
 
   // forEach statt for...of: Der Schleifenindex IST der partIndex, auf den sich
   // segment.partIndex bezieht. Denk-Parts werden zwar uebersprungen, zaehlen
-  // dabei aber mit — partIndex zaehlt ueber ALLE Parts des Kandidaten.
+  // dabei aber mit - partIndex zaehlt ueber ALLE Parts des Kandidaten.
   (candidate?.content?.parts ?? []).forEach((part, partIndex) => {
-    // Denk-Parts gehoeren nicht in die Ausgabe — ihr Umfang steht bereits als
+    // Denk-Parts gehoeren nicht in die Ausgabe - ihr Umfang steht bereits als
     // Thinking-Tokens im Footer.
     if (part.thought) return;
 
@@ -116,11 +116,11 @@ function buildText(candidate, { supports, chunkNumbers }) {
       // keine sinnvolle Sprachangabe fuer den Codeblock.
       const language = (part.executableCode.language ?? "").toLowerCase();
       const fence = language.includes("unspecified") ? "" : language;
-      // trimEnd, weil Code und Ausgabe mit einem Zeilenumbruch enden — sonst
+      // trimEnd, weil Code und Ausgabe mit einem Zeilenumbruch enden - sonst
       // steht eine Leerzeile vor dem schliessenden Codeblock.
       codeBlocks.push(`\`\`\`${fence}\n${part.executableCode.code.trimEnd()}\n\`\`\``);
     } else if (part.codeExecutionResult) {
-      // outcome ist "OUTCOME_OK", "OUTCOME_FAILED", ... — das Praefix traegt
+      // outcome ist "OUTCOME_OK", "OUTCOME_FAILED", ... - das Praefix traegt
       // keine Information.
       const outcome =
         (part.codeExecutionResult.outcome ?? "").replace(/^OUTCOME_/, "") || "UNKNOWN";
@@ -145,17 +145,17 @@ function buildText(candidate, { supports, chunkNumbers }) {
 function formatNotice({ text, candidate, promptFeedback }) {
   const blockReason = promptFeedback?.blockReason;
   if (blockReason) {
-    return `\n\n⚠️ Request blocked by the API — blockReason: ${blockReason}`;
+    return `\n\n⚠️ Request blocked by the API - blockReason: ${blockReason}`;
   }
 
   const finishReason = candidate?.finishReason;
   if (text === "") {
-    return `\n\n⚠️ The response contained no text — finishReason: ${finishReason ?? "unknown"}`;
+    return `\n\n⚠️ The response contained no text - finishReason: ${finishReason ?? "unknown"}`;
   }
-  // STOP ist der regulaere Abschluss. Alles andere — vor allem MAX_TOKENS —
+  // STOP ist der regulaere Abschluss. Alles andere - vor allem MAX_TOKENS -
   // bedeutet eine abgeschnittene Antwort, die sonst vollstaendig wirkt.
   if (finishReason && finishReason !== "STOP") {
-    return `\n\n⚠️ The response is incomplete — finishReason: ${finishReason}`;
+    return `\n\n⚠️ The response is incomplete - finishReason: ${finishReason}`;
   }
   return "";
 }
@@ -166,7 +166,7 @@ function formatFooter({ usageMetadata, model, thinkingLevel, sourceCount, droppe
   const thinkingTokens = usageMetadata?.thoughtsTokenCount ?? 0;
 
   // Verworfene Marker gehoeren in den Footer, weil sie die Aussagekraft der
-  // Antwort veraendern: Fehlt ein Marker, kann die Stelle ungegroundet sein —
+  // Antwort veraendern: Fehlt ein Marker, kann die Stelle ungegroundet sein -
   // oder die Pruefung hat ihn verworfen. Nur sichtbar, wenn es welche gab,
   // damit der Normalfall den Footer nicht verlaengert.
   const droppedNote = dropped > 0 ? ` | ⚠️ ${dropped} markers dropped` : "";
@@ -197,7 +197,7 @@ export async function runSearch({ query, model, thinkingLevel }) {
   const candidate = response.candidates?.[0];
   const { sources, chunkNumbers } = buildSourceList(candidate);
 
-  // Das ?? [] ist die Absicherung gegen eine Antwort ohne groundingMetadata —
+  // Das ?? [] ist die Absicherung gegen eine Antwort ohne groundingMetadata -
   // dann laeuft alles unveraendert durch, nur ohne Marker.
   const { text, dropped } = buildText(candidate, {
     supports: candidate?.groundingMetadata?.groundingSupports ?? [],
@@ -232,7 +232,7 @@ function formatTokenLimit(limit) {
 
 /**
  * Ob ein Modell mit DIESEM Server funktioniert. Zwei Bedingungen, beide aus
- * den Angaben der API selbst statt aus dem Modellnamen — ein Namensmuster
+ * den Angaben der API selbst statt aus dem Modellnamen - ein Namensmuster
  * wuerde bei jeder neuen Modellfamilie brechen (Codenamen wie
  * "nano-banana-pro-preview" verraten nichts ueber die Faehigkeiten):
  * - generateContent: erzeugt ueberhaupt Text (schliesst Embeddings, Imagen,
@@ -245,7 +245,7 @@ function isUsableModel(model) {
   return (model.supportedActions ?? []).includes("generateContent") && model.thinking === true;
 }
 
-/** Warum ein Modell nicht in der Standardliste steht — nur fuer die --all-Ansicht. */
+/** Warum ein Modell nicht in der Standardliste steht - nur fuer die --all-Ansicht. */
 function modelStatus(model) {
   const actions = model.supportedActions ?? [];
   if (!actions.includes("generateContent")) return actions[0] ?? "no generateContent";
@@ -292,13 +292,13 @@ export async function listModels({ all = false } = {}) {
   let note;
   if (filterFailed) {
     note =
-      `All ${models.length} models — the usability filter matched nothing, so ` +
+      `All ${models.length} models - the usability filter matched nothing, so ` +
       "nothing is hidden. Check whether the API still reports supportedActions and thinking.";
   } else if (all) {
     note =
       `All ${models.length} models. Only the ${usable.length} marked "thinking" work with ` +
       "this server, which always sends a thinking level. Being listed is no guarantee " +
-      "a model still answers — retired ones stay in this list and return 404.";
+      "a model still answers - retired ones stay in this list and return 404.";
   } else {
     note =
       `${usable.length} of ${models.length} models usable with this server (text generation ` +

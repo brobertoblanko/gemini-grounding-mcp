@@ -1,4 +1,4 @@
-# CLAUDE.md — Eigener Gemini-Search MCP-Server
+# CLAUDE.md - Eigener Gemini-Search MCP-Server
 
 ## Projektziel
 
@@ -13,7 +13,7 @@ Architektur, genutzte Gemini-API-Tools, Antwortformat und technische
 Referenzen: siehe [specs.md](./docs/specs.md). Installation und Registrierung:
 siehe [README.md](./README.md).
 
-## Nutzungsrahmen — WICHTIG
+## Nutzungsrahmen - WICHTIG
 
 **Dieser MCP wird ausschließlich für Research- und Rechercheanfragen genutzt.**
 Kein produktiver Einsatz, keine automatisierten Agentenketten ohne Kontrolle,
@@ -21,7 +21,7 @@ keine Anbindung an sensible Systeme (kein CRM, keine Firmendaten, keine Zahlunge
 Der Server dient nur dazu, Claude bei Bedarf eine aktuelle Websuche via Gemini
 durchführen zu lassen.
 
-## Öffentliches Repo — was hier nicht hineingehört
+## Öffentliches Repo - was hier nicht hineingehört
 
 Dieses Repository ist zur Veröffentlichung bestimmt. Jede getrackte Datei
 (`CLAUDE.md`, `README.md`, `specs.md`, der Code, Commit-Messages) muss so
@@ -29,19 +29,19 @@ formuliert sein, dass ein fremder Leser sie ohne Kenntnis des
 Entwicklungsrechners versteht.
 
 **Alles Private oder auch nur potenziell Riskante gehört ausschließlich in
-`CLAUDE.local.md`** — diese Datei steht in `.gitignore`, wird nie committet
+`CLAUDE.local.md`** - diese Datei steht in `.gitignore`, wird nie committet
 und von Claude Code zusätzlich geladen. Das betrifft insbesondere absolute
 Pfade des lokalen Rechners, Klarnamen und E-Mail-Adressen, alles rund um den
 Gemini-API-Key sowie maschinenspezifisches Setup. In getrackten Dateien
 stattdessen Platzhalter verwenden. Im Zweifel gehört ein Inhalt nach
-`CLAUDE.local.md` — nachträgliches Bereinigen der Git-Historie ist aufwendig
+`CLAUDE.local.md` - nachträgliches Bereinigen der Git-Historie ist aufwendig
 und unzuverlässig.
 
 ## Verhaltensregeln für Claude Code in diesem Projekt
 
 **Modellwahl und Thinking-Level:**
 
-- Welches Modell und Thinking-Level ein `gemini-search`-Aufruf tatsächlich genutzt hat, muss für mich als User **immer sichtbar** sein — dafür steht es im Antwort-Footer (siehe specs.md). Ich soll nie raten müssen, was verwendet wurde
+- Welches Modell und Thinking-Level ein `gemini-search`-Aufruf tatsächlich genutzt hat, muss für mich als User **immer sichtbar** sein - dafür steht es im Antwort-Footer (siehe specs.md). Ich soll nie raten müssen, was verwendet wurde
 - Standardmäßig den gespeicherten Standard (Modell + Thinking-Level aus `config.json`) nutzen und bei `gemini-search` nichts explizit setzen, außer ich fordere für diesen einen Aufruf ausdrücklich etwas Abweichendes
 - Kein automatisches Fallback auf ein anderes Modell ohne Rückfrage
 - Vor einer Modelländerung immer zuerst `gemini-list-models` aufrufen, um zu
@@ -52,14 +52,15 @@ und unzuverlässig.
 
 **API-Key-Sicherheit:**
 
-Die `config.json` speichert ausschließlich den Modellnamen — niemals den
-API-Key oder andere sensible Daten. Der API-Key bleibt ausschließlich über
-die Umgebungsvariable `GEMINI_API_KEY` verwaltet.
+Die `config.json` - sie liegt am plattformüblichen Ort für Nutzer-State, nicht
+im Projektordner (siehe specs.md) - speichert ausschließlich Modellname und
+Thinking-Level, niemals den API-Key oder andere sensible Daten. Der API-Key
+bleibt ausschließlich über die Umgebungsvariable `GEMINI_API_KEY` verwaltet.
 
 **Quellenliste und Footer:**
 
 Quellenliste und Footer werden bei jedem Aufruf von `gemini-search`
-automatisch angehängt und dürfen nicht entfernt oder umformuliert werden —
+automatisch angehängt und dürfen nicht entfernt oder umformuliert werden -
 sie dienen der Transparenz über die genutzten Quellen und den tatsächlichen
 Ressourcenverbrauch jedes einzelnen Tool-Calls.
 
