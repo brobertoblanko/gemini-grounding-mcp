@@ -5,12 +5,21 @@
   "description": "Minimal MCP server for Google web search via the Gemini API with grounding, inline citation markers and a token footer.",
   "keywords": [
     "mcp",
+    "mcp-server",
     "model-context-protocol",
+    "claude",
+    "claude-code",
+    "anthropic",
     "gemini",
+    "gemini-api",
+    "google-gemini",
     "grounding",
     "web-search",
+    "google-search",
     "citations",
-    "claude"
+    "research",
+    "llm",
+    "nodejs"
   ],
   "homepage": "https://github.com/srzsn22q6d-sys/gemini-grounding-mcp#readme",
   "bugs": "https://github.com/srzsn22q6d-sys/gemini-grounding-mcp/issues",
