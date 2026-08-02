@@ -8,7 +8,8 @@ packages: no community wrapper, no version silently changing under you.
 **Scope of use:** research queries only. Not intended for production use or for
 connecting to sensitive systems.
 
-Architecture and design decisions: see [specs.md](./docs/specs.md) (German).
+Architecture and design decisions: see [specs.md](./docs/specs.md), also
+available [in German](./docs/specs.de.md).
 Working rules for Claude Code in this repository: see [CLAUDE.md](./CLAUDE.md)
 (German).
 

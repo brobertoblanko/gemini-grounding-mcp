@@ -1,142 +1,128 @@
-# specs.md - Architektur & Funktionsweise
+# specs.md - Architecture & Design
 
-Details zu Aufbau, genutzten Gemini-API-Tools, Antwortformat und technischen
-Referenzen des Gemini-Grounding-MCP-Servers. Verhaltensregeln für Claude Code
-in diesem Projekt stehen in [CLAUDE.md](./CLAUDE.md), Installation und
-Registrierung in [README.md](./README.md).
+*Diese Seite auf [Deutsch](./specs.de.md).*
 
-## Warum ein eigener MCP statt eines fertigen npm-Pakets
+Details on the structure, the Gemini API tools in use, the response format and the technical references of the Gemini Grounding MCP server.
+Working rules for Claude Code in this repository are in [CLAUDE.md](../CLAUDE.md), installation and registration in [README.md](../README.md).
 
-Fertige Community-MCP-Pakete (z. B. via `npx paket@latest`) laden bei jedem Start
-automatisch die neueste Version aus der npm-Registry nach. Das bedeutet:
+## Why a custom MCP instead of an off-the-shelf npm package
 
-- Der ausgeführte Code kann sich jederzeit ohne mein Wissen ändern
-- Es gibt keine Transparenz darüber, was der fremde Code tatsächlich tut
-- Kein Google- oder Anthropic-Backing, nur Community-Pflege unbekannter Qualität
+Ready-made community MCP packages (for example via `npx package@latest`) pull the newest version from the npm registry on every start.
+That means:
 
-**Entscheidung:** Stattdessen wird ein eigener, extrem kleiner Wrapper geschrieben,
-der ausschließlich zwei offizielle, seriöse SDKs nutzt:
+- The code being executed can change at any time without my knowledge
+- There is no transparency about what the third-party code actually does
+- No Google or Anthropic backing, only community maintenance of unknown quality
 
-- `@google/genai` - Googles offizielles Gemini-SDK
-- `@modelcontextprotocol/sdk` - das offizielle MCP-SDK (Anthropic)
+**Decision:** write a custom, extremely small wrapper instead, one that uses exactly two official, reputable SDKs:
 
-Dadurch bleibt der komplette Code lokal, nachvollziehbar und ändert sich nur,
-wenn ich selbst etwas anpasse - kein automatischer Versionswechsel im Hintergrund.
+- `@google/genai` - Google's official Gemini SDK
+- `@modelcontextprotocol/sdk` - the official MCP SDK (Anthropic)
 
-### Und trotzdem selbst auf npm
+This keeps the entire codebase local and auditable, and it changes only when I change something myself - no automatic version switch in the background.
 
-Seit Version 1.1.0 wird dieses Projekt als `@brobertoblanko/gemini-grounding-mcp`
-auf npm veröffentlicht, und die README empfiehlt zur Registrierung `npx -y`.
-Das ist genau der Mechanismus, gegen den der Abschnitt oben argumentiert - die
-Einwände verschwinden nicht dadurch, dass es der eigene Code ist.
+### And published on npm all the same
 
-Bewusst in Kauf genommen, aus einem Grund: Ohne npm braucht jeder Interessent
-einen Klon und einen absoluten Pfad in der Client-Konfiguration; das schließt
-praktisch alle aus, die den Server nur ausprobieren wollen. Wer die Einwände
-teilt, hat weiterhin beide Wege - der Klon-Weg bleibt vollständig unterstützt
-und in der README beschrieben, und `npx @brobertoblanko/gemini-grounding-mcp@1.1.0`
-mit fester Version nimmt dem `-y` die Beweglichkeit. Was hier ausgeliefert wird,
-ist außerdem einsehbar: derselbe Code wie im Repository, ohne Build-Step,
-gepackt über eine feste `files`-Liste.
+Since version 1.1.0 this project is published on npm as `@brobertoblanko/gemini-grounding-mcp`, and the README recommends `npx -y` for registration.
+That is precisely the mechanism the section above argues against - the objections do not disappear just because it is my own code.
 
-## Technische Basis
+Accepted deliberately, for one reason: without npm, every interested party needs a clone and an absolute path in their client configuration, which effectively excludes everyone who just wants to try the server out.
+Anyone who shares the objections still has both routes - the clone route remains fully supported and documented in the README, and `npx @brobertoblanko/gemini-grounding-mcp@1.1.0` with a pinned version takes the fluidity out of `-y`.
+What ships here is also inspectable: the same code as in the repository, no build step, packed via an explicit `files` list.
 
-- Node.js (20+, von `@google/genai` gefordert), ES Modules
+## Technical basis
+
+- Node.js (20+, required by `@google/genai`), ES modules
   (`"type": "module"` in package.json)
-- Kommunikation über stdio (Standard-MCP-Transport)
-- API-Key wird ausschließlich über die Umgebungsvariable `GEMINI_API_KEY`
-  übergeben, niemals im Code hinterlegt
+- Communication over stdio (the standard MCP transport)
+- The API key is passed exclusively through the `GEMINI_API_KEY` environment
+  variable, never stored in the code
 
-## Implementierung
+## Implementation
 
-Umgesetzt in flachen Modulen ohne `src/`-Layout und ohne Build-Step
-(für die Projektgröße bringt `src/` in Node ohne Build-Step keinen Vorteil):
+Implemented as flat modules without a `src/` layout and without a build step
+(at this project size, `src/` brings no advantage in Node without a build step):
 
-- `index.js` - Server-Bootstrap, registriert die drei Tools über
-  `server.registerTool(...)`, baut den stdio-Transport auf.
-- `gemini.js` - kapselt den `GoogleGenAI`-Aufruf inkl. der drei kombinierten
-  Built-in-Tools, baut Quellenliste und Footer aus der API-Antwort.
-- `citations.js` - setzt die Belegmarker in den Antworttext. Eigene Datei, weil
-  dieser Code als einziger im Projekt **ohne Netzwerk und ohne API-Key
-  vollständig prüfbar** ist: Rein gehen Text und Metadaten, heraus kommt Text -
-  kein `getClient()`, keine Konfiguration, kein Zufall. Getestet gegen eine
-  gespeicherte echte Antwort in `test/citations.test.js` (`npm test`, über
-  Nodes eingebauten Test-Runner, ohne zusätzliche Abhängigkeit).
-- `config.js` - liest/schreibt die dauerhafte Modellwahl in einer `config.json`
-  am plattformüblichen Ort für Nutzer-State (siehe „Speicherort der
-  Konfiguration" unten).
-- `cli.js` - zweites Frontend auf denselben Kern: dieselben Exporte aus
-  `gemini.js` und `config.js`, die auch `index.js` nutzt, über die
-  Kommandozeile erreichbar. Ohne zusätzliche Abhängigkeit (ein `switch` über
-  `process.argv` genügt), ohne zweiten Ort für den API-Key. Zwei bewusste
-  Unterschiede zum MCP-Server: Laufzeitfehler werden mit vollem Stacktrace
-  ausgegeben statt wie in `index.js` auf eine Zeile für den Client verdichtet,
-  und die Ausgabe geht auf stdout - beim stdio-Transport wäre das unmöglich,
-  weil dort JSON-RPC darüber läuft. Aufruf und Unterbefehle: siehe README.
+- `index.js` - server bootstrap, registers the three tools via
+  `server.registerTool(...)`, sets up the stdio transport.
+- `gemini.js` - wraps the `GoogleGenAI` call including the three combined
+  built-in tools, builds the source list and footer from the API response.
+- `citations.js` - inserts the citation markers into the response text. Its own
+  file because this is the only code in the project that is **fully testable
+  without network access and without an API key**: text and metadata go in, text
+  comes out - no `getClient()`, no configuration, no randomness. Tested against
+  a stored real response in `test/citations.test.js` (`npm test`, via Node's
+  built-in test runner, without an additional dependency).
+- `config.js` - reads and writes the persistent model choice in a `config.json`
+  at the platform's conventional location for user state (see "Configuration
+  file location" below).
+- `cli.js` - a second frontend on the same core: the same exports from
+  `gemini.js` and `config.js` that `index.js` uses, reachable from the command
+  line. Without an additional dependency (a `switch` over `process.argv` is
+  enough), without a second home for the API key. Two deliberate differences
+  from the MCP server: runtime errors are printed with a full stack trace
+  instead of being condensed into a single line for the client as in
+  `index.js`, and output goes to stdout - which would be impossible with the
+  stdio transport, because JSON-RPC runs over it. Invocation and subcommands:
+  see the README.
 
-  Der Fehler wird dabei trotzdem per `try`/`catch` abgefangen, obwohl die
-  Ausgabe dieselbe bleibt: Beendet Node den Prozess wegen einer unbehandelten
-  Rejection hart, während noch eine Netzwerkverbindung offen ist, bricht libuv
-  unter Windows mit `Assertion failed ... src\win\async.c` ab, und der Prozess
-  endet mit `0xC0000409` statt mit Code 1. Deshalb `console.error(error)` -
-  identisch zu Nodes eigener Ausgabe - gefolgt von `process.exitCode = 1`
-  statt `process.exit()`, damit Node regulär herunterfährt.
+  The error is still caught via `try`/`catch` even though the output stays the
+  same: if Node terminates the process hard because of an unhandled rejection
+  while a network connection is still open, libuv on Windows aborts with
+  `Assertion failed ... src\win\async.c`, and the process ends with
+  `0xC0000409` instead of code 1. Hence `console.error(error)` - identical to
+  Node's own output - followed by `process.exitCode = 1` rather than
+  `process.exit()`, so that Node shuts down normally.
 
-  Das gilt **ausnahmslos**: `cli.js` enthält kein `process.exit()`. Ein
-  Bedienfehler wirft stattdessen einen `UsageError`, den derselbe `catch`-Block
-  abfängt und mit nur seiner Meldung ausgibt - für einen Tippfehler auf der
-  Kommandozeile ist ein Stacktrace sinnlos. Zweiter Grund gegen `process.exit()`:
-  stdout und stderr sind unter Windows auf einem TTY asynchron, ein sofortiges
-  Beenden kann eine längere Ausgabe wie die Hilfe abschneiden. Weil `fail()`
-  wirft statt zu beenden, liegen Argumentauswertung und `switch` gemeinsam in
-  einer `main()`-Funktion innerhalb des `try`.
+  This holds **without exception**: `cli.js` contains no `process.exit()`. A
+  usage error throws a `UsageError` instead, which the same `catch` block picks
+  up and prints with its message only - a stack trace is pointless for a typo on
+  the command line. A second argument against `process.exit()`: on Windows,
+  stdout and stderr are asynchronous on a TTY, and an immediate exit can cut off
+  longer output such as the help text. Because `fail()` throws instead of
+  exiting, argument parsing and the `switch` both live inside a `main()`
+  function within the `try`.
 
-  Argumente werden dabei strikt geprüft, weil jede Nachsicht hier still
-  danebengeht: Eine Suchanfrage muss **genau ein** Argument sein - Optionen
-  werden per `indexOf` aus der Argumentliste geschnitten, sodass ein
-  `--thinking high` mitten in einer unquotiert getippten Frage sonst
-  unbemerkt Wörter aus der Anfrage entfernt hätte. Ein leeres Argument
-  (etwa aus einer nicht gesetzten Shell-Variablen) ist ebenfalls ein Fehler,
-  statt Tokens für eine leere Anfrage auszugeben. Was nach der Auswertung noch
-  mit `--` beginnt, ist eine unbekannte Option und bricht ab - `models --al`
-  hätte sonst kommentarlos die gefilterte Liste gezeigt, die man für die
-  vollständige hält. Überzählige Argumente lehnt jeder Unterbefehl ab.
+  Arguments are validated strictly, because any leniency here fails silently: a
+  search query must be **exactly one** argument - options are cut out of the
+  argument list via `indexOf`, so a `--thinking high` in the middle of an
+  unquoted question would otherwise have removed words from the query
+  unnoticed. An empty argument (from an unset shell variable, say) is an error
+  as well, rather than spending tokens on an empty query. Anything that still
+  starts with `--` after parsing is an unknown option and aborts - `models
+  --al` would otherwise have silently shown the filtered list that one takes
+  for the complete one. Every subcommand rejects surplus arguments.
 
-## Verifizierte API-Fakten (Stand 07/2026)
+## Verified API facts (as of 07/2026)
 
-Diese Werte wurden vor der Umsetzung gegen die aktuelle Gemini-API- und
-`@google/genai`-SDK-Dokumentation geprüft, damit die Codebasis nicht auf
-veralteten Trainingsdaten aufbaut. Maßgeblich sind immer die offiziellen
-Quellen: [Gemini API Docs](https://ai.google.dev/gemini-api/docs),
-[js-genai SDK](https://googleapis.github.io/js-genai/) und das
-[MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk).
+These values were checked against the current Gemini API and `@google/genai` SDK documentation before implementation, so that the codebase does not build on stale training data.
+The official sources are always authoritative: [Gemini API Docs](https://ai.google.dev/gemini-api/docs), [js-genai SDK](https://googleapis.github.io/js-genai/) and the [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk).
 
-- `gemini-flash-latest` ist ein von Google gepflegter Alias und zeigt aktuell
-  auf `gemini-3.5-flash`. Der Alias wird bei jedem neuen Flash-Release
-  automatisch umgehängt.
-- `thinkingLevel`-Enum: `minimal` | `low` | `medium` | `high`. Bei Flash-Modellen
-  ist `medium` der API-Default - `high` muss also explizit gesetzt werden.
-- Grounding-Metadaten liegen unter `response.candidates?.[0]?.groundingMetadata`
-  (Array-Index `[0]` nicht vergessen). Jede Quelle in `groundingChunks[i].web`
-  hat `uri`, `title` und `domain` (`domain` ist laut SDK-Typdoku nicht von der
-  Gemini Developer API unterstützt und praktisch immer `undefined`).
-- Per URL Context gelesene Seiten liefern ihre Quelle zusätzlich unter
+- `gemini-flash-latest` is an alias maintained by Google and currently points to
+  `gemini-3.5-flash`. The alias is re-pointed automatically with every new Flash
+  release.
+- `thinkingLevel` enum: `minimal` | `low` | `medium` | `high`. On Flash models
+  `medium` is the API default - so `high` has to be set explicitly.
+- Grounding metadata lives under `response.candidates?.[0]?.groundingMetadata`
+  (do not forget the array index `[0]`). Every source in `groundingChunks[i].web`
+  has `uri`, `title` and `domain` (per the SDK type documentation, `domain` is
+  not supported by the Gemini Developer API and is `undefined` in practice).
+- Pages read via URL Context additionally report their source under
   `candidates[0].urlContextMetadata.urlMetadata[].retrievedUrl`.
-- Token-Zahlen liegen unter `response.usageMetadata`: `promptTokenCount`,
-  `candidatesTokenCount`, `totalTokenCount`, sowie `thoughtsTokenCount` für
-  die reinen Thinking-Tokens.
-- Verbindungsaufbau im MCP-SDK erfolgt über
-  `await server.connect(transport)` (nicht umgekehrt).
+- Token counts live under `response.usageMetadata`: `promptTokenCount`,
+  `candidatesTokenCount`, `totalTokenCount`, plus `thoughtsTokenCount` for the
+  thinking tokens alone.
+- In the MCP SDK the connection is established via
+  `await server.connect(transport)` (not the other way round).
 - `server.registerTool(name, { title?, description?, inputSchema }, handler)`
-  ist die aktuell empfohlene API; `inputSchema` akzeptiert sowohl ein rohes
-  Shape-Objekt (`{ query: z.string() }`) als auch ein volles `z.object({...})`.
+  is the currently recommended API; `inputSchema` accepts both a raw shape
+  object (`{ query: z.string() }`) and a full `z.object({...})`.
 
-## Bereits getestete Gemini-API-Befehle (Referenz)
+## Gemini API calls already tested (reference)
 
-Diese Aufrufe wurden vorab erfolgreich getestet und bilden die Grundlage
-für die Logik im MCP-Server.
+These calls were tested successfully beforehand and form the basis for the logic in the MCP server.
 
-### Direkter REST-Aufruf (PowerShell / curl)
+### Direct REST call (PowerShell / curl)
 
 ```powershell
 curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent" `
@@ -144,7 +130,7 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:g
   -H "X-goog-api-key: $env:GEMINI_API_KEY" `
   -X POST `
   -d '{
-    "contents": [{"parts": [{"text": "Testanfrage"}]}],
+    "contents": [{"parts": [{"text": "Test query"}]}],
     "tools": [{"googleSearch": {}}],
     "generationConfig": {
       "thinkingConfig": {"thinkingLevel": "high"}
@@ -152,74 +138,49 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:g
   }'
 ```
 
-## Genutzte Gemini-API-Tools
+## Gemini API tools in use
 
-Dieser MCP-Server nutzt ausschließlich drei der sechs offiziellen, von Google
-gemanagten Built-in-Tools der Gemini API. Alle drei sind beim aktuellen
-Standardmodell (`gemini-flash-latest`) verfügbar und werden **gemeinsam in
-einem einzigen MCP-Tool `gemini-search`** aktiviert - es gibt bewusst nur
-diesen einen Einstiegspunkt, Gemini entscheidet innerhalb des Aufrufs selbst,
-welche der drei Fähigkeiten (Suchen → Lesen → Auswerten) es für die jeweilige
-Anfrage tatsächlich braucht ([Doku: Tools](https://ai.google.dev/gemini-api/docs/tools)).
+This MCP server uses exactly three of the six official, Google-managed built-in tools of the Gemini API.
+All three are available on the current default model (`gemini-flash-latest`) and are activated **together in a single MCP tool, `gemini-search`** - there is deliberately only this one entry point, and Gemini decides within the call which of the three capabilities (search → read → evaluate) it actually needs for the given query ([docs: Tools](https://ai.google.dev/gemini-api/docs/tools)).
 
-Bewusst NICHT genutzt werden: Google Maps (nicht relevant für Web-Research),
-File Search (nur für eigene hochgeladene Dokumente), Computer Use (experimentell,
-Browser-Steuerung, kein Research-Anwendungsfall) und Function Calling
-(eigene Custom-Funktionen, hier nicht benötigt).
+Deliberately not used: Google Maps (not relevant for web research), File Search (only for your own uploaded documents), Computer Use (experimental, browser control, not a research use case) and Function Calling (custom functions, not needed here).
 
-### 1. Google Search (Grounding)
+### 1. Google Search (grounding)
 
-Verbindet das Modell in Echtzeit mit aktuellen Webinhalten. Gemini entscheidet
-selbst, wann eine Suche nötig ist, formuliert die Suchanfrage(n) eigenständig
-und liefert eine Antwort mit Quellenangaben (Zitationen) zurück
-([Doku: Grounding with Google Search](https://ai.google.dev/gemini-api/docs/google-search)).
+Connects the model to current web content in real time.
+Gemini decides on its own when a search is needed, formulates the search queries itself and returns an answer with source attributions (citations) ([docs: Grounding with Google Search](https://ai.google.dev/gemini-api/docs/google-search)).
 
 ```javascript
 tools: [{ googleSearch: {} }];
 ```
 
-**Zweck im Projekt:** Erste, breite Recherche zu einem Thema - der Standardfall
-innerhalb des Tools `gemini-search`.
+**Purpose in this project:** initial, broad research on a topic - the default case within the `gemini-search` tool.
 
 ### 2. URL Context
 
-Ermöglicht Gemini, gezielt den Inhalt einer oder mehrerer konkreter URLs zu lesen
-und auszuwerten - inklusive PDFs, Bildern und HTML, bis zu 34 MB pro Anfrage
-([Doku: URL Context](https://ai.google.dev/gemini-api/docs/url-context)).
-Läuft komplett innerhalb des API-Aufrufs, ohne dass Claude selbst die Seite laden muss.
+Lets Gemini read and evaluate the content of one or more specific URLs - including PDFs, images and HTML, up to 34 MB per request ([docs: URL Context](https://ai.google.dev/gemini-api/docs/url-context)).
+It runs entirely inside the API call, without Claude having to fetch the page itself.
 
 ```javascript
 tools: [{ urlContext: {} }];
 ```
 
-**Zweck im Projekt:** Vertiefende Analyse einer Quelle, die zuvor per Google Search
-gefunden wurde (z. B. wenn Claude wissen will, was genau auf einer bestimmten
-Ergebnis-Seite steht) - innerhalb desselben Tools `gemini-search`, Gemini
-ruft dieses Built-in bei Bedarf automatisch mit auf.
+**Purpose in this project:** deeper analysis of a source found earlier via Google Search (for example when Claude wants to know what exactly a particular result page says) - within the same `gemini-search` tool, with Gemini invoking this built-in automatically when needed.
 
 ### 3. Code Execution
 
-Lässt Gemini eigenständig Python-Code schreiben und in einer isolierten Sandbox
-ausführen, um z. B. Berechnungen, Datenauswertungen oder einfache Statistiken
-aus zuvor gefundenen/gelesenen Daten zu erstellen
-([Doku: Code Execution](https://ai.google.dev/gemini-api/docs/code-execution)). Die Sandbox hat
-keinen eigenen Internetzugang - sie arbeitet nur mit Daten, die bereits im
-Kontext vorliegen (z. B. aus Google Search oder URL Context).
+Lets Gemini write Python code on its own and run it in an isolated sandbox, in order to produce calculations, data analyses or simple statistics from data found or read earlier ([docs: Code Execution](https://ai.google.dev/gemini-api/docs/code-execution)).
+The sandbox has no internet access of its own - it works only with data already present in the context (from Google Search or URL Context, for instance).
 
 ```javascript
 tools: [{ codeExecution: {} }];
 ```
 
-**Zweck im Projekt:** Optionale dritte Fähigkeit innerhalb von `gemini-search`
-für Fälle, in denen gefundene/gelesene Daten noch rechnerisch ausgewertet
-werden sollen (z. B. Durchschnittswerte, Vergleiche, einfache Diagrammdaten).
+**Purpose in this project:** an optional third capability within `gemini-search` for cases where data that was found or read still needs to be evaluated numerically (averages, comparisons, simple chart data).
 
-### Kombinierte Nutzung
+### Combined use
 
-Alle drei Tools können und sollen in einem einzigen Aufruf gleichzeitig aktiviert werden,
-sodass Gemini selbst entscheidet, welche Schritte (Suchen → Lesen → Auswerten)
-für die jeweilige Anfrage nötig sind
-([Doku: Tools](https://ai.google.dev/gemini-api/docs/tools)):
+All three tools can and should be activated simultaneously in a single call, so that Gemini itself decides which steps (search → read → evaluate) the given query requires ([docs: Tools](https://ai.google.dev/gemini-api/docs/tools)):
 
 ```javascript
 config: {
@@ -232,9 +193,9 @@ config: {
 }
 ```
 
-### Referenzbeispiel über das offizielle Node-SDK
+### Reference example using the official Node SDK
 
-Vereinfachtes Beispiel des Musters, das `gemini.js` tatsächlich implementiert:
+A simplified example of the pattern that `gemini.js` actually implements:
 
 ```javascript
 import { GoogleGenAI } from "@google/genai";
@@ -243,7 +204,7 @@ const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const response = await genAI.models.generateContent({
   model: "gemini-flash-latest",
-  contents: "Testanfrage",
+  contents: "Test query",
   config: {
     tools: [{ googleSearch: {} }, { urlContext: {} }, { codeExecution: {} }],
     thinkingConfig: { thinkingLevel: "high" },
@@ -253,183 +214,143 @@ const response = await genAI.models.generateContent({
 console.log(response.text);
 ```
 
-Wichtige Parameter-Hinweise aus der Dokumentation:
+Important parameter notes from the documentation:
 
-- `thinkingLevel` ersetzt das ältere `thinkingBudget` (Integer) - bei
-  `gemini-3.5-flash` gilt der Enum-Wert (`minimal`, `low`, `medium`, `high`)
-- Ohne explizite Angabe ist Thinking bei diesem Modell standardmäßig auf
-  `medium` gesetzt. Dieser Server sendet trotzdem immer ein Level mit, damit
-  der Footer den tatsächlich genutzten Wert ausweisen kann - ohne
-  `config.json` ebenfalls `medium`
-- Der API-Key kann per Header (`X-goog-api-key`) oder als Query-Parameter
-  (`?key=...`) übergeben werden; Header-Variante wird bevorzugt
+- `thinkingLevel` replaces the older `thinkingBudget` (integer) - on
+  `gemini-3.5-flash` the enum value applies (`minimal`, `low`, `medium`, `high`)
+- Without an explicit setting, thinking defaults to `medium` on this model. This
+  server always sends a level anyway, so that the footer can report the value
+  actually used - without a `config.json` that is `medium` as well
+- The API key can be passed as a header (`X-goog-api-key`) or as a query
+  parameter (`?key=...`); the header variant is preferred
 
-## Antwort: Quellenliste und Token-Footer
+## Response: source list and token footer
 
-Jede Antwort des MCP-Servers enthält neben dem eigentlichen Antworttext drei
-zusätzliche, direkt aus der Gemini-API-Antwort ausgelesene Teile (nicht selbst
-berechnet oder geschätzt):
+Beyond the answer text itself, every response from the MCP server contains three additional parts read straight out of the Gemini API response (not computed or estimated by the server):
 
-1. Eine **Quellenliste** (Titel + URL) am Ende des Textes - Claude soll die
-   Quellen sehen und weiterverwerten können (z. B. gezielt eine URL vertiefen
-   oder die Aussage einer Quelle zuordnen), nicht nur eine reine Zahl. Sie
-   führt Google-Search-Treffer und per URL Context gelesene Seiten
-   zusammen und dedupliziert nach URL.
-2. **Belegmarker** (`[1]`, `[1][3]`) im Fließtext an den Stellen, für die die
-   API eine Quelle ausweist - damit sichtbar wird, welche Aussagen belegt sind
-   und welche das Modell aus eigenem Wissen ergänzt hat.
-3. Einen **Footer** mit Input-/Output-/Thinking-Tokens, Quellenanzahl sowie
-   dem verwendeten Modell und Thinking-Level, zur Transparenz über den
-   tatsächlichen Ressourcenverbrauch und die genutzte Modell-/Thinking-Wahl
-   des Tool-Calls - der User soll nie raten müssen, was verwendet wurde.
+1. A **source list** (title + URL) at the end of the text - Claude should be
+   able to see and act on the sources (to dig into a specific URL, say, or to
+   attribute a statement to a source), not just a bare count. It merges Google
+   Search hits and pages read via URL Context and deduplicates by URL.
+2. **Citation markers** (`[1]`, `[1][3]`) inline in the text at the positions
+   for which the API reports a source - making it visible which statements are
+   backed by a source and which the model added from its own knowledge.
+3. A **footer** with input/output/thinking tokens, the number of sources and the
+   model and thinking level used, for transparency about the actual resource
+   consumption and the model/thinking choice of that tool call - the user should
+   never have to guess what was used.
 
-### Antworttext: eigener Aufbau statt `response.text`
+### Answer text: assembled by hand instead of `response.text`
 
-`gemini.js` setzt den Antworttext selbst aus `candidates[0].content.parts`
-zusammen (`buildText`), statt den `.text`-Getter des SDK zu nutzen. Der Getter
-verkettet ausschließlich Textteile, verwirft alles andere und schreibt dabei
-pro Aufruf eine Warnung nach stderr. Bei aktiviertem Code Execution fällt damit
-genau der Teil weg, der zeigt, wie ein Rechenergebnis zustande kam - die
-Antwort behauptet ein Ergebnis, ohne den Weg dorthin zu belegen. `buildText`
-übernimmt deshalb zusätzlich `executableCode` und `codeExecutionResult` als
-Codeblöcke. Teile mit `thought: true` bleiben außen vor; ihr Umfang steht
-bereits als Thinking-Tokens im Footer.
+`gemini.js` assembles the answer text itself from `candidates[0].content.parts` (`buildText`) instead of using the SDK's `.text` getter.
+The getter concatenates text parts only, discards everything else and writes a warning to stderr on every call.
+With Code Execution enabled, that drops exactly the part which shows how a computed result came about - the answer asserts a result without evidence of the path to it.
+`buildText` therefore also picks up `executableCode` and `codeExecutionResult` as code blocks.
+Parts marked `thought: true` are left out; their volume is already reported as thinking tokens in the footer.
 
-Die Reihenfolge wird dabei bewusst umgestellt: Die API liefert die Parts in
-Ausführungsreihenfolge, sodass Code und Ergebnis **vor** dem erklärenden Text
-stehen - die Antwort begänne also mit einem Codeblock, die eigentliche Auskunft
-käme darunter. `buildText` sammelt Text- und Codeblöcke getrennt und hängt die
-Codeblöcke unter der Überschrift `Code execution:` hinten an. Der Rechenweg ist
-ein Beleg und steht damit dort, wo auch die Quellenliste steht: hinter der
-Antwort, nicht davor.
+The order is deliberately rearranged: the API returns the parts in execution order, so code and result come **before** the explanatory text - the answer would begin with a code block and the actual information would follow underneath.
+`buildText` collects text and code blocks separately and appends the code blocks at the end under the heading `Code execution:`.
+The computation is evidence, and so it goes where the source list goes: after the answer, not before it.
 
-Bewusst **nicht** begrenzt wird die Länge von `codeExecutionResult.output`:
-Auch eine lange Ausgabe ist Teil des Rechenwegs, und ein Umfang, der im
-Research-Kontext stören würde, ist die seltene Ausnahme.
+The length of `codeExecutionResult.output` is deliberately **not** capped: long output is part of the computation too, and a volume that would actually get in the way in a research context is the rare exception.
 
-### Belegmarker im Fließtext
+### Citation markers inline
 
-Zusätzlich zur Quellenliste am Ende stehen Marker direkt im Antworttext, an
-den Stellen, für die die API über `groundingMetadata.groundingSupports` eine
-Quelle ausweist:
+In addition to the source list at the end, markers sit directly in the answer text at the positions for which the API reports a source via `groundingMetadata.groundingSupports`:
 
 ```text
-In Python 3.13 wurde `date_parser` entfernt[1]. Der Typcode 'w' ist neu[1][3].
-Das Standardverhalten des C-Parsers ist unverändert.
+In Python 3.13, `date_parser` was removed[1]. The type code 'w' is new[1][3].
+The default behaviour of the C parser is unchanged.
 ```
 
-Format: `[1]` direkt am Ende der belegten Textstelle, mehrere Quellen als
-`[1][3]` (entspricht Googles Referenzimplementierung in der Gemini CLI). Die
-Nummern sind dieselben wie in der Quellenliste.
+Format: `[1]` immediately at the end of the cited passage, multiple sources as `[1][3]` (matching Google's reference implementation in the Gemini CLI).
+The numbers are the same as in the source list.
 
-**Der Zweck ist nicht in erster Linie, *welche* Quelle einen Satz stützt,
-sondern *ob* er überhaupt belegt ist.** Gemessen an einer echten Antwort waren
-27 % des Textes durch keinen einzigen Support gedeckt - Aussagen aus dem
-Modellgedächtnis, optisch nicht von den recherchierten zu unterscheiden. Der
-Leser dieses Servers schreibt gegen solche Sätze anschließend Code.
+**The point is not primarily *which* source backs a sentence, but *whether* it is backed at all.**
+Measured against a real response, 27 % of the text was covered by no support at all - statements from the model's memory, visually indistinguishable from the researched ones.
+The reader of this server goes on to write code against sentences like those.
 
-#### Semantik - wichtig
+#### Semantics - important
 
-| Aussage | Gilt |
+| Statement | Holds |
 | --- | --- |
-| Marker vorhanden ⇒ Stelle ist belegt | zuverlässig |
-| Marker fehlt ⇒ Stelle ist unbelegt | **nur ein Indiz, kein Beweis** |
+| Marker present ⇒ passage is backed | reliably |
+| Marker absent ⇒ passage is unbacked | **only an indication, not proof** |
 
-Ein Marker kann aus vier Gründen fehlen, von denen nur der erste die gemeinte
-Bedeutung hat:
+A marker can be missing for four reasons, only the first of which carries the intended meaning:
 
-1. Die Stelle ist tatsächlich ungegroundet.
-2. Die Verifikation gegen `segment.text` schlug fehl (siehe unten).
-3. Die Position lag in einem Markdown-Codeabschnitt.
-4. Die Quelle stammt **ausschließlich** aus `urlContextMetadata` - zu solchen
-   Einträgen liefert die API keine `groundingSupports`, sie können also keinen
-   Marker tragen.
+1. The passage genuinely is ungrounded.
+2. Verification against `segment.text` failed (see below).
+3. The position fell inside a Markdown code section.
+4. The source comes **exclusively** from `urlContextMetadata` - the API provides
+   no `groundingSupports` for such entries, so they cannot carry a marker.
 
-Die Fälle 2 und 3 sind zählbar und stehen als `⚠️ n markers dropped` im Footer,
-sobald sie über null liegen. Fall 4 ist an der Quellenliste erkennbar.
+Cases 2 and 3 are countable and appear as `⚠️ n markers dropped` in the footer once they exceed zero.
+Case 4 is recognisable from the source list.
 
-Zu Fall 4 eine Messung, die gegen die naheliegende Erwartung ausfiel: Bei einer
-Anfrage mit konkreter URL hat URL Context nachweislich gefeuert
-(`urlRetrievalStatus: URL_RETRIEVAL_STATUS_SUCCESS`) - die gelesene Seite stand
-aber **zusätzlich als `groundingChunk`** in der Antwort, mit echtem Seitentitel,
-direkter URL statt vertexaisearch-Weiterleitung und drei eigenen
-`groundingSupports`. Sie war damit vollständig durch Marker abgedeckt und kam
-über die Deduplizierung nach URL gar nicht mehr im URL-Context-Zweig an.
+On case 4, a measurement that came out against the obvious expectation: for a query with a concrete URL, URL Context demonstrably fired (`urlRetrievalStatus: URL_RETRIEVAL_STATUS_SUCCESS`) - but the page that was read appeared **additionally as a `groundingChunk`** in the response, with a real page title, a direct URL instead of a vertexaisearch redirect, and three `groundingSupports` of its own.
+It was therefore fully covered by markers and never reached the URL Context branch, having been removed by the deduplication on URL.
 
-Fall 4 greift also nur, wenn eine per URL Context gelesene Seite **nicht**
-zugleich unter den `groundingChunks` auftaucht. Ob und wann das vorkommt, ist
-offen - beobachtet wurde bisher nur der günstige Fall. „Kein Marker ⇒ unbelegt"
-bleibt deshalb ein Indiz, ist aber weniger stumpf als beim Aufstellen dieser
-Regel angenommen.
+Case 4 thus only applies when a page read via URL Context does **not** also show up among the `groundingChunks`.
+Whether and when that happens is an open question - so far only the favourable case has been observed.
+"No marker ⇒ unbacked" therefore remains an indication, but it is less blunt than assumed when this rule was written.
 
-#### Umsetzung (`citations.js`)
+#### Implementation (`citations.js`)
 
-- **Byte-Offsets, nicht Zeichenpositionen.** `startIndex`/`endIndex` sind laut
-  SDK-Typdefinition „measured in bytes". An einer deutschen Testantwort stimmte
-  keine einzige von 28 Positionen zeichenbasiert, alle 28 bytebasiert; Text und
-  Bytes liefen am Ende um 44 Stellen auseinander. Eingefügt wird deshalb über
-  `Buffer`. Google selbst hatte diesen Fehler in der Gemini CLI
-  ([PR #5956](https://github.com/google-gemini/gemini-cli/pull/5956),
-  aufgefallen an japanischem Text).
-- **Pro Part, vor dem Zusammenfügen.** Die Offsets zählen ab dem Anfang jedes
-  einzelnen Parts (`Segment.partIndex`, „Offset from the start of the Part"),
-  nicht ab dem Anfang des zusammengesetzten Textes. `buildText` setzt die Marker
-  deshalb innerhalb der Schleife über die Parts - vor dem `join("\n\n")` und vor
-  den Code-Execution-Blöcken, die vom Server erzeugt werden und in der Zählung
-  der API gar nicht existieren.
-- **Verifikation gegen `segment.text`.** Die API liefert den erwarteten
-  Ausschnitt mit. Passt er nicht zur berechneten Position, wird der Marker
-  verworfen statt geraten. Folge: **Ein Marker kann nie an der falschen Stelle
-  landen - er kann nur fehlen.** Das ist zugleich das Sicherheitsnetz gegen eine
-  stille Änderung der Offset-Semantik durch Google.
-- **Keine Marker in Codeabschnitten.** Ein Marker mitten in einem Codebeispiel
-  macht aus `copy.replace(obj, x=1)` ein `copy.replace(obj[3], x=1)` -
-  syntaktisch gültig, inhaltlich falsch, und unauffällig. Umzäunte Blöcke und
-  Inline-Code werden in einem Durchlauf als Intervalle bestimmt (die Zäune
-  stehen in der Alternation vorn und schlucken damit alles, was in ihnen steht);
-  fällt die Zielposition hinein, wird der Marker verworfen. Nicht erkannt werden eingerückte Codeblöcke (vier Leerzeichen) -
-  die einzige bekannte Lücke.
-- **Nummern über `chunkNumbers`, nie über `index + 1`.** Siehe „Quellenliste
-  erzeugen" unten.
+- **Byte offsets, not character positions.** Per the SDK type definition,
+  `startIndex`/`endIndex` are "measured in bytes". On a German test response not
+  a single one of 28 positions matched on a character basis, and all 28 matched
+  on a byte basis; text and bytes had drifted 44 places apart by the end.
+  Insertion therefore goes through `Buffer`. Google made this very mistake in
+  the Gemini CLI ([PR #5956](https://github.com/google-gemini/gemini-cli/pull/5956),
+  noticed on Japanese text).
+- **Per part, before joining.** The offsets count from the start of each
+  individual part (`Segment.partIndex`, "Offset from the start of the Part"),
+  not from the start of the assembled text. `buildText` therefore inserts the
+  markers inside the loop over the parts - before the `join("\n\n")` and before
+  the code execution blocks, which are produced by the server and do not exist
+  in the API's counting at all.
+- **Verification against `segment.text`.** The API includes the expected
+  excerpt. If it does not match the computed position, the marker is discarded
+  rather than guessed. Consequence: **a marker can never end up in the wrong
+  place - it can only be missing.** This is at the same time the safety net
+  against a silent change of the offset semantics by Google.
+- **No markers inside code sections.** A marker in the middle of a code example
+  turns `copy.replace(obj, x=1)` into `copy.replace(obj[3], x=1)` -
+  syntactically valid, factually wrong, and inconspicuous. Fenced blocks and
+  inline code are determined as intervals in a single pass (the fences come
+  first in the alternation and therefore swallow everything inside them); if the
+  target position falls into one, the marker is discarded. Indented code blocks
+  (four spaces) are not detected - the only known gap.
+- **Numbers via `chunkNumbers`, never via `index + 1`.** See "Building the
+  source list" below.
 
-Protobuf lässt Defaultwerte weg: `startIndex` und `partIndex` fehlen im JSON,
-wenn sie 0 sind - beide brauchen `?? 0`. `confidenceScores` und `renderedParts`
-wurden als Qualitätsfilter geprüft und verworfen: bei Gemini 3.x in der Praxis
-leer (0 von 28 befüllt).
+Protobuf omits default values: `startIndex` and `partIndex` are absent from the JSON when they are 0 - both need `?? 0`.
+`confidenceScores` and `renderedParts` were evaluated as quality filters and rejected: on Gemini 3.x they are empty in practice (0 of 28 populated).
 
-Bewusst **nicht** zusammengefasst werden redundante Marker. Verschachtelte
-Supports (gemessen: vier Supports mit gleichem Startpunkt, verschiedenen
-Endpunkten und derselben Quelle) erzeugen mehrere identische Marker in einem
-Absatz. Zusammenfassen verwürfe Auflösung, und für einen maschinellen Leser ist
-Rauschen billiger als eine fehlende Markierung.
+Redundant markers are deliberately **not** merged.
+Nested supports (measured: four supports with the same start, different ends and the same source) produce several identical markers in one paragraph.
+Merging would throw away resolution, and for a machine reader noise is cheaper than a missing mark.
 
-### Hinweis bei nicht regulär beendeter Antwort
+### Notice for a response that did not finish normally
 
-Fehlt der Text ganz oder bricht er ab, sähe die Antwort mit Quellenliste und
-Footer trotzdem wie ein Erfolg aus. `formatNotice` fügt deshalb zwischen Text
-und Quellenliste eine Zeile mit ⚠️ ein, wenn einer dieser Fälle vorliegt:
+If the text is missing entirely or breaks off, the response would still look like a success with its source list and footer.
+`formatNotice` therefore inserts a line with ⚠️ between the text and the source list when one of these cases applies:
 
-| Bedingung | Hinweis |
+| Condition | Notice |
 |---|---|
-| `response.promptFeedback.blockReason` gesetzt | Anfrage von der API blockiert |
-| Text leer | Antwort ohne Text, mit `candidates[0].finishReason` |
-| `finishReason` gesetzt und ≠ `STOP` | unvollständige Antwort, vor allem `MAX_TOKENS` |
+| `response.promptFeedback.blockReason` set | request blocked by the API |
+| text empty | response without text, with `candidates[0].finishReason` |
+| `finishReason` set and ≠ `STOP` | incomplete response, above all `MAX_TOKENS` |
 
-`STOP` ist der reguläre Abschluss; die übrigen Werte des `FinishReason`-Enums
-(`MAX_TOKENS`, `SAFETY`, `RECITATION`, `BLOCKLIST`, …) bedeuten einen Abbruch.
-Der Footer bleibt in jedem Fall der letzte Bestandteil der Antwort.
+`STOP` is the regular completion; the remaining values of the `FinishReason` enum (`MAX_TOKENS`, `SAFETY`, `RECITATION`, `BLOCKLIST`, …) mean an abort.
+The footer stays the last element of the response in every case.
 
-### Woher die Werte kommen
+### Where the values come from
 
-Jede `generateContent`-Antwort liefert automatisch ein `usageMetadata`-Objekt
-mit der Token-Aufschlüsselung
-([Doku: Token counting](https://ai.google.dev/gemini-api/docs/tokens)) sowie -
-bei aktiviertem Google Search Tool - ein `groundingMetadata`-Objekt mit den
-gefundenen Quellen
-([Doku: Grounding with Google Search](https://ai.google.dev/gemini-api/docs/google-search)).
-Bei aktiviertem URL-Context-Tool liegen die gelesenen Seiten zusätzlich unter
-`urlContextMetadata`. **Wichtig:** Beide Metadaten-Objekte hängen am ersten
-Kandidaten (`candidates[0]`), nicht direkt an `candidates`.
+Every `generateContent` response automatically provides a `usageMetadata` object with the token breakdown ([docs: Token counting](https://ai.google.dev/gemini-api/docs/tokens)) as well as - with the Google Search tool enabled - a `groundingMetadata` object with the sources found ([docs: Grounding with Google Search](https://ai.google.dev/gemini-api/docs/google-search)).
+With the URL Context tool enabled, the pages that were read are additionally available under `urlContextMetadata`.
+**Important:** both metadata objects hang off the first candidate (`candidates[0]`), not off `candidates` directly.
 
 ```javascript
 const response = await genAI.models.generateContent({...})
@@ -443,38 +364,30 @@ const searchChunks = candidate?.groundingMetadata?.groundingChunks ?? []
 const urlContextEntries = candidate?.urlContextMetadata?.urlMetadata ?? []
 ```
 
-### Felder im Detail
+### Fields in detail
 
-| Feld               | Pfad in der Antwort                                            | Bedeutung                                                     |
-| ------------------ | -------------------------------------------------------------- | ------------------------------------------------------------- |
-| Input-Tokens       | `usageMetadata.promptTokenCount`                               | Tokens der gesendeten Anfrage                                 |
-| Output-Tokens      | `usageMetadata.candidatesTokenCount`                           | Tokens der generierten Antwort                                |
-| Thinking-Tokens    | `usageMetadata.thoughtsTokenCount`                             | Reine Denk-Tokens (Reasoning), separat ausgewiesen            |
-| Such-Quellen       | `candidates[0].groundingMetadata.groundingChunks`              | Array der bei der Google-Suche gefundenen Webquellen          |
-| Such-Quell-URL     | `groundingChunks[i].web.uri`                                   | URL der einzelnen Suchquelle                                  |
-| Such-Quell-Titel   | `groundingChunks[i].web.title`                                 | Titel der einzelnen Suchquelle                                |
-| Belegzuordnung     | `candidates[0].groundingMetadata.groundingSupports`            | Textstelle → Quelle, Grundlage der Belegmarker                |
-| Belegte Textstelle | `groundingSupports[i].segment`                                 | `startIndex`/`endIndex` (in **Bytes**), `text`, `partIndex`   |
-| Belegte Quellen    | `groundingSupports[i].groundingChunkIndices`                   | Indizes in `groundingChunks` - **nicht** in der Quellenliste  |
-| URL-Context-Quelle | `candidates[0].urlContextMetadata.urlMetadata[i].retrievedUrl` | URL einer von Gemini gezielt gelesenen Seite (kein Grounding) |
+| Field              | Path in the response                                           | Meaning                                                        |
+| ------------------ | -------------------------------------------------------------- | -------------------------------------------------------------- |
+| Input tokens       | `usageMetadata.promptTokenCount`                               | tokens of the request sent                                     |
+| Output tokens      | `usageMetadata.candidatesTokenCount`                           | tokens of the generated response                               |
+| Thinking tokens    | `usageMetadata.thoughtsTokenCount`                             | reasoning tokens alone, reported separately                    |
+| Search sources     | `candidates[0].groundingMetadata.groundingChunks`              | array of the web sources found by the Google search            |
+| Search source URL  | `groundingChunks[i].web.uri`                                   | URL of the individual search source                            |
+| Search source title| `groundingChunks[i].web.title`                                 | title of the individual search source                          |
+| Citation mapping   | `candidates[0].groundingMetadata.groundingSupports`            | passage → source, the basis for the citation markers           |
+| Cited passage      | `groundingSupports[i].segment`                                 | `startIndex`/`endIndex` (in **bytes**), `text`, `partIndex`    |
+| Cited sources      | `groundingSupports[i].groundingChunkIndices`                   | indices into `groundingChunks` - **not** into the source list  |
+| URL Context source | `candidates[0].urlContextMetadata.urlMetadata[i].retrievedUrl` | URL of a page Gemini read on purpose (not grounding)           |
 
-Beide Quell-Arrays sind nur vorhanden, wenn das jeweilige Tool tatsächlich
-verwendet wurde - sonst leer oder nicht vorhanden, daher immer mit `?? []`
-absichern.
+Both source arrays are present only if the respective tool was actually used - otherwise they are empty or absent, so always guard them with `?? []`.
 
-### Quellenliste erzeugen
+### Building the source list
 
-Such-Treffer und URL-Context-Seiten werden zu einer Liste zusammengeführt und
-nach URL entduplifiziert (Such-Treffer haben Vorrang, da sie einen echten
-Seitentitel mitbringen - URL-Context-Einträge liefern nur die URL selbst).
+Search hits and URL Context pages are merged into one list and deduplicated by URL (search hits take precedence, as they carry a real page title - URL Context entries provide only the URL itself).
 
-`buildSourceList` liefert dabei **zwei** Dinge: die Liste selbst und die
-Zuordnung `chunkNumbers` vom Index in `groundingChunks` auf die Nummer in der
-ausgegebenen Liste. Beide Zählungen laufen auseinander, weil `groundingChunks`
-Suchtreffer abbildet und nicht Quellen - gemessen 17 Treffer bei 14 eindeutigen
-URLs, in einem früheren Lauf sogar 14 bei 4. Die Belegmarker dürfen deshalb
-**niemals** über `index + 1` nummeriert werden; sie liefen sonst über das Ende
-der Quellenliste hinaus oder verwiesen auf die falsche Quelle.
+`buildSourceList` returns **two** things: the list itself and `chunkNumbers`, the mapping from the index in `groundingChunks` to the number in the emitted list.
+The two counts diverge, because `groundingChunks` represents search hits rather than sources - measured: 17 hits for 14 distinct URLs, and in an earlier run 14 for 4.
+Citation markers must therefore **never** be numbered via `index + 1`; they would run past the end of the source list or point at the wrong source.
 
 ```javascript
 const numberByUri = new Map();
@@ -495,8 +408,8 @@ searchChunks.forEach((chunk, index) => {
   chunkNumbers.set(index, addSource(chunk.web?.title ?? uri, uri));
 });
 
-// URL-Context-Quellen stehen hinter den Suchtreffern und erzeugen keine
-// Marker - sie beeinflussen die Nummerierung damit nicht.
+// URL Context sources come after the search hits and produce no markers -
+// so they do not affect the numbering.
 for (const entry of urlContextEntries) {
   if (entry.retrievedUrl) addSource(entry.retrievedUrl, entry.retrievedUrl);
 }
@@ -506,14 +419,13 @@ const sourceList = sources
   .join("\n");
 ```
 
-Chunks ohne `uri` schaffen es weder in die Liste noch in `chunkNumbers` und
-erzeugen folglich keinen Marker.
+Chunks without a `uri` make it neither into the list nor into `chunkNumbers` and consequently produce no marker.
 
-### Footer-Format im Tool-Ergebnis
+### Footer format in the tool result
 
 ```javascript
-// Verworfene Belegmarker nur, wenn es welche gab - der Normalfall soll den
-// Footer nicht verlaengern.
+// Dropped citation markers only when there were any - the normal case should
+// not make the footer longer.
 const droppedNote = dropped > 0 ? ` | ⚠️ ${dropped} markers dropped` : "";
 
 const footer =
@@ -527,10 +439,9 @@ return {
 };
 ```
 
-`text` und `dropped` stammen dabei aus `buildText(candidate, { supports,
-chunkNumbers })`, `notice` aus `formatNotice(...)` - siehe die Abschnitte oben.
+`text` and `dropped` come from `buildText(candidate, { supports, chunkNumbers })`, `notice` from `formatNotice(...)` - see the sections above.
 
-Beispielausgabe am Ende jeder Antwort:
+Example output at the end of every response:
 
 ```text
 Sources:
@@ -541,74 +452,52 @@ Sources:
 🔢 245 input / 89 output / 40 thinking tokens | 🔍 2 sources | 🤖 gemini-flash-latest (thinking: high)
 ```
 
-Die Zahl der verworfenen Marker gehört in den Footer, weil sie die
-Aussagekraft der Antwort verändert: Fehlt ein Marker, kann die Stelle
-ungegroundet sein - oder die Prüfung hat ihn verworfen. Das entspricht dem
-Zweck des Footers, den tatsächlichen Zustand jedes einzelnen Aufrufs sichtbar
-zu machen.
+The number of dropped markers belongs in the footer because it changes how much the response can be relied on: if a marker is missing, the passage may be ungrounded - or the verification discarded it.
+That matches the purpose of the footer, which is to make the actual state of each individual call visible.
 
-Tatsächlich implementiert in `gemini.js` (`buildText`, `formatNotice`,
-`buildSourceList`, `formatSourcesBlock`, `formatFooter`) und `citations.js`
-(`insertCitations`).
+Actually implemented in `gemini.js` (`buildText`, `formatNotice`, `buildSourceList`, `formatSourcesBlock`, `formatFooter`) and `citations.js` (`insertCitations`).
 
-## Konfigurierbare Modell- und Thinking-Level-Wahl
+## Configurable model and thinking level
 
-Der MCP-Server bietet zwei zusätzliche Tools, mit denen sich Standardmodell und
-Standard-Thinking-Level dauerhaft festlegen lassen, ohne den Code selbst
-bearbeiten zu müssen.
+The MCP server offers two additional tools for setting the default model and the default thinking level persistently, without having to edit the code.
 
 ### gemini-list-models
 
-Ruft über den offiziellen `models.list`-Endpunkt die für den aktuellen
-API-Key verfügbaren Modelle ab, inklusive Token-Limits
-([API-Referenz: Models](https://ai.google.dev/api/models)). Der Pager des SDK
-holt weitere Seiten selbstständig nach; `pageSize` bestimmt nur die Größe der
-einzelnen Anfrage, nicht die Gesamtzahl.
+Fetches the models available to the current API key, including token limits, via the official `models.list` endpoint ([API reference: Models](https://ai.google.dev/api/models)).
+The SDK's pager fetches further pages on its own; `pageSize` only determines the size of the individual request, not the total count.
 
-**Standardmäßig gefiltert.** Der Key gibt erheblich mehr Modelle frei, als
-hier funktionieren - beim Stand dieser Messung 58 insgesamt, davon 32
-nutzbar. Gefiltert wird über zwei Angaben, die jedes Modell selbst
-mitliefert:
+**Filtered by default.**
+The key exposes considerably more models than work here - 58 in total at the time of this measurement, 32 of them usable.
+Filtering goes through two pieces of information that every model reports itself:
 
-| Feld | Bedingung | Andernfalls |
+| Field | Condition | Otherwise |
 |---|---|---|
-| `supportedActions` | enthält `generateContent` | Modell erzeugt keinen Text - Embeddings, Imagen, Veo, Live/Audio |
-| `thinking` | `true` | `400 Thinking level is not supported for this model.`, da `runSearch` immer ein `thinkingConfig` sendet |
+| `supportedActions` | contains `generateContent` | model produces no text - embeddings, Imagen, Veo, Live/Audio |
+| `thinking` | `true` | `400 Thinking level is not supported for this model.`, since `runSearch` always sends a `thinkingConfig` |
 
-Beide Felder sind im `Model`-Interface des SDK dokumentiert. Bewusst **nicht**
-über Namensmuster gefiltert: Google vergibt Codenamen, die nichts über die
-Fähigkeiten aussagen (`nano-banana-pro-preview` ist ein Bildmodell), sodass
-jede Musterliste bei der nächsten Modellfamilie veraltet.
+Both fields are documented in the SDK's `Model` interface.
+Deliberately **not** filtered by name patterns: Google assigns code names that say nothing about capabilities (`nano-banana-pro-preview` is an image model), so any list of patterns goes stale with the next model family.
 
-Grenzen, die der Filter nicht auflöst:
+Limits the filter does not resolve:
 
-- Er trennt technische Lauffähigkeit, nicht Eignung. Bild-, Sprach- und
-  Robotikmodelle erfüllen die Bedingungen teilweise ebenfalls.
-- **Gelistet heißt nicht verfügbar.** Abgekündigte Modelle bleiben in der
-  Antwort und liefern bei Nutzung `404 ... is no longer available` - nachweisbar
-  an der 2.0-Generation. Ein Feld, das den Zustand vorab anzeigt, existiert
-  nicht.
+- It separates technical usability, not suitability. Image, speech and robotics
+  models partly satisfy the conditions as well.
+- **Listed does not mean available.** Deprecated models stay in the response and
+  return `404 ... is no longer available` when used - demonstrable on the 2.0
+  generation. A field that would indicate this state up front does not exist.
 
-Deshalb ist `all` kein reiner Komfortschalter: Da die Liste ohnehin keine
-Garantie gibt, darf die gefilterte Sicht nie die einzige sein. `all: true`
-zeigt die vollständige Liste mit einer Statusspalte. Ergibt der Filter kein
-einziges Modell - etwa weil die API die ausgewerteten Felder nicht mehr
-liefert - fällt `listModels` selbsttätig auf die vollständige Liste zurück und
-weist im Hinweistext darauf hin, statt eine leere Ausgabe zu erzeugen.
+`all` is therefore not merely a convenience switch: since the list gives no guarantee anyway, the filtered view must never be the only one.
+`all: true` shows the complete list with a status column.
+If the filter yields no model at all - because the API no longer provides the fields being evaluated, say - `listModels` falls back to the complete list on its own and says so in the notice text, rather than producing empty output.
 
 ### gemini-set-model
 
-Speichert Modell-ID und/oder Thinking-Level dauerhaft in einer `config.json`
-(Ort siehe unten). Beide Werte lassen sich unabhängig voneinander setzen - ein
-Merge sorgt dafür, dass das Setzen des einen Werts den bereits gespeicherten
-anderen Wert nicht überschreibt. Diese Wahl bleibt über Server-Neustarts hinweg
-bestehen, bis sie erneut geändert wird.
+Stores the model ID and/or thinking level persistently in a `config.json` (location see below).
+The two values can be set independently of one another - a merge makes sure that setting one does not overwrite the other already-stored value.
+This choice survives server restarts until it is changed again.
 
-Die Bestätigung nennt den vollständigen Pfad, und der Aufruf liegt in einem
-`try`/`catch`: Das Zielverzeichnis wird erst beim Speichern angelegt und kann je
-nach Rechten oder verschobenem `%APPDATA%` unbeschreibbar sein. Ohne `catch`
-liefe ein Schreibfehler ungefangen aus dem Handler statt als `isError`-Antwort
-beim Client anzukommen.
+The confirmation names the full path, and the call sits inside a `try`/`catch`: the target directory is only created when saving and may be unwritable depending on permissions or a relocated `%APPDATA%`.
+Without the `catch`, a write error would escape the handler uncaught instead of arriving at the client as an `isError` response.
 
 ```javascript
 server.registerTool(
@@ -619,22 +508,22 @@ server.registerTool(
         .string()
         .optional()
         .describe(
-          "Modell-ID, z. B. gemini-flash-latest oder ein fest gepinntes Modell wie gemini-3.5-flash",
+          "Model ID, e.g. gemini-flash-latest or a pinned model such as gemini-3.5-flash",
         ),
       thinkingLevel: z
         .enum(["minimal", "low", "medium", "high"])
         .optional()
-        .describe("Denktiefe des Modells"),
+        .describe("Reasoning depth of the model"),
     },
   },
   async ({ model, thinkingLevel }) => {
-    // mindestens ein Parameter ist Pflicht, sonst Fehler
-    setSavedConfig({ model, thinkingLevel }); // Merge statt Ueberschreiben, siehe config.js
+    // at least one parameter is required, otherwise an error
+    setSavedConfig({ model, thinkingLevel }); // merge instead of overwrite, see config.js
     return {
       content: [
         {
           type: "text",
-          text: `Gespeichert - Modell: ${model}, Thinking-Level: ${thinkingLevel}`,
+          text: `Saved - model: ${model}, thinking level: ${thinkingLevel}`,
         },
       ],
     };
@@ -642,82 +531,58 @@ server.registerTool(
 );
 ```
 
-### Speicherort der Konfiguration
+### Configuration file location
 
-Nicht `./config.json`: Das Arbeitsverzeichnis eines per stdio gestarteten
-MCP-Servers ist nicht garantiert der Projektordner. Aber auch **nicht mehr
-scriptrelativ** - das war richtig, solange der Code ausschließlich geklont
-wurde, und wird mit der npm-Veröffentlichung falsch:
+Not `./config.json`: the working directory of an MCP server started over stdio is not guaranteed to be the project folder.
+But **no longer script-relative** either - that was right as long as the code was only ever cloned, and it becomes wrong with the npm release:
 
-| Installationsart | Ort des Scripts | Folge für eine Datei daneben |
+| Installation | Location of the script | Consequence for a file next to it |
 | --- | --- | --- |
-| `npm install -g` | `…/npm/node_modules/<paket>/` | Verzeichnis gehört dem Paketmanager und wird beim Update neu geschrieben |
-| `npx` | `~/.npm/_npx/<hash>/node_modules/…` | reiner Cache, dessen Hash sich mit der Version ändert - die Einstellung wäre praktisch flüchtig |
+| `npm install -g` | `…/npm/node_modules/<package>/` | directory belongs to the package manager and is rewritten on update |
+| `npx` | `~/.npm/_npx/<hash>/node_modules/…` | pure cache whose hash changes with the version - the setting would be effectively ephemeral |
 
-Stattdessen der plattformübliche Ort für Nutzer-State, aufgelöst in dieser
-Reihenfolge:
+Instead, the platform's conventional location for user state, resolved in this order:
 
-1. `XDG_CONFIG_HOME`, wenn gesetzt - Linux-Konvention und zugleich das Ventil
-   für alle, die den Standardort nicht wollen.
-2. Unter Windows `%APPDATA%` (Rückfall `~/AppData/Roaming`), **nicht**
+1. `XDG_CONFIG_HOME` if set - the Linux convention and at the same time the
+   escape hatch for anyone who does not want the default location.
+2. On Windows `%APPDATA%` (falling back to `~/AppData/Roaming`), **not**
    `~/.config`.
-3. Sonst `~/.config`.
+3. Otherwise `~/.config`.
 
-Darunter jeweils `gemini-grounding-mcp/config.json`.
+With `gemini-grounding-mcp/config.json` underneath, in each case.
 
-macOS wird bewusst wie Linux behandelt, obwohl der Apple-Standard
-`~/Library/Application Support/` wäre: Dies ist ein Terminal-Werkzeug, und im
-Terminal sucht niemand in einem Ordner, den der Finder ausblendet. Ein eigener
-`darwin`-Zweig wird ausdrücklich nicht eingebaut.
+macOS is deliberately treated like Linux, even though the Apple standard would be `~/Library/Application Support/`: this is a terminal tool, and in the terminal nobody goes looking in a folder that Finder hides.
+A separate `darwin` branch is explicitly not built in.
 
-Verworfen wurde eine zusätzliche eigene Umgebungsvariable für den Pfad -
-`XDG_CONFIG_HOME` deckt den Bedarf ab, und jede weitere Variable ist nur ein
-weiterer Ort, an dem man bei „warum ist mein Modell nicht gespeichert?"
-nachsehen muss.
+An additional environment variable of our own for the path was rejected - `XDG_CONFIG_HOME` covers the need, and every further variable is just one more place to check when asking "why is my model not saved?".
 
-Das Verzeichnis wird ausschließlich im Schreibpfad angelegt (`mkdirSync` mit
-`recursive` direkt vor dem `writeFileSync`). Damit erzeugt das Paket nichts
-ungefragt: Solange niemand ein Modell setzt, entsteht weder Verzeichnis noch
-Datei, und `readConfig()` fängt die fehlende Datei bereits ab. Auffindbarkeit
-entsteht über die Ausgabe, nicht über den Ort - `CONFIG_PATH` ist deshalb
-exportiert, die Bestätigung von `gemini-set-model` nennt ihn, und
-`gemini-grounding config` zeigt ihn ebenfalls an.
+The directory is created exclusively on the write path (`mkdirSync` with `recursive` immediately before the `writeFileSync`).
+That way the package creates nothing unasked: as long as nobody sets a model, neither the directory nor the file comes into existence, and `readConfig()` already handles the missing file.
+Discoverability comes from the output rather than from the location - which is why `CONFIG_PATH` is exported, the confirmation from `gemini-set-model` names it, and `gemini-grounding config` displays it too.
 
-Ebenfalls verworfen: Modell und Thinking-Level **zusätzlich** über
-`GEMINI_MODEL`/`GEMINI_THINKING_LEVEL` vorgeben zu können. Der Code wären zwei
-Zeilen gewesen, der Preis liegt woanders - eine zweite Konfigurationsquelle
-erzeugt eine Rangfolge, die erklärt werden muss, und drei überraschende
-Verhaltensweisen: ein einmaliges `gemini-set-model` hätte die Variable dauerhaft
-wirkungslos gemacht, es wären Mischzustände entstanden (Modell aus der Datei,
-Level aus der Umgebung), und Zurücksetzen ginge nur über das Löschen der Datei.
-Es bleibt bei einer Quelle der Wahrheit: Was in der Datei steht, gilt - sonst
-der Default.
+Also rejected: being able to specify the model and thinking level **additionally** via `GEMINI_MODEL`/`GEMINI_THINKING_LEVEL`.
+The code would have been two lines, but the price lies elsewhere - a second configuration source creates a precedence order that has to be explained, plus three surprising behaviours: a single `gemini-set-model` would have rendered the variable permanently ineffective, mixed states would arise (model from the file, level from the environment), and resetting would only work by deleting the file.
+One source of truth it is: what the file says applies - otherwise the default.
 
-Eine alte, scriptrelative `config.json` wird **nicht** automatisch übernommen.
-Migrationscode müsste dauerhaft im Paket bleiben, um einen Zustand zu behandeln,
-den es vor der ersten npm-Veröffentlichung nur bei den wenigen Klon-Nutzern gab.
-Bemerkbar macht sich das ohnehin: Nach dem Update stehen wieder die Defaults im
-Footer, und `gemini-grounding config` nennt den neuen Pfad. Der Weg dorthin ist
-in der README beschrieben, das Zurücksetzen kostet einen Aufruf.
+An old, script-relative `config.json` is **not** migrated automatically.
+Migration code would have to stay in the package permanently in order to handle a state that, before the first npm release, existed only for the handful of clone users.
+It makes itself noticed anyway: after the update the footer shows the defaults again, and `gemini-grounding config` names the new path.
+The way there is described in the README, and resetting costs a single call.
 
-### Auflösung der Standardwerte pro Aufruf
+### Resolving the defaults per call
 
-Das Tool `gemini-search` nutzt die gespeicherten Werte als Standard, sofern
-beim jeweiligen Aufruf nichts explizit angegeben wird. Die Auflösung passiert
-bewusst **im Handler zur Aufrufzeit** (`model ?? getSavedModel()`), nicht als
-Zod-`.default()` im `inputSchema`: ein Schema-Default würde einmal beim
-Registrieren des Tools ausgewertet und eingefroren, sodass `gemini-set-model`
-erst nach einem Serverneustart wirken würde. `model` und `thinkingLevel` sind
-im Schema deshalb `optional()`.
+The `gemini-search` tool uses the stored values as defaults, provided nothing is passed explicitly on the call.
+Resolution deliberately happens **in the handler at call time** (`model ?? getSavedModel()`) rather than as a Zod `.default()` in the `inputSchema`: a schema default would be evaluated once when the tool is registered and then frozen, so `gemini-set-model` would only take effect after a server restart.
+`model` and `thinkingLevel` are therefore `optional()` in the schema.
 
 ```javascript
 function getSavedModel() {
-  return readConfig().model ?? FALLBACK_MODEL; // "gemini-flash-latest" ohne config.json
+  return readConfig().model ?? FALLBACK_MODEL; // "gemini-flash-latest" without config.json
 }
 
 function getSavedThinkingLevel() {
-  return readConfig().thinkingLevel ?? FALLBACK_THINKING_LEVEL; // "medium" ohne config.json
+  return readConfig().thinkingLevel ?? FALLBACK_THINKING_LEVEL; // "medium" without config.json
 }
 ```
 
-Tatsächlich implementiert (inkl. `setSavedConfig`) in `config.js` - siehe „Implementierung" oben.
+Actually implemented (including `setSavedConfig`) in `config.js` - see "Implementation" above.
