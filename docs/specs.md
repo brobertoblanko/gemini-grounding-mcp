@@ -338,7 +338,7 @@ If the text is missing entirely or breaks off, the response would still look lik
 `formatNotice` therefore inserts a line with ⚠️ between the text and the source list when one of these cases applies:
 
 | Condition | Notice |
-|---|---|
+| --- | --- |
 | `response.promptFeedback.blockReason` set | request blocked by the API |
 | text empty | response without text, with `candidates[0].finishReason` |
 | `finishReason` set and ≠ `STOP` | incomplete response, above all `MAX_TOKENS` |
@@ -471,7 +471,7 @@ The key exposes considerably more models than work here - 58 in total at the tim
 Filtering goes through two pieces of information that every model reports itself:
 
 | Field | Condition | Otherwise |
-|---|---|---|
+| --- | --- | --- |
 | `supportedActions` | contains `generateContent` | model produces no text - embeddings, Imagen, Veo, Live/Audio |
 | `thinking` | `true` | `400 Thinking level is not supported for this model.`, since `runSearch` always sends a `thinkingConfig` |
 

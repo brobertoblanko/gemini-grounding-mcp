@@ -412,7 +412,7 @@ Footer trotzdem wie ein Erfolg aus. `formatNotice` fügt deshalb zwischen Text
 und Quellenliste eine Zeile mit ⚠️ ein, wenn einer dieser Fälle vorliegt:
 
 | Bedingung | Hinweis |
-|---|---|
+| --- | --- |
 | `response.promptFeedback.blockReason` gesetzt | Anfrage von der API blockiert |
 | Text leer | Antwort ohne Text, mit `candidates[0].finishReason` |
 | `finishReason` gesetzt und ≠ `STOP` | unvollständige Antwort, vor allem `MAX_TOKENS` |
@@ -573,7 +573,7 @@ nutzbar. Gefiltert wird über zwei Angaben, die jedes Modell selbst
 mitliefert:
 
 | Feld | Bedingung | Andernfalls |
-|---|---|---|
+| --- | --- | --- |
 | `supportedActions` | enthält `generateContent` | Modell erzeugt keinen Text - Embeddings, Imagen, Veo, Live/Audio |
 | `thinking` | `true` | `400 Thinking level is not supported for this model.`, da `runSearch` immer ein `thinkingConfig` sendet |
 

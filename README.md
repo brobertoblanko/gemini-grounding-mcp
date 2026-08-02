@@ -126,7 +126,7 @@ name there, not the command name `gemini-grounding`. Given the command name it
 merely reports `up to date` and removes nothing.
 
 | Command | Effect |
-|---|---|
+| --- | --- |
 | `gemini-grounding "<query>"` | Search using the saved defaults; prints the answer including source list and token footer |
 | `gemini-grounding config` | Shows the saved model, thinking level, whether an API key is present, and where the config file lives |
 | `gemini-grounding models [--all]` | Lists the models usable with this server and their token limits; `--all` lists every one |
@@ -207,7 +207,7 @@ markers were dropped, the footer says so. See
 thinking level to:
 
 | Platform | Location |
-|---|---|
+| --- | --- |
 | Linux, macOS | `~/.config/gemini-grounding-mcp/config.json` |
 | Windows | `%APPDATA%\gemini-grounding-mcp\config.json` |
 | Any, if `XDG_CONFIG_HOME` is set | `$XDG_CONFIG_HOME/gemini-grounding-mcp/config.json` |
