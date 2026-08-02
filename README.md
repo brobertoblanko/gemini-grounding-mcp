@@ -45,7 +45,7 @@ stdio, and `gemini-grounding` is the command line tool described further down.
 To work from the source instead:
 
 ```bash
-git clone https://github.com/srzsn22q6d-sys/gemini-grounding-mcp.git
+git clone https://github.com/brobertoblanko/gemini-grounding-mcp.git
 cd gemini-grounding-mcp
 npm install
 ```
