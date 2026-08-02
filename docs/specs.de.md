@@ -587,7 +587,7 @@ Damit ist diese Zeile die einzige Stelle, an der eine unterrecherchierte Antwort
 Format und Kappung:
 
 - **Eigene Zeile** unterhalb der Kennzahlen, nicht an sie angehängt. Zusammen wären es im gemessenen Fall 385 Zeichen, die im Terminal auf vier Zeilen umbrechen - ausgerechnet bei den langen Antworten, in denen der Footer die Orientierung geben soll.
-- **`·` als Trennzeichen**, nicht `, `. Die Suchanfragen enthalten selbst Anführungszeichen und Ziffernfolgen, zwischen denen ein Komma untergeht.
+- **`·` als Trennzeichen**, nicht `,`. Die Suchanfragen enthalten selbst Anführungszeichen und Ziffernfolgen, zwischen denen ein Komma untergeht.
 - **Kappung bei 300 Zeichen**, der Rest als `(+n more)`. Gemessen: üblich 2 bis 6 Anfragen mit zusammen 73 bis 270 Zeichen, die einzelne Anfrage 29 bis 84 Zeichen - bei einer bewusst überbreiten Frage aber 11 Anfragen mit über 500 Zeichen. Eine Obergrenze nennt die API nicht, daher die Kappung.
 - **Die Anfrage, die das Budget reißt, wird noch vollständig ausgeschrieben** statt mitten im Wort abgeschnitten: Eine halbe Suchanfrage trägt keine Information, und der Überhang ist durch die Länge einer einzelnen Anfrage begrenzt.
 - **Ein leeres Array erzeugt gar keine Zeile**, nach derselben Regel wie der Hinweis auf verworfene Marker: Der Normalfall soll den Footer nicht verlängern. Dass nicht gesucht wurde, ist über `🔍 0 sources` bereits sichtbar.

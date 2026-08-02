@@ -13,9 +13,10 @@ Architektur, genutzte Gemini-API-Tools, Antwortformat und technische
 Referenzen: siehe [specs.de.md](./docs/specs.de.md). Installation und
 Registrierung: siehe [README.md](./README.md).
 
-**Zweisprachige Doku:** `docs/specs.md` (Englisch) ist die kanonische Fassung,
-`docs/specs.de.md` die deutsche Übersetzung. Beide sind inhaltsgleich zu halten
-- wird an einer Fassung etwas geändert, gehört dieselbe Änderung im selben
+**Zweisprachige Doku:** Für `docs/specs.md` und `docs/cli.md` ist jeweils die
+englische Fassung kanonisch, `docs/specs.de.md` und `docs/cli.de.md` sind die
+deutschen Übersetzungen. Beide Fassungen eines Paares sind inhaltsgleich zu
+halten - wird an einer etwas geändert, gehört dieselbe Änderung im selben
 Commit in die andere. Eine Fassung allein zu aktualisieren ist schlimmer als
 beide unverändert zu lassen, weil dann unbemerkt zwei Wahrheiten existieren.
 

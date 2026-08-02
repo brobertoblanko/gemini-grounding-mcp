@@ -493,7 +493,7 @@ This makes the line the only place where an under-researched answer is recognisa
 Format and capping:
 
 - **Its own line** below the metrics, not appended to them. Together they would run to 385 characters in a measured case and wrap over four terminal lines - in exactly the long answers where the footer is supposed to provide orientation.
-- **`·` as separator**, not `, `. The queries contain quotation marks and digit sequences of their own, between which a comma disappears.
+- **`·` as separator**, not `,`. The queries contain quotation marks and digit sequences of their own, between which a comma disappears.
 - **Capped at 300 characters**, with `(+n more)` for the remainder. Measured: usually 2 to 6 queries totalling 73 to 270 characters, a single query 29 to 84 characters - but 11 queries and over 500 characters for a deliberately overbroad question. The API documents no upper bound, hence the cap.
 - **The query that breaks the budget is still written in full** rather than truncated mid-word: half a search query carries no information, and the overshoot is bounded by the length of one query.
 - **An empty array produces no line at all**, following the same rule as the dropped-marker note: the normal case must not lengthen the footer. That no search happened is already visible as `🔍 0 sources`.

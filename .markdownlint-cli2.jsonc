@@ -1,0 +1,20 @@
+{
+  "config": {
+    // Die Doku schreibt jeden vollstaendigen Satz in eine eigene Zeile, damit
+    // Diffs satzweise lesbar bleiben. Eine harte Spaltengrenze widerspricht dem
+    // direkt: Sie zwingt entweder zum Umbrechen mitten im Satz oder dazu, kurze
+    // Saetze zu buendeln. Die Zeilenlaenge wird deshalb nicht geprueft.
+    "MD013": false,
+
+    // Aufklappbare Abschnitte gibt es in Markdown nur als HTML. GitHub
+    // dokumentiert das Muster offiziell, und npmjs.com liefert beide Elemente
+    // unveraendert aus - geprueft an einer echten Paketseite. Andere HTML-Tags
+    // bleiben untersagt.
+    "MD033": {
+      "allowed_elements": ["details", "summary"]
+    }
+  },
+  // plans/ und issues/ stehen in .gitignore: lokale Notizen, die nicht Teil des
+  // veroeffentlichten Repos sind und den Lint nicht rot faerben sollen.
+  "globs": ["**/*.md", "!node_modules", "!**/plans", "!**/issues"]
+}
