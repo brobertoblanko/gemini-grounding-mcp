@@ -100,11 +100,30 @@ If you cloned the repository, use `node <path-to-repo>/index.js` instead -
 `claude mcp add` needs a concrete absolute path that resolves on the machine
 in question.
 
-Verify that the server is running:
+## Verifying the installation
+
+First check that the client sees the server at all:
 
 ```bash
 claude mcp list
 ```
+
+Then start a new conversation and ask something that cannot be answered from
+training data alone:
+
+- `"Which Node.js version is currently LTS?"`
+- `"What changed in the Gemini API in the last few months?"`
+- `"Read https://nodejs.org/en/about/previous-releases and tell me when Node 22 goes end-of-life"`
+
+A working answer ends in three things: a `Sources:` list of real URLs, citation
+markers such as `[1]` inside the text, and a footer naming the model, the
+thinking level, the token count and the searches that were actually run. If the
+footer is missing, you are reading the model's own memory rather than a
+grounded answer.
+
+If no answer arrives at all, run the same query through the command line tool
+below - it prints the full error including the original Google API message,
+which the MCP server has to condense into a single line.
 
 ## Command line tool
 
@@ -200,6 +219,24 @@ text segment the API supplies and are dropped rather than guessed if they do not
 match, and they are never placed inside code spans or fenced blocks. Whenever
 markers were dropped, the footer says so. See
 [specs.md](./docs/specs.md) for the details.
+
+### Which searches were actually run
+
+The last line of the footer lists the queries Gemini sent to Google:
+
+```text
+🔎 Searched: nodejs current lts version 2026 · nodejs release schedule
+```
+
+This answers a question neither the source list nor the markers can: whether the
+search covered your question at all. Asked to compare six web frameworks by
+version *and* bundle size, Gemini searched six times for `<framework> current
+version` and once for bundle sizes - the remaining aspects were answered from
+its own knowledge. Nothing in the answer itself gives that away.
+
+Very broad questions produce a lot of searches, so the line is capped at roughly
+300 characters and ends with `(+n more)` when there were more. If the line is
+missing entirely, no search was run.
 
 ### Where the configuration is stored
 

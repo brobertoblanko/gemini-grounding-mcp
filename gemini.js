@@ -160,7 +160,64 @@ function formatNotice({ text, candidate, promptFeedback }) {
   return "";
 }
 
-function formatFooter({ usageMetadata, model, thinkingLevel, sourceCount, dropped }) {
+// Zeichenbudget fuer die Zeile mit den abgesetzten Suchanfragen. Gemessen:
+// ueblich 2 bis 6 Anfragen mit zusammen 73 bis 270 Zeichen, die einzelne
+// Anfrage 29 bis 84 Zeichen - bei einer bewusst ueberbreiten Anfrage aber 11
+// Anfragen mit ueber 500 Zeichen. Eine Obergrenze nennt die API nicht, deshalb
+// die Kappung: 300 laesst den Normalfall unangetastet durch und faengt den
+// Ausreisser ab, der den Footer sonst ueber mehrere Zeilen zieht.
+const SEARCH_QUERY_BUDGET = 300;
+
+/**
+ * Baut die Footer-Zeile mit den Suchanfragen, die Gemini tatsaechlich an die
+ * Google-Suche geschickt hat (groundingMetadata.webSearchQueries).
+ *
+ * Sie steht im Footer, weil sie eine Luecke sichtbar macht, die weder
+ * Quellenliste noch Belegmarker zeigen: OB die Suche die Frage ueberhaupt
+ * abgedeckt hat. Gemessen an einer Anfrage nach sechs Web-Frameworks suchte
+ * Gemini sechsmal nur nach "<Framework> current version" - Bundle-Groesse und
+ * Rendering-Strategie, ebenfalls gefragt, kamen unrecherchiert aus dem
+ * Modellwissen. Der Antwort sah man das nicht an.
+ *
+ * Eigene Zeile statt Anhang an die Kennzahlen: zusammen waeren es im
+ * gemessenen Extremfall 385 Zeichen, die im Terminal auf vier Zeilen
+ * umbrechen - ausgerechnet bei den langen Antworten, wo der Footer die
+ * Orientierung geben soll.
+ *
+ * Leeres Array ergibt einen leeren String und damit keine Zeile. Gleiche
+ * Regel wie beim Hinweis auf verworfene Marker: Der Normalfall soll den Footer
+ * nicht verlaengern.
+ */
+export function formatSearchQueries(queries = []) {
+  if (queries.length === 0) return "";
+
+  // Die Anfrage, die das Budget reisst, wird noch VOLLSTAENDIG geschrieben -
+  // eine mitten im Wort abgeschnittene Suchanfrage ist wertlos. Der Ueberhang
+  // ist dabei durch die Laenge einer einzelnen Anfrage begrenzt.
+  const shown = [];
+  let length = 0;
+  for (const query of queries) {
+    shown.push(query);
+    // Das Trennzeichen zaehlt ab dem zweiten Eintrag mit, damit das Budget die
+    // tatsaechliche Zeilenlaenge meint und nicht die Summe der Anfragen.
+    length += query.length + (shown.length > 1 ? 3 : 0);
+    if (length >= SEARCH_QUERY_BUDGET) break;
+  }
+
+  const rest = queries.length - shown.length;
+  // " · " statt ", ": Die Suchanfragen enthalten selbst Anfuehrungszeichen und
+  // Ziffernfolgen, zwischen denen ein Komma als Trenner untergeht.
+  return `\n🔎 Searched: ${shown.join(" · ")}${rest > 0 ? ` (+${rest} more)` : ""}`;
+}
+
+function formatFooter({
+  usageMetadata,
+  model,
+  thinkingLevel,
+  sourceCount,
+  dropped,
+  searchQueries,
+}) {
   const inputTokens = usageMetadata?.promptTokenCount ?? 0;
   const outputTokens = usageMetadata?.candidatesTokenCount ?? 0;
   const thinkingTokens = usageMetadata?.thoughtsTokenCount ?? 0;
@@ -173,7 +230,8 @@ function formatFooter({ usageMetadata, model, thinkingLevel, sourceCount, droppe
 
   return (
     `\n\n---\n🔢 ${inputTokens} input / ${outputTokens} output / ${thinkingTokens} thinking tokens ` +
-    `| 🔍 ${sourceCount} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}`
+    `| 🔍 ${sourceCount} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}` +
+    formatSearchQueries(searchQueries)
   );
 }
 
@@ -189,6 +247,22 @@ export async function runSearch({ query, model, thinkingLevel }) {
     model,
     contents: query,
     config: {
+      // Das aktuelle Datum, sonst nichts. Ohne es legt das Modell "die neueste
+      // Version" an seinem eigenen Trainingsstand aus statt an heute - gemessen
+      // suchte es in vier von sechs Faellen nach "2025 2026", weil es das Jahr
+      // nur ungefaehr kennt. Bei einem Server, dessen Zweck das Umgehen von
+      // Trainingswissen ist, ist das die falsche Unschaerfe.
+      //
+      // Bewusst KEINE inhaltlichen Vorgaben wie "bevorzuge offizielle
+      // Dokumentation": Die faerben jede Antwort ein und verengen Recherchen zu
+      // Betriebssystem-Eigenheiten oder aktuellen Ereignissen. Ein Datum ist
+      // ein Fakt, eine Quellenpraeferenz eine Meinung.
+      //
+      // toLocaleDateString("en-CA") ergibt YYYY-MM-DD in LOKALER Zeit.
+      // toISOString() waere UTC und meldete in Mitteleuropa zwischen 00:00 und
+      // 02:00 Uhr den Vortag - ausgerechnet in der Funktion, die das richtige
+      // Datum sicherstellen soll.
+      systemInstruction: `Today's date is ${new Date().toLocaleDateString("en-CA")}.`,
       tools: [{ googleSearch: {} }, { urlContext: {} }, { codeExecution: {} }],
       thinkingConfig: { thinkingLevel },
     },
@@ -216,6 +290,9 @@ export async function runSearch({ query, model, thinkingLevel }) {
     thinkingLevel,
     sourceCount: sources.length,
     dropped,
+    // Gleiche Absicherung wie bei den Supports: Ohne Suchtreffer fehlt das
+    // Feld, dann entfaellt die Zeile.
+    searchQueries: candidate?.groundingMetadata?.webSearchQueries ?? [],
   });
 
   // Der Footer bleibt in jedem Fall der letzte Bestandteil der Antwort.

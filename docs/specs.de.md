@@ -247,6 +247,7 @@ const response = await genAI.models.generateContent({
   model: "gemini-flash-latest",
   contents: "Testanfrage",
   config: {
+    systemInstruction: `Today's date is ${new Date().toLocaleDateString("en-CA")}.`,
     tools: [{ googleSearch: {} }, { urlContext: {} }, { codeExecution: {} }],
     thinkingConfig: { thinkingLevel: "high" },
   },
@@ -266,9 +267,28 @@ Wichtige Parameter-Hinweise aus der Dokumentation:
 - Der API-Key kann per Header (`X-goog-api-key`) oder als Query-Parameter
   (`?key=...`) übergeben werden; Header-Variante wird bevorzugt
 
+### Das aktuelle Datum als einzige System-Instruction
+
+Das Modell hat selbst einen Trainings-Cutoff und legt "die neueste Version" an diesem aus, nicht an heute.
+Vor dieser Instruction gemessen, suchte es in vier von sechs Aufrufen nach `2025 2026` - es kennt das Jahr nur ungefähr.
+Bei einem Server, dessen ganzer Zweck das Umgehen von Trainingswissen ist, ist das die falsche Unschärfe.
+
+```javascript
+systemInstruction: `Today's date is ${new Date().toLocaleDateString("en-CA")}.`,
+```
+
+Drei Entscheidungen hinter dieser einen Zeile:
+
+- **`systemInstruction` statt Präfix in `contents`.** Die Frage des Nutzers bleibt unangetastet; das Datum ist Kontext, nicht Teil der Anfrage.
+- **Nur das Datum, sonst nichts.** Inhaltliche Vorgaben - "bevorzuge offizielle Dokumentation, GitHub, Stack Overflow", wie vergleichbare Server sie mitschicken - färben jede Antwort ein und verengen Recherchen zu Betriebssystem-Eigenheiten oder aktuellen Ereignissen. Ein Datum ist ein Fakt, eine Quellenpräferenz eine Meinung.
+- **`toLocaleDateString("en-CA")` statt `toISOString()`.** Beide ergeben `YYYY-MM-DD`, aber `toISOString()` ist UTC und meldete in Mitteleuropa zwischen 00:00 und 02:00 Uhr den Vortag - ausgerechnet in der Funktion, die das richtige Datum sicherstellen soll.
+
+Nach der Änderung verifiziert: Die Anfrage `Welche Node.js-Version ist aktuell LTS?` erzeugte die Suchanfrage `nodejs current lts version 2026` statt des vorherigen `2025 2026`, und direkt gefragt nennt das Modell das korrekte Datum.
+Die Wirkung ist real, aber nicht absolut - bei breiten Fragen hedgt das Modell in einzelnen Suchanfragen weiterhin mit zwei Jahreszahlen.
+
 ## Antwort: Quellenliste und Token-Footer
 
-Jede Antwort des MCP-Servers enthält neben dem eigentlichen Antworttext drei
+Jede Antwort des MCP-Servers enthält neben dem eigentlichen Antworttext vier
 zusätzliche, direkt aus der Gemini-API-Antwort ausgelesene Teile (nicht selbst
 berechnet oder geschätzt):
 
@@ -284,6 +304,9 @@ berechnet oder geschätzt):
    dem verwendeten Modell und Thinking-Level, zur Transparenz über den
    tatsächlichen Ressourcenverbrauch und die genutzte Modell-/Thinking-Wahl
    des Tool-Calls - der User soll nie raten müssen, was verwendet wurde.
+4. Die **tatsächlich abgesetzten Suchanfragen** in einer zweiten Footer-Zeile,
+   weil sie beantworten, was die anderen drei nicht können: ob die Suche die
+   Frage überhaupt abgedeckt hat.
 
 ### Antworttext: eigener Aufbau statt `response.text`
 
@@ -452,6 +475,7 @@ const urlContextEntries = candidate?.urlContextMetadata?.urlMetadata ?? []
 | Input-Tokens       | `usageMetadata.promptTokenCount`                               | Tokens der gesendeten Anfrage                                 |
 | Output-Tokens      | `usageMetadata.candidatesTokenCount`                           | Tokens der generierten Antwort                                |
 | Thinking-Tokens    | `usageMetadata.thoughtsTokenCount`                             | Reine Denk-Tokens (Reasoning), separat ausgewiesen            |
+| Suchanfragen       | `candidates[0].groundingMetadata.webSearchQueries`             | Array der tatsächlich an Google gesendeten Suchanfragen       |
 | Such-Quellen       | `candidates[0].groundingMetadata.groundingChunks`              | Array der bei der Google-Suche gefundenen Webquellen          |
 | Such-Quell-URL     | `groundingChunks[i].web.uri`                                   | URL der einzelnen Suchquelle                                  |
 | Such-Quell-Titel   | `groundingChunks[i].web.title`                                 | Titel der einzelnen Suchquelle                                |
@@ -520,7 +544,8 @@ const droppedNote = dropped > 0 ? ` | ⚠️ ${dropped} markers dropped` : "";
 
 const footer =
   `\n\n---\n🔢 ${inputTokens} input / ${outputTokens} output / ${thinkingTokens} thinking tokens ` +
-  `| 🔍 ${sources.length} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}`;
+  `| 🔍 ${sources.length} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}` +
+  formatSearchQueries(searchQueries);
 
 const sourcesBlock = sourceList ? `\n\nSources:\n${sourceList}` : "";
 
@@ -541,6 +566,7 @@ Sources:
 
 ---
 🔢 245 input / 89 output / 40 thinking tokens | 🔍 2 sources | 🤖 gemini-flash-latest (thinking: high)
+🔎 Searched: gemini api models list · google genai sdk models.list pagination
 ```
 
 Die Zahl der verworfenen Marker gehört in den Footer, weil sie die
@@ -549,9 +575,28 @@ ungegroundet sein - oder die Prüfung hat ihn verworfen. Das entspricht dem
 Zweck des Footers, den tatsächlichen Zustand jedes einzelnen Aufrufs sichtbar
 zu machen.
 
+### Die Zeile mit den Suchanfragen
+
+`webSearchQueries` enthält die Anfragen, die Gemini tatsächlich an Google geschickt hat - nicht die Frage, die der Nutzer gestellt hat.
+Beide gehen auseinander, und genau darin liegt der Nutzen.
+
+Auf die Bitte, sechs Web-Frameworks nach Version **und** Bundle-Größe zu vergleichen, suchte das Modell sechsmal nach `<Framework> current version 2025 2026 npm` und einmal nach Bundle-Größen; Rendering-Strategie und Lernkurve, ebenfalls Teil der Frage, wurden nie gesucht und kamen aus dem Modellwissen.
+Weder Quellenliste noch Belegmarker zeigen das: Marker weisen aus, ob ein *Satz* gestützt ist, nicht ob die *Suche* die Frage abgedeckt hat.
+Damit ist diese Zeile die einzige Stelle, an der eine unterrecherchierte Antwort als solche erkennbar wird.
+
+Format und Kappung:
+
+- **Eigene Zeile** unterhalb der Kennzahlen, nicht an sie angehängt. Zusammen wären es im gemessenen Fall 385 Zeichen, die im Terminal auf vier Zeilen umbrechen - ausgerechnet bei den langen Antworten, in denen der Footer die Orientierung geben soll.
+- **`·` als Trennzeichen**, nicht `, `. Die Suchanfragen enthalten selbst Anführungszeichen und Ziffernfolgen, zwischen denen ein Komma untergeht.
+- **Kappung bei 300 Zeichen**, der Rest als `(+n more)`. Gemessen: üblich 2 bis 6 Anfragen mit zusammen 73 bis 270 Zeichen, die einzelne Anfrage 29 bis 84 Zeichen - bei einer bewusst überbreiten Frage aber 11 Anfragen mit über 500 Zeichen. Eine Obergrenze nennt die API nicht, daher die Kappung.
+- **Die Anfrage, die das Budget reißt, wird noch vollständig ausgeschrieben** statt mitten im Wort abgeschnitten: Eine halbe Suchanfrage trägt keine Information, und der Überhang ist durch die Länge einer einzelnen Anfrage begrenzt.
+- **Ein leeres Array erzeugt gar keine Zeile**, nach derselben Regel wie der Hinweis auf verworfene Marker: Der Normalfall soll den Footer nicht verlängern. Dass nicht gesucht wurde, ist über `🔍 0 sources` bereits sichtbar.
+
 Tatsächlich implementiert in `gemini.js` (`buildText`, `formatNotice`,
-`buildSourceList`, `formatSourcesBlock`, `formatFooter`) und `citations.js`
-(`insertCitations`).
+`buildSourceList`, `formatSourcesBlock`, `formatFooter`, `formatSearchQueries`)
+und `citations.js` (`insertCitations`).
+`formatSearchQueries` ist exportiert und wie `insertCitations` ohne API-Key
+prüfbar (`test/search-queries.test.js`).
 
 ## Konfigurierbare Modell- und Thinking-Level-Wahl
 

@@ -206,6 +206,7 @@ const response = await genAI.models.generateContent({
   model: "gemini-flash-latest",
   contents: "Test query",
   config: {
+    systemInstruction: `Today's date is ${new Date().toLocaleDateString("en-CA")}.`,
     tools: [{ googleSearch: {} }, { urlContext: {} }, { codeExecution: {} }],
     thinkingConfig: { thinkingLevel: "high" },
   },
@@ -224,9 +225,28 @@ Important parameter notes from the documentation:
 - The API key can be passed as a header (`X-goog-api-key`) or as a query
   parameter (`?key=...`); the header variant is preferred
 
+### The current date as the only system instruction
+
+The model has a training cutoff of its own and interprets "the latest version" against that, not against today.
+Measured before this instruction existed, it searched for `2025 2026` in four out of six calls - it knows the year only approximately.
+For a server whose entire purpose is to bypass training knowledge, that is the wrong kind of vagueness.
+
+```javascript
+systemInstruction: `Today's date is ${new Date().toLocaleDateString("en-CA")}.`,
+```
+
+Three decisions behind that one line:
+
+- **`systemInstruction` rather than a prefix in `contents`.** The user's question stays untouched; the date is context, not part of the query.
+- **The date and nothing else.** Content-level instructions - "prefer official documentation, GitHub, Stack Overflow", as comparable servers send - tint every answer and narrow research into OS behaviour or recent events. A date is a fact; a source preference is an opinion.
+- **`toLocaleDateString("en-CA")` rather than `toISOString()`.** Both yield `YYYY-MM-DD`, but `toISOString()` is UTC and would report the previous day in Central Europe between 00:00 and 02:00 - in the very function meant to guarantee the correct date.
+
+Verified after the change: the query `Which Node.js version is currently LTS?` produced the search `nodejs current lts version 2026` instead of the earlier `2025 2026`, and asked directly, the model names the correct date.
+The effect is real but not absolute - for broad questions the model still hedges with two years in some searches.
+
 ## Response: source list and token footer
 
-Beyond the answer text itself, every response from the MCP server contains three additional parts read straight out of the Gemini API response (not computed or estimated by the server):
+Beyond the answer text itself, every response from the MCP server contains four additional parts read straight out of the Gemini API response (not computed or estimated by the server):
 
 1. A **source list** (title + URL) at the end of the text - Claude should be
    able to see and act on the sources (to dig into a specific URL, say, or to
@@ -239,6 +259,9 @@ Beyond the answer text itself, every response from the MCP server contains three
    model and thinking level used, for transparency about the actual resource
    consumption and the model/thinking choice of that tool call - the user should
    never have to guess what was used.
+4. The **search queries actually sent** to Google on a second footer line,
+   because they answer something the other three cannot: whether the search
+   covered the question at all.
 
 ### Answer text: assembled by hand instead of `response.text`
 
@@ -371,6 +394,7 @@ const urlContextEntries = candidate?.urlContextMetadata?.urlMetadata ?? []
 | Input tokens       | `usageMetadata.promptTokenCount`                               | tokens of the request sent                                     |
 | Output tokens      | `usageMetadata.candidatesTokenCount`                           | tokens of the generated response                               |
 | Thinking tokens    | `usageMetadata.thoughtsTokenCount`                             | reasoning tokens alone, reported separately                    |
+| Search queries     | `candidates[0].groundingMetadata.webSearchQueries`             | array of the queries actually sent to Google                   |
 | Search sources     | `candidates[0].groundingMetadata.groundingChunks`              | array of the web sources found by the Google search            |
 | Search source URL  | `groundingChunks[i].web.uri`                                   | URL of the individual search source                            |
 | Search source title| `groundingChunks[i].web.title`                                 | title of the individual search source                          |
@@ -430,7 +454,8 @@ const droppedNote = dropped > 0 ? ` | ⚠️ ${dropped} markers dropped` : "";
 
 const footer =
   `\n\n---\n🔢 ${inputTokens} input / ${outputTokens} output / ${thinkingTokens} thinking tokens ` +
-  `| 🔍 ${sources.length} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}`;
+  `| 🔍 ${sources.length} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}` +
+  formatSearchQueries(searchQueries);
 
 const sourcesBlock = sourceList ? `\n\nSources:\n${sourceList}` : "";
 
@@ -450,12 +475,31 @@ Sources:
 
 ---
 🔢 245 input / 89 output / 40 thinking tokens | 🔍 2 sources | 🤖 gemini-flash-latest (thinking: high)
+🔎 Searched: gemini api models list · google genai sdk models.list pagination
 ```
 
 The number of dropped markers belongs in the footer because it changes how much the response can be relied on: if a marker is missing, the passage may be ungrounded - or the verification discarded it.
 That matches the purpose of the footer, which is to make the actual state of each individual call visible.
 
-Actually implemented in `gemini.js` (`buildText`, `formatNotice`, `buildSourceList`, `formatSourcesBlock`, `formatFooter`) and `citations.js` (`insertCitations`).
+### The search queries line
+
+`webSearchQueries` holds the queries Gemini actually sent to Google - not the query the user asked.
+The two differ, and the difference is the point.
+
+Asked to compare six web frameworks by version **and** bundle size, the model searched six times for `<framework> current version 2025 2026 npm` and once for bundle sizes; rendering strategy and learning curve, also part of the question, were never searched for and came out of the model's own knowledge.
+Neither the source list nor the citation markers reveal that: markers show whether a *sentence* is backed, not whether the *search* covered the question.
+This makes the line the only place where an under-researched answer is recognisable as such.
+
+Format and capping:
+
+- **Its own line** below the metrics, not appended to them. Together they would run to 385 characters in a measured case and wrap over four terminal lines - in exactly the long answers where the footer is supposed to provide orientation.
+- **`·` as separator**, not `, `. The queries contain quotation marks and digit sequences of their own, between which a comma disappears.
+- **Capped at 300 characters**, with `(+n more)` for the remainder. Measured: usually 2 to 6 queries totalling 73 to 270 characters, a single query 29 to 84 characters - but 11 queries and over 500 characters for a deliberately overbroad question. The API documents no upper bound, hence the cap.
+- **The query that breaks the budget is still written in full** rather than truncated mid-word: half a search query carries no information, and the overshoot is bounded by the length of one query.
+- **An empty array produces no line at all**, following the same rule as the dropped-marker note: the normal case must not lengthen the footer. That no search happened is already visible as `🔍 0 sources`.
+
+Actually implemented in `gemini.js` (`buildText`, `formatNotice`, `buildSourceList`, `formatSourcesBlock`, `formatFooter`, `formatSearchQueries`) and `citations.js` (`insertCitations`).
+`formatSearchQueries` is exported and, like `insertCitations`, testable without an API key (`test/search-queries.test.js`).
 
 ## Configurable model and thinking level
 
