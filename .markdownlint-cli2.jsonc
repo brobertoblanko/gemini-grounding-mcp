@@ -16,5 +16,17 @@
   },
   // plans/ und issues/ stehen in .gitignore: lokale Notizen, die nicht Teil des
   // veroeffentlichten Repos sind und den Lint nicht rot faerben sollen.
-  "globs": ["**/*.md", "!node_modules", "!**/plans", "!**/issues"]
+  //
+  // google_terms.md ebenso, aber aus einem anderen Grund: Es ist eine woertliche
+  // Arbeitskopie von Googles Nutzungsbedingungen. Der Lint beanstandet darin
+  // sechs Stellen, die alle nur zu beheben waeren, indem man den Rechtstext
+  // aendert - und genau das darf an einer Referenzfassung niemand tun. Ein
+  // Zitat, das man zurechtformatiert hat, ist als Beleg wertlos.
+  "globs": [
+    "**/*.md",
+    "!node_modules",
+    "!**/plans",
+    "!**/issues",
+    "!**/google_terms.md"
+  ]
 }

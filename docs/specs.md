@@ -311,7 +311,7 @@ A marker can be missing for four reasons, only the first of which carries the in
 Cases 2 and 3 are countable and appear as `⚠️ n markers dropped` in the footer once they exceed zero.
 Case 4 is recognisable from the source list.
 
-On case 4, a measurement that came out against the obvious expectation: for a query with a concrete URL, URL Context demonstrably fired (`urlRetrievalStatus: URL_RETRIEVAL_STATUS_SUCCESS`) - but the page that was read appeared **additionally as a `groundingChunk`** in the response, with a real page title, a direct URL instead of a vertexaisearch redirect, and three `groundingSupports` of its own.
+On case 4, a measurement that came out against the obvious expectation: for a query with a concrete URL, URL Context demonstrably fired (`urlRetrievalStatus: URL_RETRIEVAL_STATUS_SUCCESS`) - but the page that was read appeared **additionally as a `groundingChunk`** in the response, with a direct URL instead of a vertexaisearch redirect and three `groundingSupports` of its own.
 It was therefore fully covered by markers and never reached the URL Context branch, having been removed by the deduplication on URL.
 
 Case 4 thus only applies when a page read via URL Context does **not** also show up among the `groundingChunks`.
@@ -407,7 +407,9 @@ Both source arrays are present only if the respective tool was actually used - o
 
 ### Building the source list
 
-Search hits and URL Context pages are merged into one list and deduplicated by URL (search hits take precedence, as they carry a real page title - URL Context entries provide only the URL itself).
+Search hits and URL Context pages are merged into one list and deduplicated by URL.
+Search hits take precedence, because only they bring `groundingSupports` along and can therefore carry citation markers; a URL Context entry that arrives second would take that away from them.
+What they do **not** bring is a descriptive title: measured, `groundingChunks[i].web.title` holds the bare domain name (`npmjs.com`, `github.com`, `dev.to`, `snyk.io`), which is no more informative than the `retrievedUrl` of a URL Context entry.
 
 `buildSourceList` returns **two** things: the list itself and `chunkNumbers`, the mapping from the index in `groundingChunks` to the number in the emitted list.
 The two counts diverge, because `groundingChunks` represents search hits rather than sources - measured: 17 hits for 14 distinct URLs, and in an earlier run 14 for 4.
@@ -428,7 +430,11 @@ const addSource = (title, uri) => {
 
 searchChunks.forEach((chunk, index) => {
   const uri = chunk.web?.uri;
-  if (!uri) return;
+  // The one path on which a link could go missing - hence the counter.
+  if (!uri) {
+    skipped++;
+    return;
+  }
   chunkNumbers.set(index, addSource(chunk.web?.title ?? uri, uri));
 });
 
@@ -444,17 +450,22 @@ const sourceList = sources
 ```
 
 Chunks without a `uri` make it neither into the list nor into `chunkNumbers` and consequently produce no marker.
+They are counted, though, and reported in the footer as `⚠️ n sources omitted (unknown chunk type)` once the count exceeds zero.
+So far the API has only ever delivered `web` chunks; if a second type were added, its links would silently drop out of the list, which is the one path in this code where a source can be lost (see "Terms compliance" below).
+Counting is all that can be done without knowing the unfamiliar type - but it turns a silent loss into a visible one.
 
 ### Footer format in the tool result
 
 ```javascript
 // Dropped citation markers only when there were any - the normal case should
-// not make the footer longer.
+// not make the footer longer. Same rule for omitted chunks.
 const droppedNote = dropped > 0 ? ` | ⚠️ ${dropped} markers dropped` : "";
+const skippedNote =
+  skipped > 0 ? ` | ⚠️ ${skipped} sources omitted (unknown chunk type)` : "";
 
 const footer =
   `\n\n---\n🔢 ${inputTokens} input / ${outputTokens} output / ${thinkingTokens} thinking tokens ` +
-  `| 🔍 ${sources.length} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}` +
+  `| 🔍 ${sources.length} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}${skippedNote}` +
   formatSearchQueries(searchQueries);
 
 const sourcesBlock = sourceList ? `\n\nSources:\n${sourceList}` : "";
@@ -499,7 +510,83 @@ Format and capping:
 - **An empty array produces no line at all**, following the same rule as the dropped-marker note: the normal case must not lengthen the footer. That no search happened is already visible as `🔍 0 sources`.
 
 Actually implemented in `gemini.js` (`buildText`, `formatNotice`, `buildSourceList`, `formatSourcesBlock`, `formatFooter`, `formatSearchQueries`) and `citations.js` (`insertCitations`).
-`formatSearchQueries` is exported and, like `insertCitations`, testable without an API key (`test/search-queries.test.js`).
+`buildSourceList`, `formatSourcesBlock`, `formatFooter` and `formatSearchQueries` are exported and, like `insertCitations`, testable without an API key (`test/sources.test.js`, `test/search-queries.test.js`).
+`gemini.js` can be imported without `GEMINI_API_KEY` because `getClient()` is only called inside `runSearch` and `listModels`, not at module load.
+
+## Terms compliance
+
+The source list is not a feature that could be tuned; it is the condition under which this server may use Grounding with Google Search at all.
+The [Gemini API Additional Terms of Service](https://ai.google.dev/gemini-api/terms#grounding-with-google-search) protect not the API but the publishers whose content ends up summarised in an answer.
+The link back to the source is the only thing that flows to them, and Google's redirect is what makes that flow verifiable.
+
+Four invariants follow from this.
+They are met today, and they are binding from here on: **anyone considering a change that touches one of them does not implement it, but asks first** - including when the change comes dressed up as cleanup, shortening or optimisation.
+
+| # | Invariant | Why |
+| --- | --- | --- |
+| I1 | No link is ever omitted | Every `groundingChunk` with a URI appears in the list, even when no marker points at it. No cap, no selection, no deduplication by domain |
+| I2 | No link is altered, URI **and** title | Redirect URLs go out byte for byte; the title counts as part of the link |
+| I3 | No redirect is resolved | The only outgoing traffic is the SDK call to the Gemini API |
+| I4 | Nothing is cached | Grounded Results never touch the disk; `config.json` holds the model name and thinking level, nothing else |
+
+Deduplicating by identical URI violates none of them, because no destination is lost in the process.
+Deduplicating by domain would violate I1.
+
+### What the terms actually say
+
+That the title belongs to the link is explicit, and it is the part most easily overlooked:
+
+> "Links" are any other means to fetch web pages (including hyperlinks and URLs), which may be contained in a Grounded Result or Search Suggestion.
+> Links also include titles or labels provided with those means to fetch web pages.
+
+The decisive sentence for a server like this one is the "for clarity" sentence in the use restrictions, not the enumeration before it:
+
+> For clarity, Grounded Results, Search Suggestions, and Links are intended to be used in combination to respond to a given end user prompt and it is a violation of these terms to use Grounding with Google Search to extract or collect one or more of these components for another purpose (for example, using programmatic or automated means to collect Links, using Links to build an index, or **using Links to identify destination pages for crawling or scraping**).
+
+Two things follow from it.
+First, it names I3 by name, which spares the derivation.
+Second, it settles from the wording - rather than by interpretation - the question of whether a server may process the results at all: what is forbidden is pulling components out **for another purpose**.
+Without that sentence, the preceding list ("cache, frame, syndicate, resell, analyze, train on, or otherwise learn from") reads as though the intended use were prohibited too.
+
+One clause is regularly cited as a prohibition and is none: "you do not allow Grounded Results to be accessed or collected by automated or programmatic means" sits **inside an exception**, namely the one permitting an end user to copy results.
+The standalone prohibitions are the "for clarity" restriction quoted above and the one against modifying or interspersing content.
+
+### Why the source list is not capped
+
+The source list costs more tokens than the answer text.
+That is known, measured and accepted - it is the price of the exchange grounding rests on, and **not an invitation to optimise** ([issue #6](https://github.com/brobertoblanko/gemini-grounding-mcp/issues/6)).
+
+Measured on a response with 22 sources, the obvious savings turn out to be small or unavailable:
+
+| Idea | Effect | Verdict |
+| --- | --- | --- |
+| Cap the list | - | violates I1 |
+| List only cited sources | none - 22 of 22 were backed by at least one support | pointless |
+| Deduplicate by domain | about 1,000 tokens | violates I1 |
+| Resolve redirects to short URLs | - | violates I3, the case the terms name outright |
+| Move the list into an MCP resource | separates markers from destinations, client support uncertain | does not solve the actual problem: a list of the same domain name fifteen times does not get more useful by being moved |
+
+### Where the server adds or rearranges content
+
+The terms forbid interspersing "any other content" with the Grounded Results.
+The server does two things that touch on this, and they are worth different amounts:
+
+- **Citation markers** (`citations.js`) are inserted into the answer text.
+  Google's own reference implementation in the Gemini CLI sets the same markers,
+  so the clause cannot be aimed at them but at foreign content such as
+  advertising. The markers also point at the supplied links rather than away
+  from them.
+- **Reordering the code execution blocks** (`buildText`) has no reference
+  implementation behind it, only the substantive argument that the computation
+  is evidence and belongs with the sources rather than in front of the answer.
+  That is an argument, not a settled question, and it is named here as such.
+
+### The gap behind the server
+
+The terms require the Grounded Results to be displayed to the end user who submitted the prompt.
+An MCP server can only encourage that; it hands its answer to a client and has no say in what the client shows.
+The only lever is the `instructions` field in `index.js`, which asks the client to keep the source list and footer intact - and it is not enforceable.
+This is a genuine gap, not a solved problem, and it is recorded here rather than papered over.
 
 ## Configurable model and thinking level
 

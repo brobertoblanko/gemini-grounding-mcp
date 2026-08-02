@@ -28,6 +28,53 @@ keine Anbindung an sensible Systeme (kein CRM, keine Firmendaten, keine Zahlunge
 Der Server dient nur dazu, Claude bei Bedarf eine aktuelle Websuche via Gemini
 durchführen zu lassen.
 
+## Regelkonformität gegenüber Google - WICHTIG
+
+Dieser Server nutzt "Grounding with Google Search". Dafür gelten die
+[Gemini API Additional Terms of Service](https://ai.google.dev/gemini-api/terms#grounding-with-google-search).
+Sie schützen nicht die API, sondern die Verlage, deren Inhalte in den Antworten
+zusammengefasst werden: Der Link zur Quelle ist das Einzige, was zu ihnen
+zurückfließt, und Googles Redirect ist das, was diesen Rückfluss nachweisbar
+macht.
+
+Daraus folgen vier Invarianten. Sie sind heute erfüllt und sind ab sofort
+verbindlich:
+
+- **I1 - Kein Link wird je weggelassen.** Jeder `groundingChunk` mit einer URI
+  erscheint in der Quellenliste, auch wenn kein Belegmarker auf ihn zeigt.
+  Keine Obergrenze, keine Auswahl, keine Deduplizierung nach Domain.
+- **I2 - Kein Link wird verändert, URI und Titel.** Redirect-URLs werden
+  byteidentisch ausgegeben: nicht gekürzt, nicht auf die Domain reduziert,
+  nicht ersetzt. Der Titel zählt ausdrücklich mit - laut Terms sind
+  "titles or labels provided with those means to fetch web pages" Teil des
+  Links.
+- **I3 - Kein Redirect wird aufgelöst.** Der Server stellt keine Netzwerkanfrage
+  an eine Redirect-URL. Einziger ausgehender Verkehr ist der SDK-Aufruf an die
+  Gemini-API.
+- **I4 - Nichts wird zwischengespeichert.** Grounded Results berühren nie die
+  Festplatte. `config.json` enthält ausschließlich Modellname und
+  Thinking-Level.
+
+Deduplizieren nach identischer URI ist erlaubt, weil dabei kein Ziel
+verlorengeht. Deduplizieren nach Domain ist es nicht.
+
+Die Quellenliste kostet mehr Tokens als der Antworttext. Das ist bekannt,
+gemessen und akzeptiert - es ist der Preis des Tauschs, auf dem Grounding
+beruht, und **kein Optimierungsauftrag**.
+
+**Wer eine Änderung erwägt, die eine dieser Invarianten berührt, setzt sie nicht
+um, sondern fragt zuerst nach.** Das gilt auch dann, wenn die Änderung als
+Aufräumen, Kürzen oder Optimieren daherkommt.
+
+Wörtlicher Text der Klauseln: Abschnitt "Grounding with Google Search" in den
+[Gemini API Additional Terms of Service](https://ai.google.dev/gemini-api/terms#grounding-with-google-search).
+Ausführliche Begründung, Messwerte und die beiden Klauseln, die regelmäßig
+falsch zitiert werden: Abschnitt
+[Terms-Konformität](./docs/specs.de.md#terms-konformität) in den Specs
+([englisch](./docs/specs.md#terms-compliance)).
+Festgenagelt sind I1 und I2 in `test/sources.test.js`; I3 und I4 sind
+Abwesenheitsaussagen und stehen nur als Regel hier.
+
 ## Öffentliches Repo - was hier nicht hineingehört
 
 Dieses Repository ist zur Veröffentlichung bestimmt. Jede getrackte Datei

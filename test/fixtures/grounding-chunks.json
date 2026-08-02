@@ -1,0 +1,94 @@
+{
+  "groundingMetadata": {
+    "webSearchQueries": ["nodejs current lts version 2026", "node 22 end of life date"],
+    "groundingChunks": [
+      {
+        "web": {
+          "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG52uKlYw8xN0pTfR3mQdHvXcJ7bBnLzS4aWyE1oGtUiPkMrVhDqZfXnCsAyLwTeRjIuOpQbNgKmHdVcXsZlFtYwPjRaEoBiUnMkGhTvDcSxQlZ",
+          "title": "nodejs.org"
+        }
+      },
+      {
+        "web": {
+          "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHtRmXvBpQwLnKdSfYgCzJ2eNhUaVoTiMbXrDlEwPqZjGyKcFsAuHnBtVxOyRlIeWdQmPkZaSgTfCjNhUbXvLoMwYrEiKpDzQtAnGsVcJfXBmLh",
+          "title": "github.com"
+        }
+      },
+      {
+        "retrievedContext": {
+          "title": "Ein Chunk-Typ, den dieser Server nicht kennt",
+          "text": "Steht hier stellvertretend fuer einen kuenftigen Typ ohne web.uri."
+        }
+      },
+      {
+        "web": {
+          "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG52uKlYw8xN0pTfR3mQdHvXcJ7bBnLzS4aWyE1oGtUiPkMrVhDqZfXnCsAyLwTeRjIuOpQbNgKmHdVcXsZlFtYwPjRaEoBiUnMkGhTvDcSxQlZ",
+          "title": "nodejs.org"
+        }
+      },
+      {
+        "web": {
+          "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFwNbKxPmTiRcVdHgLoZaEyUjQsBnXtMrWfCkDpSvGhJlAoYzIeNuTbRxKmQwPdFsCgVhZjLnEaOyBtUiXrMkSpDvHcWfJqTgNlZbAoYeKxRmPu",
+          "title": "endoflife.date"
+        }
+      },
+      {
+        "web": {
+          "title": "Ein web-Chunk, dem die API keine uri mitgegeben hat"
+        }
+      },
+      {
+        "web": {
+          "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEjTnMvBqLwXcRdKaHfPzUoSgYiNbEtVrJmDlCxQwZpAkGuIhOyTfRbNsMvXeLqCjWdZgPnKaUiBtHrYoSxMfEwQlDvJcGbTnAzRpKyXhUmLiOe",
+          "title": "npmjs.com"
+        }
+      },
+      {
+        "web": {
+          "uri": "https://nodejs.org/en/about/previous-releases",
+          "title": "nodejs.org"
+        }
+      }
+    ],
+    "groundingSupports": [
+      {
+        "segment": {
+          "startIndex": 0,
+          "endIndex": 54,
+          "text": "Node.js 24 ist die aktuelle LTS-Fassung (Stand 08/2026)"
+        },
+        "groundingChunkIndices": [0]
+      },
+      {
+        "segment": {
+          "partIndex": 0,
+          "startIndex": 56,
+          "endIndex": 108,
+          "text": "Node 22 bleibt bis April 2027 im Maintenance-Support."
+        },
+        "groundingChunkIndices": [1, 3]
+      },
+      {
+        "segment": {
+          "partIndex": 0,
+          "startIndex": 109,
+          "endIndex": 154,
+          "text": "Node 20 hat sein Lebensende bereits erreicht."
+        },
+        "groundingChunkIndices": [1]
+      }
+    ]
+  },
+  "urlContextMetadata": {
+    "urlMetadata": [
+      {
+        "retrievedUrl": "https://nodejs.org/en/about/previous-releases",
+        "urlRetrievalStatus": "URL_RETRIEVAL_STATUS_SUCCESS"
+      },
+      {
+        "retrievedUrl": "https://endoflife.date/nodejs",
+        "urlRetrievalStatus": "URL_RETRIEVAL_STATUS_SUCCESS"
+      }
+    ]
+  }
+}

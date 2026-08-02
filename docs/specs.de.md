@@ -376,9 +376,8 @@ sobald sie über null liegen. Fall 4 ist an der Quellenliste erkennbar.
 Zu Fall 4 eine Messung, die gegen die naheliegende Erwartung ausfiel: Bei einer
 Anfrage mit konkreter URL hat URL Context nachweislich gefeuert
 (`urlRetrievalStatus: URL_RETRIEVAL_STATUS_SUCCESS`) - die gelesene Seite stand
-aber **zusätzlich als `groundingChunk`** in der Antwort, mit echtem Seitentitel,
-direkter URL statt vertexaisearch-Weiterleitung und drei eigenen
-`groundingSupports`. Sie war damit vollständig durch Marker abgedeckt und kam
+aber **zusätzlich als `groundingChunk`** in der Antwort, mit direkter URL statt
+vertexaisearch-Weiterleitung und drei eigenen `groundingSupports`. Sie war damit vollständig durch Marker abgedeckt und kam
 über die Deduplizierung nach URL gar nicht mehr im URL-Context-Zweig an.
 
 Fall 4 greift also nur, wenn eine per URL Context gelesene Seite **nicht**
@@ -491,8 +490,14 @@ absichern.
 ### Quellenliste erzeugen
 
 Such-Treffer und URL-Context-Seiten werden zu einer Liste zusammengeführt und
-nach URL entduplifiziert (Such-Treffer haben Vorrang, da sie einen echten
-Seitentitel mitbringen - URL-Context-Einträge liefern nur die URL selbst).
+nach URL entduplifiziert.
+Such-Treffer haben Vorrang, weil nur sie `groundingSupports` mitbringen und
+damit Belegmarker tragen können; ein später eintreffender URL-Context-Eintrag
+nähme ihnen das.
+Was sie **nicht** mitbringen, ist ein sprechender Titel: Gemessen steht in
+`groundingChunks[i].web.title` der blanke Domainname (`npmjs.com`, `github.com`,
+`dev.to`, `snyk.io`), der nicht mehr aussagt als die `retrievedUrl` eines
+URL-Context-Eintrags.
 
 `buildSourceList` liefert dabei **zwei** Dinge: die Liste selbst und die
 Zuordnung `chunkNumbers` vom Index in `groundingChunks` auf die Nummer in der
@@ -517,7 +522,11 @@ const addSource = (title, uri) => {
 
 searchChunks.forEach((chunk, index) => {
   const uri = chunk.web?.uri;
-  if (!uri) return;
+  // Der einzige Pfad, auf dem ein Link verlorengehen kann - daher der Zaehler.
+  if (!uri) {
+    skipped++;
+    return;
+  }
   chunkNumbers.set(index, addSource(chunk.web?.title ?? uri, uri));
 });
 
@@ -534,17 +543,27 @@ const sourceList = sources
 
 Chunks ohne `uri` schaffen es weder in die Liste noch in `chunkNumbers` und
 erzeugen folglich keinen Marker.
+Gezählt werden sie aber und stehen, sobald der Zähler über null liegt, als
+`⚠️ n sources omitted (unknown chunk type)` im Footer.
+Bisher liefert die API ausschließlich `web`-Chunks; käme ein zweiter Typ hinzu,
+verschwänden dessen Links stillschweigend aus der Liste - der einzige Pfad in
+diesem Code, auf dem eine Quelle verlorengehen kann (siehe
+„Terms-Konformität" unten).
+Mehr als Zählen ist ohne Kenntnis des unbekannten Typs nicht möglich, aber es
+macht aus einem stillen Verlust einen sichtbaren.
 
 ### Footer-Format im Tool-Ergebnis
 
 ```javascript
 // Verworfene Belegmarker nur, wenn es welche gab - der Normalfall soll den
-// Footer nicht verlaengern.
+// Footer nicht verlaengern. Gleiche Regel fuer uebersprungene Chunks.
 const droppedNote = dropped > 0 ? ` | ⚠️ ${dropped} markers dropped` : "";
+const skippedNote =
+  skipped > 0 ? ` | ⚠️ ${skipped} sources omitted (unknown chunk type)` : "";
 
 const footer =
   `\n\n---\n🔢 ${inputTokens} input / ${outputTokens} output / ${thinkingTokens} thinking tokens ` +
-  `| 🔍 ${sources.length} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}` +
+  `| 🔍 ${sources.length} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}${skippedNote}` +
   formatSearchQueries(searchQueries);
 
 const sourcesBlock = sourceList ? `\n\nSources:\n${sourceList}` : "";
@@ -595,8 +614,115 @@ Format und Kappung:
 Tatsächlich implementiert in `gemini.js` (`buildText`, `formatNotice`,
 `buildSourceList`, `formatSourcesBlock`, `formatFooter`, `formatSearchQueries`)
 und `citations.js` (`insertCitations`).
-`formatSearchQueries` ist exportiert und wie `insertCitations` ohne API-Key
-prüfbar (`test/search-queries.test.js`).
+`buildSourceList`, `formatSourcesBlock`, `formatFooter` und
+`formatSearchQueries` sind exportiert und wie `insertCitations` ohne API-Key
+prüfbar (`test/sources.test.js`, `test/search-queries.test.js`).
+`gemini.js` lässt sich ohne `GEMINI_API_KEY` importieren, weil `getClient()`
+erst in `runSearch` und `listModels` aufgerufen wird, nicht beim Laden des
+Moduls.
+
+## Terms-Konformität
+
+Die Quellenliste ist keine Eigenschaft, an der sich schrauben ließe, sondern die
+Bedingung, unter der dieser Server Grounding with Google Search überhaupt nutzen
+darf.
+Die [Gemini API Additional Terms of Service](https://ai.google.dev/gemini-api/terms#grounding-with-google-search)
+schützen nicht die API, sondern die Verlage, deren Inhalte in den Antworten
+zusammengefasst werden.
+Der Link zur Quelle ist das Einzige, was zu ihnen zurückfließt, und Googles
+Redirect ist das, was diesen Rückfluss nachweisbar macht.
+
+Daraus folgen vier Invarianten.
+Sie sind heute erfüllt und ab hier verbindlich: **Wer eine Änderung erwägt, die
+eine von ihnen berührt, setzt sie nicht um, sondern fragt zuerst nach** - auch
+dann, wenn die Änderung als Aufräumen, Kürzen oder Optimieren daherkommt.
+
+| # | Invariante | Warum |
+| --- | --- | --- |
+| I1 | Kein Link wird je weggelassen | Jeder `groundingChunk` mit URI erscheint in der Liste, auch ohne Marker darauf. Keine Obergrenze, keine Auswahl, keine Deduplizierung nach Domain |
+| I2 | Kein Link wird verändert, URI **und** Titel | Redirect-URLs gehen byteidentisch hinaus; der Titel zählt als Bestandteil des Links |
+| I3 | Kein Redirect wird aufgelöst | Einziger ausgehender Verkehr ist der SDK-Aufruf an die Gemini-API |
+| I4 | Nichts wird zwischengespeichert | Grounded Results berühren nie die Festplatte; `config.json` enthält Modellname und Thinking-Level, sonst nichts |
+
+Deduplizieren nach identischer URI verstößt gegen keine davon, weil dabei kein
+Ziel verlorengeht.
+Deduplizieren nach Domain verstieße gegen I1.
+
+### Was die Terms tatsächlich sagen
+
+Dass der Titel zum Link gehört, steht ausdrücklich dort und ist der Teil, den
+man am leichtesten übersieht:
+
+> "Links" are any other means to fetch web pages (including hyperlinks and URLs), which may be contained in a Grounded Result or Search Suggestion.
+> Links also include titles or labels provided with those means to fetch web pages.
+
+Der entscheidende Satz für einen Server wie diesen ist der „for clarity"-Satz in
+den Use Restrictions, nicht die Aufzählung davor:
+
+> For clarity, Grounded Results, Search Suggestions, and Links are intended to be used in combination to respond to a given end user prompt and it is a violation of these terms to use Grounding with Google Search to extract or collect one or more of these components for another purpose (for example, using programmatic or automated means to collect Links, using Links to build an index, or **using Links to identify destination pages for crawling or scraping**).
+
+Zweierlei folgt daraus.
+Erstens nennt er I3 beim Namen, was die Herleitung erspart.
+Zweitens beantwortet er aus dem Wortlaut statt durch Auslegung, ob ein Server
+die Ergebnisse überhaupt verarbeiten darf: Untersagt ist das Herauslösen
+einzelner Bestandteile **für einen anderen Zweck**.
+Ohne diesen Satz liest sich die Aufzählung davor („cache, frame, syndicate,
+resell, analyze, train on, or otherwise learn from") so, als sei auch die
+bestimmungsgemäße Nutzung verboten.
+
+Eine Klausel wird regelmäßig als Verbot zitiert und ist keines: „you do not
+allow Grounded Results to be accessed or collected by automated or programmatic
+means" steht **innerhalb einer Ausnahme**, nämlich der, die dem Endnutzer das
+Kopieren erlaubt.
+Die eigenständigen Verbote sind die oben zitierte „for clarity"-Restriktion und
+das Verbot, die Ergebnisse zu verändern oder fremde Inhalte dazwischenzumischen.
+
+### Warum die Quellenliste nicht gekappt wird
+
+Die Quellenliste kostet mehr Tokens als der Antworttext.
+Das ist bekannt, gemessen und akzeptiert - es ist der Preis des Tauschs, auf dem
+Grounding beruht, und **kein Optimierungsauftrag**
+([Issue #6](https://github.com/brobertoblanko/gemini-grounding-mcp/issues/6)).
+
+Gemessen an einer Antwort mit 22 Quellen fallen die naheliegenden Einsparungen
+klein oder ganz aus:
+
+| Idee | Wirkung | Urteil |
+| --- | --- | --- |
+| Liste kappen | - | verstößt gegen I1 |
+| Nur zitierte Quellen listen | keine - 22 von 22 waren durch mindestens einen Support belegt | bringt nichts |
+| Nach Domain deduplizieren | etwa 1.000 Token | verstößt gegen I1 |
+| Redirects zu kurzen URLs auflösen | - | verstößt gegen I3, den Fall nennen die Terms ausdrücklich |
+| Liste in eine MCP-Resource verschieben | trennt Marker von Zielen, Client-Support unsicher | löst das eigentliche Problem nicht: Eine Liste aus fünfzehnmal demselben Domainnamen wird durch Verschieben nicht brauchbarer |
+
+### Wo der Server Inhalt hinzufügt oder umstellt
+
+Die Terms untersagen es, fremde Inhalte („any other content") zwischen die
+Grounded Results zu mischen.
+Der Server tut zweierlei, das daran rührt, und beides wiegt unterschiedlich
+schwer:
+
+- **Belegmarker** (`citations.js`) werden in den Antworttext eingefügt. Googles
+  eigene Referenzimplementierung in der Gemini CLI setzt dieselben Marker, also
+  kann die Klausel nicht sie meinen, sondern fremde Inhalte wie Werbung. Die
+  Marker verweisen zudem auf die mitgelieferten Links, statt von ihnen
+  wegzuführen.
+- **Die Umsortierung der Code-Execution-Blöcke** (`buildText`) hat keine
+  Referenzimplementierung hinter sich, nur das inhaltliche Argument, dass der
+  Rechenweg ein Beleg ist und damit hinter die Antwort gehört statt davor. Das
+  ist ein Argument, keine geklärte Frage, und wird hier als solches benannt.
+
+### Die Lücke hinter dem Server
+
+Die Terms verlangen, dass die Grounded Results dem Endnutzer angezeigt werden,
+der die Anfrage gestellt hat.
+Ein MCP-Server kann das nur anregen; er übergibt seine Antwort an einen Client
+und hat keinen Einfluss darauf, was der Client davon zeigt.
+Der einzige Hebel ist das `instructions`-Feld in `index.js`, das den Client
+bittet, Quellenliste und Footer unangetastet zu lassen - durchsetzbar ist es
+nicht.
+Das ist eine echte Lücke und kein gelöstes Problem; sie steht hier, statt
+übergangen zu werden.
 
 ## Konfigurierbare Modell- und Thinking-Level-Wahl
 

@@ -59,6 +59,9 @@ Sources:
 🔎 Searched: Node js latest LTS version
 ```
 
+The redirect URL is abbreviated here for readability; the real output carries it
+in full.
+
 ## Quick start
 
 Nothing to install up front: the client starts the server through `npx`, which
@@ -202,6 +205,13 @@ numbering would have produced markers pointing nowhere.
 Full details in [specs.md](https://github.com/brobertoblanko/gemini-grounding-mcp/blob/main/docs/specs.md).
 
 </details>
+
+### Why the source URLs are long
+
+Google hands out its sources as redirect URLs, and the server passes them on
+unchanged. Shortening or resolving them is not permitted under the
+[terms for Google Search grounding](https://ai.google.dev/gemini-api/terms#grounding-with-google-search),
+so it does not happen: the length is deliberate rather than missing polish.
 
 ### Which searches were actually run
 

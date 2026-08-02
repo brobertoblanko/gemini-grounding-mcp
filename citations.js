@@ -9,6 +9,15 @@
 // Sie bekommt Text und Metadaten uebergeben und liefert Text zurueck. Damit
 // ist sie ohne Netzwerk und ohne API-Key pruefbar (test/citations.test.js).
 //
+// Bei strenger Lesart stellt sich hier eine Frage aus Googles Terms: Sie
+// untersagen es, "any other content" zwischen die Grounded Results zu mischen,
+// und genau das tun die Marker. Die Entlastung ist dieselbe Quelle, auf die
+// dieser Kommentar wegen des Byte-Offset-Fehlers ohnehin verweist - Googles
+// eigene Referenzimplementierung in der Gemini CLI setzt die Marker genauso.
+// Wenn Google das Verfahren selbst vorfuehrt, meint die Klausel nicht es,
+// sondern fremde Inhalte wie Werbung. Die Marker verweisen ausserdem auf die
+// mitgelieferten Links, statt von ihnen wegzufuehren.
+//
 // Gerechnet wird durchgehend in BYTES, nicht in Zeichen: startIndex und
 // endIndex sind laut Typdefinition "measured in bytes". Bei einer deutschen
 // Testantwort stimmte keine einzige von 28 Positionen zeichenbasiert, alle 28

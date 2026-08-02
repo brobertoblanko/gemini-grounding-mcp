@@ -23,14 +23,22 @@ function getClient() {
  * laufen auseinander, weil groundingChunks Suchtreffer abbildet und nicht
  * Quellen - gemessen 17 Treffer bei 14 eindeutigen URLs. Ohne diese Zuordnung
  * verwiesen die Marker im Text auf Nummern, die es in der Liste nicht gibt.
+ *
+ * INVARIANTE I1 (siehe CLAUDE.md und docs/specs.md, "Terms compliance"): JEDER
+ * Chunk mit URI kommt in die Liste, auch wenn kein einziger Support auf ihn
+ * zeigt. Dass hier weder gefiltert noch gekappt noch nach Domain dedupliziert
+ * wird, ist keine Nachlaessigkeit, sondern Bedingung fuer die Nutzung von
+ * Grounding with Google Search. Deduplizieren nach identischer URI ist erlaubt,
+ * weil dabei kein Ziel verlorengeht - nach Domain nicht.
  */
-function buildSourceList(candidate) {
+export function buildSourceList(candidate) {
   const searchChunks = candidate?.groundingMetadata?.groundingChunks ?? [];
   const urlContextEntries = candidate?.urlContextMetadata?.urlMetadata ?? [];
 
   const numberByUri = new Map();
   const chunkNumbers = new Map();
   const sources = [];
+  let skipped = 0;
 
   const addSource = (title, uri) => {
     if (!numberByUri.has(uri)) {
@@ -42,7 +50,20 @@ function buildSourceList(candidate) {
 
   searchChunks.forEach((chunk, index) => {
     const uri = chunk.web?.uri;
-    if (!uri) return;
+    // Der einzige Pfad, auf dem hier ein Link verlorengehen kann. Bisher
+    // liefert die API ausschliesslich web-Chunks, das ist gemessen; kaeme ein
+    // zweiter Typ hinzu, verschwaenden dessen Links stillschweigend aus der
+    // Liste und I1 waere gebrochen, ohne dass es jemand saehe. Mehr als das
+    // Zaehlen ist ohne Kenntnis des unbekannten Typs nicht moeglich - der
+    // Footer macht daraus wenigstens einen sichtbaren Verlust.
+    if (!uri) {
+      skipped++;
+      return;
+    }
+    // chunk.web.title ?? uri ersetzt KEINEN vorhandenen Titel, sondern
+    // beschriftet einen Eintrag, zu dem die API keinen mitgeliefert hat. Der
+    // Titel ist laut Terms Bestandteil des Links (I2), ein vorhandener bleibt
+    // deshalb unangetastet.
     chunkNumbers.set(index, addSource(chunk.web?.title ?? uri, uri));
   });
 
@@ -59,10 +80,18 @@ function buildSourceList(candidate) {
     if (entry.retrievedUrl) addSource(entry.retrievedUrl, entry.retrievedUrl);
   }
 
-  return { sources, chunkNumbers };
+  return { sources, chunkNumbers, skipped };
 }
 
-function formatSourcesBlock(sources) {
+/**
+ * INVARIANTE I2: `s.title` und `s.uri` gehen unveraendert hinaus. Die
+ * Redirect-URLs sind lang und sehen nach einem Kuerzungskandidaten aus - sie
+ * duerfen aber weder gekuerzt noch auf die Domain reduziert noch aufgeloest
+ * werden (I3), und der Titel zaehlt ausdruecklich mit. Vier Zeilen, die harmlos
+ * aussehen, und denen man den Titel als geschuetzten Bestandteil nicht ansieht:
+ * siehe CLAUDE.md und docs/specs.md, "Terms compliance".
+ */
+export function formatSourcesBlock(sources) {
   if (sources.length === 0) return "";
   const list = sources
     .map((s, i) => `[${i + 1}] ${s.title} - ${s.uri}`)
@@ -210,12 +239,13 @@ export function formatSearchQueries(queries = []) {
   return `\n🔎 Searched: ${shown.join(" · ")}${rest > 0 ? ` (+${rest} more)` : ""}`;
 }
 
-function formatFooter({
+export function formatFooter({
   usageMetadata,
   model,
   thinkingLevel,
   sourceCount,
   dropped,
+  skipped,
   searchQueries,
 }) {
   const inputTokens = usageMetadata?.promptTokenCount ?? 0;
@@ -228,9 +258,16 @@ function formatFooter({
   // damit der Normalfall den Footer nicht verlaengert.
   const droppedNote = dropped > 0 ? ` | ⚠️ ${dropped} markers dropped` : "";
 
+  // Uebersprungene Chunks nach derselben Regel: nur sichtbar, wenn es welche
+  // gab. Anders als verworfene Marker betrifft das nicht die Aussagekraft der
+  // Antwort, sondern die Vollstaendigkeit der Quellenliste - ein Verlust, der
+  // ohne diese Zeile niemandem auffiele (I1, siehe buildSourceList).
+  const skippedNote =
+    skipped > 0 ? ` | ⚠️ ${skipped} sources omitted (unknown chunk type)` : "";
+
   return (
     `\n\n---\n🔢 ${inputTokens} input / ${outputTokens} output / ${thinkingTokens} thinking tokens ` +
-    `| 🔍 ${sourceCount} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}` +
+    `| 🔍 ${sourceCount} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}${skippedNote}` +
     formatSearchQueries(searchQueries)
   );
 }
@@ -269,7 +306,7 @@ export async function runSearch({ query, model, thinkingLevel }) {
   });
 
   const candidate = response.candidates?.[0];
-  const { sources, chunkNumbers } = buildSourceList(candidate);
+  const { sources, chunkNumbers, skipped } = buildSourceList(candidate);
 
   // Das ?? [] ist die Absicherung gegen eine Antwort ohne groundingMetadata -
   // dann laeuft alles unveraendert durch, nur ohne Marker.
@@ -290,12 +327,18 @@ export async function runSearch({ query, model, thinkingLevel }) {
     thinkingLevel,
     sourceCount: sources.length,
     dropped,
+    skipped,
     // Gleiche Absicherung wie bei den Supports: Ohne Suchtreffer fehlt das
     // Feld, dann entfaellt die Zeile.
     searchQueries: candidate?.groundingMetadata?.webSearchQueries ?? [],
   });
 
   // Der Footer bleibt in jedem Fall der letzte Bestandteil der Antwort.
+  //
+  // Die Reihenfolge Text - Hinweis - Quellen - Footer hat einen zweiten Grund:
+  // Zwischen der Antwort und den zugehoerigen Links steht damit nichts, was
+  // der Server hinzugefuegt haette. Die Terms untersagen es, fremde Inhalte
+  // zwischen die Grounded Results zu mischen; hier ist nichts dazwischen.
   return text + notice + sourcesBlock + footer;
 }
 
