@@ -32,7 +32,7 @@ What ships here is also inspectable: the same code as in the repository, no buil
 
 ## Technical basis
 
-- Node.js (20+, required by `@google/genai`), ES modules
+- Node.js (22+, the oldest release still under security support), ES modules
   (`"type": "module"` in package.json)
 - Communication over stdio (the standard MCP transport)
 - The API key is passed exclusively through the `GEMINI_API_KEY` environment

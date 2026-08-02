@@ -1,0 +1,25 @@
+version: 2
+
+updates:
+  # The dependencies are pinned to exact versions, so nothing ever moves on its
+  # own. That is deliberate - but it also means a fix would sit unnoticed until
+  # someone looks. Dependabot turns "silent" into "a pull request": the test
+  # workflow runs against the new version and the result is visible before it
+  # is merged.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+
+  # The workflow files pin action versions the same way, and those go stale
+  # just as quietly. Monthly is enough here - actions release far less often
+  # than npm packages.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci

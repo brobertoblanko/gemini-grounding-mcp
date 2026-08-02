@@ -20,11 +20,13 @@ import {
 // Die Version kommt aus der package.json, damit sie nur an einer Stelle
 // gepflegt wird - eine zweite, von Hand nachgezogene Zahl meldet dem Client
 // frueher oder spaeter eine Fassung, die nicht der ausgelieferten entspricht.
-// createRequire statt import ... with { type: "json" }: Import Attributes gibt
-// es erst ab Node 20.10, engines erlaubt aber jedes 20.x - dort waere es ein
-// Syntaxfehler, den niemand abfangen kann, waehrend createRequire seit jeher
-// laeuft. Die package.json liegt neben dieser Datei, im Klon wie im
-// installierten Paket: npm packt sie immer mit, unabhaengig von files.
+// createRequire statt import ... with { type: "json" }: Beides laeuft ab der
+// unterstuetzten Node-Version, aber Import Attributes waeren bei einem Aufruf
+// unter einer aelteren Fassung ein Syntaxfehler - und ein Syntaxfehler bricht
+// die Datei beim Parsen ab, bevor irgendeine Versionspruefung greifen koennte.
+// createRequire laeuft seit jeher. Die package.json liegt neben dieser Datei,
+// im Klon wie im installierten Paket: npm packt sie immer mit, unabhaengig
+// von files.
 const { version } = createRequire(import.meta.url)("./package.json");
 
 const server = new McpServer(

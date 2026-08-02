@@ -1,0 +1,42 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# The test suite only reads the repository; nothing is written back.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      # One failing version should not hide the result of the others.
+      fail-fast: false
+      matrix:
+        # 22 is the lower bound promised by "engines" in package.json and is in
+        # Maintenance LTS until April 2027; 24 is Active LTS.
+        node-version: [22, 24]
+
+    name: Node ${{ matrix.node-version }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      # "ci" rather than "install": it installs exactly what package-lock.json
+      # pins and fails if the lockfile and package.json disagree.
+      - run: npm ci
+
+      # No API key is set here on purpose. The tests cover the pure functions -
+      # citation placement and footer formatting - which never touch the
+      # network, so a run that suddenly needed a key would be a regression.
+      - run: npm test

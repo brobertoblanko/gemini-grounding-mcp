@@ -43,7 +43,7 @@ gepackt über eine feste `files`-Liste.
 
 ## Technische Basis
 
-- Node.js (20+, von `@google/genai` gefordert), ES Modules
+- Node.js (22+, älteste Fassung mit Sicherheitsunterstützung), ES Modules
   (`"type": "module"` in package.json)
 - Kommunikation über stdio (Standard-MCP-Transport)
 - API-Key wird ausschließlich über die Umgebungsvariable `GEMINI_API_KEY`

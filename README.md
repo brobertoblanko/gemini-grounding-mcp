@@ -15,8 +15,9 @@ Working rules for Claude Code in this repository: see [CLAUDE.md](./CLAUDE.md)
 
 ## Requirements
 
-- **Node.js 20 or newer** - required by `@google/genai` and the MCP SDK.
-  Check with `node -v`.
+- **Node.js 22 or newer** - the oldest release still receiving security updates.
+  Check with `node -v`. The dependencies would technically still run on Node 20,
+  but it reached end-of-life in April 2026, so it is not supported here.
 - **A Gemini API key**, available for free at
   [Google AI Studio](https://aistudio.google.com/apikey).
 - **Claude Code** or any other MCP-capable client
