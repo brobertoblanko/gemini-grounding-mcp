@@ -250,21 +250,15 @@ CLI - it then waits silently on stdio, which looks like a hang.
 
 | Command                                 | Effect                                                                                                |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `gemini-grounding "<query>"`            | Search using the saved defaults; prints the answer including source list and token footer             |
+| `gemini-grounding "<query>"`            | Search using the saved defaults; `--model <id>` and `--thinking <level>` apply to this call only      |
 | `gemini-grounding config`               | Shows the saved model, thinking level, whether an API key is present, and where the config file lives |
 | `gemini-grounding models [--all]`       | Lists the models usable with this server and their token limits; `--all` lists every one              |
-| `gemini-grounding set-model <id>`       | Persists the default model                                                                            |
-| `gemini-grounding set-thinking <level>` | Persists the default thinking level (`minimal`, `low`, `medium`, `high`)                              |
+| `gemini-grounding set-model <id>`       | Persists the default model; add `--thinking <level>` to save both in one call                         |
+| `gemini-grounding set-thinking <level>` | Persists the default thinking level (`minimal`, `low`, `medium`, `high`); `--model <id>` saves both   |
 | `gemini-grounding help`                 | Short help                                                                                            |
 
-**Per-call overrides.** For a single call, model and thinking level can be set
-differently without touching the saved defaults:
-
-```bash
-gemini-grounding "query" --model gemini-3-pro-preview --thinking minimal
-```
-
-Which values were actually used is shown in the footer under every answer.
+Which model and thinking level a call actually used is shown in the footer under
+every answer.
 
 **Shared configuration.** The CLI and the MCP server read and write the same
 config file. A `set-model` in the terminal therefore also changes what the MCP

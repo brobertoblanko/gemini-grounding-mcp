@@ -23,18 +23,21 @@ Commands:
   config                 Show saved model, thinking level and API key status
   models [--all]         List models usable with this server; --all lists every
                          model the API key exposes, including unusable ones
-  set-model <id>         Persist the default model
-  set-thinking <level>   Persist the default thinking level
+  set-model <id>         Persist the default model; add --thinking <level> to
+                         persist both in one call
+  set-thinking <level>   Persist the default thinking level; add --model <id> to
+                         persist both in one call
   help                   Show this help
 
-Options (search only, never persisted):
-  --model <id>           Use this model for this call only
-  --thinking <level>     Use this thinking level for this call only
+Options:
+  --model <id>           On a search: use for this call only, nothing is saved
+  --thinking <level>     On a search: use for this call only, nothing is saved
 
 Thinking levels: ${THINKING_LEVELS.join(", ")}
 
-Anything that is not a known command is treated as a search query. The query
-must be a single argument - put it in quotes if it contains spaces.
+An option that has no meaning for the given command is an error, never silently
+ignored. Anything that is not a known command is treated as a search query. The
+query must be a single argument - put it in quotes if it contains spaces.
 The API key is read from the GEMINI_API_KEY environment variable.
 The saved defaults are shared with the MCP server; "config" prints their location.`;
 
@@ -80,6 +83,18 @@ function takeSwitch(args, name) {
   return true;
 }
 
+/**
+ * Bestaetigt jeden gespeicherten Wert einzeln, nach demselben Muster wie der
+ * MCP-Handler in index.js. Wird nur eines von beiden gesetzt, steht auch nur
+ * eines da - die Ausgabe sagt damit genau, was in der Datei gelandet ist.
+ */
+function formatSaved({ model, thinkingLevel }) {
+  const parts = [];
+  if (model !== undefined) parts.push(`Model: ${model}`);
+  if (thinkingLevel !== undefined) parts.push(`Thinking level: ${thinkingLevel}`);
+  return `Saved - ${parts.join(", ")}`;
+}
+
 async function main() {
   // argv[0] ist der Node-Interpreter, argv[1] das Skript selbst - erst ab
   // Index 2 stehen die vom Benutzer uebergebenen Argumente.
@@ -107,6 +122,24 @@ async function main() {
     if (rest.length > 0) fail(`"${command}" takes no arguments.`);
   };
 
+  const givenFlags = [];
+  if (modelFlag !== undefined) givenFlags.push("model");
+  if (thinkingFlag !== undefined) givenFlags.push("thinking");
+  if (allFlag) givenFlags.push("all");
+
+  // Gegenstueck zu requireNoArgs fuer die Optionen: Jeder Zweig nennt die, die
+  // bei ihm eine Bedeutung haben, alles andere bricht ab. Ohne diese Pruefung
+  // nahm "config --thinking low" die Option kommentarlos entgegen und tat
+  // nichts damit - derselbe stille Verlust, den die Pruefung auf unbekannte
+  // Optionen weiter oben schon verhindert.
+  //
+  // Positivliste und nicht Verbotsliste, damit eine spaeter hinzukommende
+  // Option nicht versehentlich ueberall erlaubt ist.
+  const allowFlags = (...allowed) => {
+    const unexpected = givenFlags.find((name) => !allowed.includes(name));
+    if (unexpected) fail(`"${command}" takes no --${unexpected} option.`);
+  };
+
   switch (command) {
     case undefined:
       // Aufruf ohne Argumente ist ein Bedienfehler: Hilfe nach stderr, Exit 1.
@@ -116,11 +149,13 @@ async function main() {
     case "help":
     case "--help":
     case "-h":
+      allowFlags();
       requireNoArgs();
       console.log(HELP);
       break;
 
     case "config": {
+      allowFlags();
       requireNoArgs();
       const apiKey = process.env.GEMINI_API_KEY;
       // Der Wert des Keys wird nie ausgegeben, auch nicht gekuerzt - nur seine
@@ -139,25 +174,38 @@ async function main() {
     }
 
     case "models":
+      // Vor listModels, damit ein Tippfehler keinen API-Aufruf kostet.
+      allowFlags("all");
       requireNoArgs();
       console.log(await listModels({ all: allFlag }));
       break;
 
+    // Bei den beiden set-Befehlen persistiert die jeweils andere Option mit:
+    // Wer speichern will, will nicht, dass ein Teil der Angabe wieder
+    // verfaellt. Die eigene Option ist dagegen ein Fehler - "set-model x
+    // --model y" nennt zwei Modelle, und welches gemeint ist, kann nur der
+    // Aufrufer wissen.
     case "set-model": {
-      if (rest.length !== 1) fail("Usage: gemini-grounding set-model <model-id>");
+      allowFlags("thinking");
+      if (rest.length !== 1) {
+        fail("Usage: gemini-grounding set-model <model-id> [--thinking <level>]");
+      }
       const model = rest[0];
-      setSavedConfig({ model });
-      console.log(`Saved - Model: ${model}`);
+      setSavedConfig({ model, thinkingLevel: thinkingFlag });
+      console.log(formatSaved({ model, thinkingLevel: thinkingFlag }));
       break;
     }
 
     case "set-thinking": {
+      allowFlags("model");
       if (rest.length !== 1) {
-        fail(`Usage: gemini-grounding set-thinking <${THINKING_LEVELS.join("|")}>`);
+        fail(
+          `Usage: gemini-grounding set-thinking <${THINKING_LEVELS.join("|")}> [--model <id>]`,
+        );
       }
       const level = requireThinkingLevel(rest[0], "set-thinking");
-      setSavedConfig({ thinkingLevel: level });
-      console.log(`Saved - Thinking level: ${level}`);
+      setSavedConfig({ model: modelFlag, thinkingLevel: level });
+      console.log(formatSaved({ model: modelFlag, thinkingLevel: level }));
       break;
     }
 
@@ -167,6 +215,10 @@ async function main() {
       // zusammenzusetzen waere truegerisch: takeFlag hat vorher ein
       // "--thinking high" mitten aus ihr herausgeschnitten, sodass eine
       // sinnentstellte Anfrage abgeschickt wuerde, ohne dass es auffaellt.
+      // Eigene Meldung statt allowFlags: Dort stuende der Befehlsname in den
+      // Anfuehrungszeichen, und der ist hier die Suchanfrage selbst.
+      if (allFlag) fail('--all is only valid for the "models" command.');
+
       if (rest.length > 0) {
         fail("The query must be a single argument - put it in quotes.");
       }

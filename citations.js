@@ -82,7 +82,11 @@ export function insertCitations({ text, supports, chunkNumbers }) {
 
   const bytes = Buffer.from(text, "utf8");
   const codeRanges = findCodeRanges(text);
-  const insertions = [];
+  // Gesammelt wird pro Byte-Position, nicht pro Support: Zwei Supports duerfen
+  // auf derselben Position enden - die API stuetzt denselben Satzteil dann
+  // mehrfach. Ein Array je Support ergaebe daraus zwei nebeneinander
+  // eingesetzte Marker und bei ueberschneidenden Quellen ein [1][1].
+  const numbersByIndex = new Map();
   let dropped = 0;
 
   for (const support of supports) {
@@ -114,25 +118,32 @@ export function insertCitations({ text, supports, chunkNumbers }) {
     // index + 1 schriebe damit Nummern bis [14] in eine Liste mit vier
     // Eintraegen. chunkNumbers uebersetzt; Treffer, die es nicht in die Liste
     // geschafft haben, erzeugen keinen Marker.
-    const numbers = [
-      ...new Set(
-        (support.groundingChunkIndices ?? [])
-          .map((index) => chunkNumbers.get(index))
-          .filter((number) => number !== undefined),
-      ),
-    ].sort((a, b) => a - b);
+    const numbers = (support.groundingChunkIndices ?? [])
+      .map((index) => chunkNumbers.get(index))
+      .filter((number) => number !== undefined);
 
     // Kein dropped++: Hier gab es nichts zu setzen, nichts ging verloren.
     if (numbers.length === 0) continue;
 
-    insertions.push({ index: end, marker: numbers.map((n) => `[${n}]`).join("") });
+    const atIndex = numbersByIndex.get(end) ?? new Set();
+    for (const number of numbers) atIndex.add(number);
+    numbersByIndex.set(end, atIndex);
   }
 
-  if (insertions.length === 0) return { text, dropped };
+  if (numbersByIndex.size === 0) return { text, dropped };
 
-  // Von hinten nach vorn, damit bereits eingesetzte Zeichen die noch
-  // ausstehenden Positionen nicht verschieben.
-  insertions.sort((a, b) => b.index - a.index);
+  // Ein Marker je Position, Nummern darin aufsteigend - und von hinten nach
+  // vorn eingesetzt, damit bereits eingesetzte Zeichen die noch ausstehenden
+  // Positionen nicht verschieben.
+  const insertions = [...numbersByIndex]
+    .map(([index, numbers]) => ({
+      index,
+      marker: [...numbers]
+        .sort((a, b) => a - b)
+        .map((n) => `[${n}]`)
+        .join(""),
+    }))
+    .sort((a, b) => b.index - a.index);
 
   // Die Bytestuecke werden gesammelt und EINMAL zusammengesetzt, statt bei
   // jedem Marker einen neuen Puffer zu bauen (Muster aus Googles

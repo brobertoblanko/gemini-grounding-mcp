@@ -104,6 +104,24 @@ Umgesetzt in flachen Modulen ohne `src/`-Layout und ohne Build-Step
   hätte sonst kommentarlos die gefilterte Liste gezeigt, die man für die
   vollständige hält. Überzählige Argumente lehnt jeder Unterbefehl ab.
 
+  Eine **bekannte** Option am falschen Ort wird genauso abgelehnt. Optionen
+  werden aus der Argumentliste geschnitten, bevor der Unterbefehl feststeht,
+  sodass ohne Prüfung kein Zweig sie noch bemerkte: `config --thinking low`
+  nahm die Option bislang entgegen und tat nichts damit. Jeder Zweig nennt
+  deshalb die Optionen, die bei ihm eine Bedeutung haben (`allowFlags`, eine
+  Positivliste, damit eine künftige Option nicht versehentlich überall erlaubt
+  ist), und bei `models` läuft diese Prüfung vor dem API-Aufruf, sodass ein
+  Tippfehler keine Anfrage kostet.
+
+  Die beiden `set-*`-Befehle persistieren die jeweils **andere** Option:
+  `set-model <id> --thinking <level>` speichert beides in einem Aufruf,
+  `set-thinking <level> --model <id>` spiegelbildlich. Wer speichern lässt,
+  will nicht, dass die Hälfte der Angabe verfällt. Die eigene Option des
+  Befehls bleibt ein Fehler - `set-model x --model y` nennt zwei Modelle, und
+  welches gemeint ist, weiß nur der Aufrufer. Die Bestätigungszeile nennt jeden
+  geschriebenen Wert, damit ein gespeicherter Wert nie von einem verworfenen zu
+  unterscheiden ist.
+
 ## Verifizierte API-Fakten (Stand 07/2026)
 
 Diese Werte wurden vor der Umsetzung gegen die aktuelle Gemini-API- und
@@ -421,11 +439,16 @@ wenn sie 0 sind - beide brauchen `?? 0`. `confidenceScores` und `renderedParts`
 wurden als Qualitätsfilter geprüft und verworfen: bei Gemini 3.x in der Praxis
 leer (0 von 28 befüllt).
 
-Bewusst **nicht** zusammengefasst werden redundante Marker. Verschachtelte
-Supports (gemessen: vier Supports mit gleichem Startpunkt, verschiedenen
-Endpunkten und derselben Quelle) erzeugen mehrere identische Marker in einem
-Absatz. Zusammenfassen verwürfe Auflösung, und für einen maschinellen Leser ist
-Rauschen billiger als eine fehlende Markierung.
+Bewusst nicht zusammengefasst werden redundante Marker an **verschiedenen**
+Positionen. Verschachtelte Supports (gemessen: vier Supports mit gleichem
+Startpunkt, verschiedenen Endpunkten und derselben Quelle) erzeugen mehrere
+identische Marker in einem Absatz. Sie zusammenzufassen verwürfe Auflösung, und
+für einen maschinellen Leser ist Rauschen billiger als eine fehlende Markierung.
+
+Zusammengefasst wird, was an **derselben** Position steht. Dedupliziert wird
+deshalb pro Byte-Offset und nicht pro Support: Zwei Supports, die auf demselben
+Byte enden, haben keine Auflösung zu verlieren, und getrennt gehalten schrieben
+sie dieselbe Nummer zweimal (`[1][1]`).
 
 ### Hinweis bei nicht regulär beendeter Antwort
 
@@ -894,3 +917,11 @@ function getSavedThinkingLevel() {
 ```
 
 Tatsächlich implementiert (inkl. `setSavedConfig`) in `config.js` - siehe „Implementierung" oben.
+
+`readConfig()` fällt bei **jeder** unlesbaren Datei auf die Standardwerte zurück, schweigt aber nur über die fehlende.
+Vor dem ersten gespeicherten Wert gibt es keine Datei, und die Standardwerte sind dann genau das Gewollte.
+Alles andere - kaputtes JSON nach einem abgebrochenen Schreibvorgang, fehlende Leserechte - macht eine gespeicherte Einstellung wirkungslos, und ohne ein Wort liefe der Server einfach mit den Standardwerten weiter, während die Einstellung stillschweigend verschwunden wäre.
+Ein solcher Fall erzeugt deshalb eine Warnung, die den Pfad und die Originalmeldung nennt.
+
+Sie geht nach **stderr**, nie nach stdout: Der MCP-Server spricht über stdout JSON-RPC, wo eine einzelne verirrte Zeile die Verbindung zum Client zerstört.
+Ein Flag auf Modulebene begrenzt sie auf ein Vorkommen, denn `readConfig()` läuft pro Aufruf zweimal - einmal für das Modell, einmal für das Thinking-Level.

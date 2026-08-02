@@ -52,6 +52,29 @@ Ohne diese Prüfung wäre aus `… what does --thinking high mean …` die Anfra
 Unbekannte Optionen (`--al` statt `--all`) und überzählige Argumente sind ebenfalls Fehler mit Exit-Code 1.
 Nichts davon wird stillschweigend übergangen.
 
+## Wo eine Option gilt
+
+Dieselbe Option bedeutet je nach Befehl etwas anderes, deshalb nimmt jeder Befehl nur die an, die bei ihm etwas bewirken.
+Eine Option ohne Bedeutung für den gewählten Befehl bricht mit Exit-Code 1 ab - sie wird nie entgegengenommen und dann klammheimlich verworfen.
+
+| Aufruf | Wirkung |
+| --- | --- |
+| `"<anfrage>" --model <id> --thinking <level>` | Gilt nur für diesen Aufruf, nichts wird gespeichert |
+| `set-model <id> --thinking <level>` | Speichert **beides** |
+| `set-thinking <level> --model <id>` | Speichert **beides** |
+| `set-model <id> --model <id2>` | Fehler - zwei Modelle, und welches gemeint ist, wissen nur Sie |
+| `models --all` | Listet alle Modelle, auch die unbrauchbaren |
+| `config`, `help`, `models` mit `--model` / `--thinking` | Fehler |
+
+Die Bestätigungszeile nennt jeden Wert, der tatsächlich geschrieben wurde:
+
+```console
+$ gemini-grounding set-model gemini-flash-latest --thinking low
+Saved - Model: gemini-flash-latest, Thinking level: low
+```
+
+Was dort nicht steht, ist auch nicht in der Datei gelandet.
+
 ## Fehler bleiben vollständig sichtbar
 
 Anders als der MCP-Server gibt die CLI den vollständigen Stacktrace samt Original-Fehlermeldung der Google-API aus und endet mit Exit-Code 1.

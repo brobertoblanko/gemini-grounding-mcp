@@ -47,7 +47,7 @@
   },
   "scripts": {
     "start": "node index.js",
-    "test": "node --test"
+    "test": "node --test \"test/*.test.js\""
   },
   "engines": {
     "node": ">=22"

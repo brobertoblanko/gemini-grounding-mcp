@@ -115,6 +115,23 @@ test("fasst mehrere Quellen als [1][3] zusammen und dedupliziert dabei", () => {
   assert.equal(result.text, "Eine Aussage.[1][3]");
 });
 
+test("fasst zwei Supports auf derselben Position zu einem Marker zusammen", () => {
+  // Die API darf denselben Satz mehrfach stuetzen - zwei Supports enden dann
+  // auf derselben Byte-Position. Dedupliziert wird pro Position und nicht pro
+  // Support, sonst stuende hier [1][1][2].
+  const result = insertCitations({
+    text: "Eine Aussage.",
+    supports: [support(0, 13, "Eine Aussage.", [0]), support(0, 13, "Eine Aussage.", [1, 0])],
+    chunkNumbers: new Map([
+      [0, 1],
+      [1, 2],
+    ]),
+  });
+
+  assert.equal(result.text, "Eine Aussage.[1][2]");
+  assert.equal(result.dropped, 0);
+});
+
 test("erzeugt keinen Marker fuer einen Chunk ohne Nummer", () => {
   // Ein Chunk ohne uri schafft es nicht in die Quellenliste. Er darf keinen
   // Marker erzeugen und zaehlt auch nicht als verworfen - es gab nichts.

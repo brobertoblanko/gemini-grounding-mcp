@@ -45,10 +45,34 @@ const FALLBACK_THINKING_LEVEL = "medium";
  */
 export const THINKING_LEVELS = ["minimal", "low", "medium", "high"];
 
+// readConfig() laeuft pro Aufruf zweimal - einmal aus getSavedModel(), einmal
+// aus getSavedThinkingLevel(). Ohne dieses Flag stuende dieselbe Warnung
+// doppelt da und saehe nach zwei Fehlern aus.
+let warned = false;
+
 function readConfig() {
   try {
     return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
-  } catch {
+  } catch (error) {
+    // Die fehlende Datei ist der Normalfall und kein Fehler: Vor dem ersten
+    // gespeicherten Wert existiert sie nicht, und die Defaults sind dann genau
+    // das Gewollte.
+    //
+    // Alles andere - kaputtes JSON nach einem abgebrochenen Schreibvorgang,
+    // fehlende Leserechte - macht eine gespeicherte Einstellung wirkungslos.
+    // Ohne Hinweis liefe der Server einfach mit den Defaults weiter, und die
+    // Einstellung waere verschwunden, ohne dass es jemandem auffiele.
+    //
+    // console.error und nicht console.log: Ueber stdout laeuft beim
+    // MCP-Server das JSON-RPC-Protokoll: eine Zeile dort zerstoert die
+    // Verbindung zum Client. stderr landet im Log des Clients und auf der
+    // Kommandozeile direkt vor dem Nutzer.
+    if (error.code !== "ENOENT" && !warned) {
+      warned = true;
+      console.error(
+        `Warning: ${CONFIG_PATH} could not be read (${error.message}) - using defaults.`,
+      );
+    }
     return {};
   }
 }

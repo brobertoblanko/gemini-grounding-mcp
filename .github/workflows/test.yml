@@ -36,7 +36,11 @@ jobs:
       # pins and fails if the lockfile and package.json disagree.
       - run: npm ci
 
-      # No API key is set here on purpose. The tests cover the pure functions -
-      # citation placement and footer formatting - which never touch the
-      # network, so a run that suddenly needed a key would be a regression.
+      # No API key is set here on purpose. The pure functions - citation
+      # placement and footer formatting - never touch the network, and the
+      # cases that spawn the CLI as a subprocess stop at an argument error
+      # before any request goes out. test/helpers.js additionally overrides
+      # the key with a placeholder, so none of them could reach the API even
+      # if that ever changed. A run that suddenly needed a key would be a
+      # regression.
       - run: npm test

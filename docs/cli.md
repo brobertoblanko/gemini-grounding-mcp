@@ -52,6 +52,29 @@ Without that check, `… what does --thinking high mean …` would have run as `
 Unknown options (`--al` instead of `--all`) and surplus arguments are errors with exit code 1 as well.
 None of it is silently ignored.
 
+## Where an option applies
+
+The same option means different things depending on the command, so each command accepts only the ones that do something there.
+An option that has no meaning for the given command aborts with exit code 1 - it is never accepted and then quietly dropped.
+
+| Call | Effect |
+| --- | --- |
+| `"<query>" --model <id> --thinking <level>` | Used for this call only, nothing is saved |
+| `set-model <id> --thinking <level>` | Saves **both** |
+| `set-thinking <level> --model <id>` | Saves **both** |
+| `set-model <id> --model <id2>` | Error - two models, and only you know which one is meant |
+| `models --all` | Lists every model, including the unusable ones |
+| `config`, `help`, `models` with `--model` / `--thinking` | Error |
+
+The confirmation line names every value that was actually written:
+
+```console
+$ gemini-grounding set-model gemini-flash-latest --thinking low
+Saved - Model: gemini-flash-latest, Thinking level: low
+```
+
+Whatever is not listed there did not end up in the file.
+
 ## Errors stay fully visible
 
 Unlike the MCP server, the CLI prints the full stack trace including the original Google API error and exits with code 1.

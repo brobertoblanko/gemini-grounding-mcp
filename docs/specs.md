@@ -93,6 +93,22 @@ Implemented as flat modules without a `src/` layout and without a build step
   --al` would otherwise have silently shown the filtered list that one takes
   for the complete one. Every subcommand rejects surplus arguments.
 
+  A **known** option in the wrong place is rejected the same way. Options are
+  cut from the argument list before the subcommand is known, so without a check
+  no branch would notice them: `config --thinking low` used to accept the
+  option and do nothing with it. Each branch therefore names the options that
+  mean something to it (`allowFlags`, an allowlist so that a future option is
+  not accidentally permitted everywhere), and for `models` that check runs
+  before the API call, so a typo costs no request.
+
+  The two `set-*` commands persist the respective **other** option: `set-model
+  <id> --thinking <level>` saves both in one call, and `set-thinking <level>
+  --model <id>` does the mirror image. Whoever asks for something to be stored
+  does not want half the statement to expire. The command's own option stays an
+  error - `set-model x --model y` names two models, and which one is meant only
+  the caller knows. The confirmation line names every value that was written,
+  so a stored value is never indistinguishable from a discarded one.
+
 ## Verified API facts (as of 07/2026)
 
 These values were checked against the current Gemini API and `@google/genai` SDK documentation before implementation, so that the codebase does not build on stale training data.
@@ -351,9 +367,12 @@ Whether and when that happens is an open question - so far only the favourable c
 Protobuf omits default values: `startIndex` and `partIndex` are absent from the JSON when they are 0 - both need `?? 0`.
 `confidenceScores` and `renderedParts` were evaluated as quality filters and rejected: on Gemini 3.x they are empty in practice (0 of 28 populated).
 
-Redundant markers are deliberately **not** merged.
+Redundant markers at **different** positions are deliberately not merged.
 Nested supports (measured: four supports with the same start, different ends and the same source) produce several identical markers in one paragraph.
-Merging would throw away resolution, and for a machine reader noise is cheaper than a missing mark.
+Merging those would throw away resolution, and for a machine reader noise is cheaper than a missing mark.
+
+What is merged is what sits at the **same** position.
+Deduplication happens per byte offset rather than per support: two supports ending on the same byte have no resolution to lose, and kept apart they would write the same number twice (`[1][1]`).
 
 ### Notice for a response that did not finish normally
 
@@ -717,3 +736,11 @@ function getSavedThinkingLevel() {
 ```
 
 Actually implemented (including `setSavedConfig`) in `config.js` - see "Implementation" above.
+
+`readConfig()` falls back to the defaults for **any** unreadable file, but it only stays silent about the missing one.
+Before the first stored value there is no file, and the defaults are exactly what is wanted then.
+Everything else - broken JSON after an interrupted write, missing read permissions - renders a stored setting ineffective, and without a word the server would simply keep running on the defaults while the setting had silently vanished.
+Such a case therefore produces one warning naming the path and the original message.
+
+It goes to **stderr**, never to stdout: the MCP server speaks JSON-RPC over stdout, where a single stray line breaks the connection to the client.
+A module-level flag limits it to one occurrence, because `readConfig()` runs twice per call - once for the model, once for the thinking level.
