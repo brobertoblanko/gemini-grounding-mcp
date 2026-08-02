@@ -5,18 +5,45 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
 Give Claude Code and other MCP clients current Google Search results through the
-Gemini API - with inline citation markers, a source list, and the exact cost of
-every single call.
+Gemini API - with inline citation markers and a numbered source list under every
+answer.
 
 Use it when an assistant needs web-grounded research instead of relying on
-training data alone. It uses nothing but the official `@google/genai` and
-`@modelcontextprotocol/sdk` packages: no community wrapper, no version silently
-changing under you.
+training data alone. It builds on nothing but the official `@google/genai` and
+`@modelcontextprotocol/sdk` packages, pinned to exact versions.
 
 > **Scope of use:** research queries only. Not intended for production workloads
 > or for connecting to sensitive systems.
 
+## What it offers
+
+- **Citations you can check.** Markers such as `[1]` sit in the answer text,
+  numbered to match the source list below it. A marker can be missing, but it is
+  never placed where the API does not support it - so an unmarked sentence is a
+  reason to look closer.
+- **The queries Gemini actually ran.** The footer lists what was typed into
+  Google, which answers what no source list can: whether the search covered your
+  question at all.
+- **Token usage for every call**, split into input, output and thinking tokens.
+  What they cost is on Google's
+  [pricing page](https://ai.google.dev/gemini-api/docs/pricing).
+- **Model and thinking level are yours to set.** Both persist, both can be
+  overridden for a single request, and both are read at call time, so a change
+  applies to the next answer rather than after a client restart. The thinking
+  level is the main lever on how many tokens a query consumes.
+- **Failures stay visible.** An answer cut off at the token limit or stopped by a
+  filter is marked as such, dropped citation markers are counted, and a failing
+  model returns an error instead of a quiet switch to a different one.
+- **Search, URL Context and Code Execution in one call.** Gemini can read a page
+  you name and run code; if it did, the code and its output are part of the
+  answer. The only instruction the server adds is today's date - what gets
+  researched follows from your question.
+- **A command line tool on the same core.** Verify your API key and model choice
+  before registering the server, and read the full error text when a call fails.
+
 ## What an answer looks like
+
+**Question:** `"Which Node.js version is currently LTS?"`
 
 ```text
 The current Node.js release versions are as follows [1]:
@@ -32,36 +59,13 @@ Sources:
 🔎 Searched: Node js latest LTS version
 ```
 
-Five things are visible here that a plain search result does not give you:
-which sentences are actually backed by a source, where those sources are, what
-the call cost, which model produced it, and what the model actually typed into
-Google.
-
-## What makes it different
-
-- **You choose the model and the thinking level.** Both are saved, both can be
-  overridden for a single call, and both are resolved at call time - a change
-  takes effect on the next request, not after a client restart.
-- **Every claim carries a marker, or visibly does not.** The point is less
-  *which* source backs a sentence than *whether* one does at all.
-- **You see what it actually searched for.** The footer lists the queries sent
-  to Google, which answers something no source list can: whether the search
-  covered your question in the first place.
-- **You see what each call cost**, split into input, output and thinking tokens,
-  instead of finding out at the end of the month.
-- **Truncated or blocked answers say so.** Without that check, an answer cut off
-  at the token limit looks like a success, because the source list and footer
-  are still printed underneath it.
-- **No silent fallback.** If a model fails, you get the error - not a quiet
-  switch to a different model that changes the answer's quality unnoticed.
-- **Three Gemini tools in one call:** Google Search, URL Context for reading a
-  page you name, and Code Execution. If code ran, the code and its result appear
-  in the answer rather than just the number it produced.
-- **One search tool, not five.** Variants that merely append fixed words to your
-  query ("documentation", "reddit") are three more entries in the context window
-  and one more thing to pick wrong, for a model that writes its own query anyway.
-
 ## Quick start
+
+Nothing to install up front: the client starts the server through `npx`, which
+fetches the package on first use and caches it - only that first call takes a
+few seconds longer. A permanent install is optional and mainly of interest for
+the [command line tool](#command-line-tool) (see
+[Installing globally](#installing-globally)).
 
 ### 1. Set your API key
 
@@ -84,8 +88,6 @@ export GEMINI_API_KEY='<your-api-key>'
 ```
 
 ### 2. Register the server
-
-Nothing to install up front: `npx` fetches the package on demand.
 
 **Windows (PowerShell):**
 
@@ -113,23 +115,25 @@ way only the placeholder ends up in `~/.claude.json`, not the key in plain text.
 claude mcp list
 ```
 
-Then start a new conversation and ask something that cannot be answered from
-training data alone:
-
-- `"Which Node.js version is currently LTS?"`
-- `"What changed in the Gemini API in the last few months?"`
-- `"Read https://nodejs.org/en/about/previous-releases and tell me when Node 24 goes end-of-life"`
-
-A working answer ends in a source list, citation markers such as `[1]` inside
-the text, and the footer shown above. If the footer is missing, you are reading
-the model's own memory rather than a grounded answer.
+Then start a new conversation and ask `"Which Node.js version is currently
+LTS?"`. The reply should look like the
+[example above](#what-an-answer-looks-like): citation markers in the text, a
+source list, and the footer. The server appends that footer to every answer it
+produces, so if there is none, the tool was not called at all and you are
+reading the model's own memory.
 
 <details>
 <summary>If no answer arrives at all</summary>
 
-Run the same query through the [command line tool](#command-line-tool). It
-prints the full error including the original Google API message, which the MCP
-server has to condense into a single line for the client. An
+Run the same query through the [command line tool](#command-line-tool), which
+needs no installation of its own:
+
+```bash
+npx -p @brobertoblanko/gemini-grounding-mcp gemini-grounding "your query"
+```
+
+It prints the full error including the original Google API message, which the
+MCP server has to condense into a single line for the client. An
 `ApiError: {"error":{"code":503, ...}}` means the request did not get through to
 Google, which is a different problem from a broken installation.
 
@@ -151,13 +155,15 @@ grounding may be charged separately depending on model and plan. The official
 [pricing](https://ai.google.dev/gemini-api/docs/pricing) and
 [rate limit](https://ai.google.dev/gemini-api/docs/rate-limits) pages are
 authoritative - both change regularly, which is why no concrete figures appear
-here. The token footer under every answer makes the cost of each individual call
-visible.
+here. The token footer under every answer makes the consumption of each
+individual call visible.
 
 ## Tools
 
 - **`gemini-search`** - research via Google Search, URL Context and Code
-  Execution in one call. The answer contains inline citation markers, a source
+  Execution in one call. Besides the query it accepts an optional `model` and
+  `thinkingLevel` that apply to this one call; left out, the saved defaults are
+  used. The answer contains inline citation markers, a source
   list and a token footer. If Gemini executed code, the code and its result
   appear under `Code execution:` after the answer text - the calculation is
   evidence, so it belongs where the sources are. If the answer did not finish
@@ -168,19 +174,14 @@ visible.
 - **`gemini-set-model`** - persists the default model and/or default thinking
   level (only those two values, never the API key).
 
-## How the answer is built
+## Citations and searches
 
 ### Citation markers
 
-Markers such as `[1]` or `[1][3]` sit in the answer text at the positions for
-which the API reports a source, using the same numbering as the source list at
-the end.
-
-The guarantee runs one way only: a marker that is present is reliable, a marker
-that is missing is an indication, not proof. A sentence without a marker may
-well come from the model's own memory rather than from the search - and that is
-precisely the kind of sentence you would not want to write code against
-unchecked.
+Markers appear in groups such as `[1][3]` when several sources support the same
+passage. A sentence carrying none may well come from the model's own memory
+rather than from the search - precisely the kind of sentence you would not want
+to write code against unchecked.
 
 <details>
 <summary>How the verification works, and why markers get dropped</summary>
@@ -204,27 +205,18 @@ Full details in [specs.md](https://github.com/brobertoblanko/gemini-grounding-mc
 
 ### Which searches were actually run
 
-The last line of the footer lists the queries Gemini sent to Google:
-
-```text
-🔎 Searched: nodejs current lts version 2026 · nodejs release schedule
-```
-
-This answers a question neither the source list nor the markers can: whether the
-search covered your question at all.
+Very broad questions produce a lot of searches, so the footer's last line is
+capped at roughly 300 characters and ends with `(+n more)` when there were more.
+If the line is missing entirely, no search was run.
 
 <details>
 <summary>The case that made this necessary</summary>
 
-Asked to compare six web frameworks by version *and* bundle size, Gemini
+Asked to compare six web frameworks by version _and_ bundle size, Gemini
 searched six times for `<framework> current version` and once for bundle sizes.
 Rendering strategy and learning curve were answered from its own knowledge.
 Nothing in the answer itself gave that away - the source list was long and every
 sentence looked equally well supported.
-
-Very broad questions produce a lot of searches, so the line is capped at roughly
-300 characters and ends with `(+n more)` when there were more. If the line is
-missing entirely, no search was run.
 
 </details>
 
@@ -234,14 +226,26 @@ The server can also be driven without an MCP client - useful for checking that
 your API key and model choice work before registering it, and for testing a
 change during development without restarting the client.
 
-| Command | Effect |
-| --- | --- |
-| `gemini-grounding "<query>"` | Search using the saved defaults; prints the answer including source list and token footer |
-| `gemini-grounding config` | Shows the saved model, thinking level, whether an API key is present, and where the config file lives |
-| `gemini-grounding models [--all]` | Lists the models usable with this server and their token limits; `--all` lists every one |
-| `gemini-grounding set-model <id>` | Persists the default model |
-| `gemini-grounding set-thinking <level>` | Persists the default thinking level (`minimal`, `low`, `medium`, `high`) |
-| `gemini-grounding help` | Short help |
+The short command `gemini-grounding` exists once the package is
+[installed globally](#installing-globally). If you registered the server through
+`npx`, nothing was installed and the same commands run like this instead:
+
+```bash
+npx -p @brobertoblanko/gemini-grounding-mcp gemini-grounding config
+```
+
+`-p` names the package, the argument after it the command. Without it,
+`npx @brobertoblanko/gemini-grounding-mcp` starts the MCP server rather than the
+CLI - it then waits silently on stdio, which looks like a hang.
+
+| Command                                 | Effect                                                                                                |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `gemini-grounding "<query>"`            | Search using the saved defaults; prints the answer including source list and token footer             |
+| `gemini-grounding config`               | Shows the saved model, thinking level, whether an API key is present, and where the config file lives |
+| `gemini-grounding models [--all]`       | Lists the models usable with this server and their token limits; `--all` lists every one              |
+| `gemini-grounding set-model <id>`       | Persists the default model                                                                            |
+| `gemini-grounding set-thinking <level>` | Persists the default thinking level (`minimal`, `low`, `medium`, `high`)                              |
+| `gemini-grounding help`                 | Short help                                                                                            |
 
 **Per-call overrides.** For a single call, model and thinking level can be set
 differently without touching the saved defaults:
@@ -286,8 +290,7 @@ variable expansion will send the placeholder to the API verbatim and the request
 will fail. If yours does not expand variables, consult its documentation for how
 it handles secrets rather than pasting the key here.
 
-<details>
-<summary>Installing globally or running from a clone</summary>
+## Installing globally
 
 To install the package permanently instead of fetching it via `npx`:
 
@@ -295,10 +298,55 @@ To install the package permanently instead of fetching it via `npx`:
 npm install -g @brobertoblanko/gemini-grounding-mcp
 ```
 
-This provides two commands: `gemini-grounding-mcp` starts the MCP server over
-stdio, and `gemini-grounding` is the command line tool. Replace
-`npx -y @brobertoblanko/gemini-grounding-mcp` with `gemini-grounding-mcp` in the
-registration command above.
+This puts two commands on your `PATH`: `gemini-grounding-mcp` starts the MCP
+server over stdio, and `gemini-grounding` is the
+[command line tool](#command-line-tool).
+
+The trade-off is the usual one: the version stays put until you run
+`npm update -g`, which is an advantage when you want a known state and a chore
+otherwise.
+
+Registration then names that command directly, without `npx`.
+
+<details>
+<summary>Registering the installed command</summary>
+
+**Windows (PowerShell):**
+
+```powershell
+claude mcp add gemini-grounding -s user `
+  -e 'GEMINI_API_KEY=${GEMINI_API_KEY}' `
+  -- gemini-grounding-mcp
+```
+
+**macOS / Linux (bash / zsh):**
+
+```bash
+claude mcp add gemini-grounding -s user \
+  -e 'GEMINI_API_KEY=${GEMINI_API_KEY}' \
+  -- gemini-grounding-mcp
+```
+
+For another client, `command` becomes the installed command and `args` can be
+dropped:
+
+```json
+{
+  "mcpServers": {
+    "gemini-grounding": {
+      "command": "gemini-grounding-mcp",
+      "env": {
+        "GEMINI_API_KEY": "${GEMINI_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>Running from a clone</summary>
 
 To work from the source:
 
@@ -313,6 +361,18 @@ concrete absolute path that resolves on the machine in question.
 
 </details>
 
+## Removing it
+
+```bash
+claude mcp remove gemini-grounding
+```
+
+That unregisters the server; with `npx` nothing else was installed. A global
+install is removed with
+`npm uninstall -g @brobertoblanko/gemini-grounding-mcp`. If you ever saved a
+default, its file stays behind - see
+[Where settings are stored](#where-settings-are-stored).
+
 ## Data and privacy
 
 Search queries, and anything included in a request, are sent to the Gemini API
@@ -322,15 +382,15 @@ This server adds no anonymization and no enterprise data isolation. Do not use
 it with confidential, personal or regulated data unless you have verified that
 the service terms and your configuration are appropriate for it.
 
-## Configuration
+## Where settings are stored
 
 `gemini-set-model` and the CLI's `set-*` commands write the default model and
 thinking level to:
 
-| Platform | Location |
-| --- | --- |
-| Linux, macOS | `~/.config/gemini-grounding-mcp/config.json` |
-| Windows | `%APPDATA%\gemini-grounding-mcp\config.json` |
+| Platform                         | Location                                            |
+| -------------------------------- | --------------------------------------------------- |
+| Linux, macOS                     | `~/.config/gemini-grounding-mcp/config.json`        |
+| Windows                          | `%APPDATA%\gemini-grounding-mcp\config.json`        |
 | Any, if `XDG_CONFIG_HOME` is set | `$XDG_CONFIG_HOME/gemini-grounding-mcp/config.json` |
 
 Neither the file nor its directory is created until you save a setting for the
@@ -342,34 +402,19 @@ path on your machine.
 ## Which models are usable
 
 Your API key exposes considerably more models than will work here. The model
-list therefore shows, by default, only those that produce text
-(`generateContent`) and accept a thinking level (`thinking: true`) - both taken
-from what the API reports about each model, not from its name.
+list therefore shows, by default, only those that produce text and accept a
+thinking level - judged by what the API reports about each model, not by its
+name.
 
-Two limitations are worth knowing:
+Two limits to that filter are worth knowing: it separates what runs technically
+from what does not, not what is sensible for research, and **listed does not
+mean available** - a retired model stays in the list and answers with
+`404 ... is no longer available`. That is why `--all` / `all: true` hides
+nothing but shows the complete list with a status column instead.
 
-- The conditions say what runs **technically**, not what is sensible for
-  research. Some image, speech and robotics models meet them too.
-- **Listed does not mean available.** Retired models stay in the list and answer
-  with `404 ... is no longer available`. No field announces this in advance.
-
-This is why `--all` / `all: true` hides nothing, but shows the complete list with
-a status column instead.
-
-<details>
-<summary>Why the filter uses capabilities instead of name patterns</summary>
-
-Filtering by name would be unreliable: Google assigns code names that say
-nothing about capabilities - `nano-banana-pro-preview` is an image model.
-
-The two conditions are checked because both are load-bearing. Without
-`generateContent` in `supportedActions`, embedding, image (Imagen), video (Veo)
-and live/audio models would appear in a list of models meant for research.
-Without `thinking: true`, the API answers every search with
-`400 Thinking level is not supported for this model.`, because this server sends
-a thinking level on every call.
-
-</details>
+Why the filter goes by capabilities rather than name patterns, and what each
+condition prevents:
+[specs.md](https://github.com/brobertoblanko/gemini-grounding-mcp/blob/main/docs/specs.md#gemini-list-models).
 
 ## Documentation
 

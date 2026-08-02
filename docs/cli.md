@@ -16,6 +16,27 @@ Three situations where the CLI is the shorter path:
 - **While developing.** A change can be tried out immediately, without restarting the MCP client that would otherwise hold the old code.
 - **When something fails.** The CLI prints the full error including the original message from Google, which the MCP server has to condense into a single line for the client.
 
+## How to run it
+
+The examples on this page use the short form `gemini-grounding`.
+It exists once the package has been installed globally:
+
+```bash
+npm install -g @brobertoblanko/gemini-grounding-mcp
+```
+
+Registering the MCP server through `npx` installs nothing, so the command is not on the `PATH` in that case.
+Every command then works like this instead:
+
+```bash
+npx -p @brobertoblanko/gemini-grounding-mcp gemini-grounding config
+```
+
+The `-p` is what makes the difference: it names the package, and the argument after it names the command inside that package.
+A plain `npx @brobertoblanko/gemini-grounding-mcp` runs the bin whose name matches the package - that is the MCP server, which then waits silently on stdio and looks like it hung.
+
+Working from a clone, use `node cli.js` instead; see [Working from a clone](#working-from-a-clone).
+
 ## Argument handling
 
 Anything that is not a known subcommand is treated as a search query - as **exactly one argument**.

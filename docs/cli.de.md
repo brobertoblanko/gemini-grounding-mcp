@@ -16,6 +16,27 @@ Drei Situationen, in denen die CLI der kürzere Weg ist:
 - **Während der Entwicklung.** Eine Änderung lässt sich sofort ausprobieren, ohne den MCP-Client neu zu starten, der sonst den alten Stand festhält.
 - **Wenn etwas fehlschlägt.** Die CLI gibt den vollständigen Fehler samt Originalmeldung von Google aus, die der MCP-Server für den Client auf eine Zeile verdichten muss.
 
+## Wie der Aufruf erfolgt
+
+Die Beispiele auf dieser Seite verwenden die Kurzform `gemini-grounding`.
+Es gibt sie, sobald das Paket global installiert wurde:
+
+```bash
+npm install -g @brobertoblanko/gemini-grounding-mcp
+```
+
+Wer den MCP-Server über `npx` registriert hat, hat nichts installiert - dann liegt der Befehl nicht im `PATH`.
+Jeder Befehl funktioniert stattdessen so:
+
+```bash
+npx -p @brobertoblanko/gemini-grounding-mcp gemini-grounding config
+```
+
+Auf das `-p` kommt es an: Es benennt das Paket, das Argument dahinter den Befehl innerhalb dieses Pakets.
+Ein bloßes `npx @brobertoblanko/gemini-grounding-mcp` startet dagegen den Eintrag, dessen Name dem Paketnamen entspricht - und das ist der MCP-Server, der danach stumm auf stdio wartet und wie ein hängender Prozess aussieht.
+
+Aus einem Klon heraus wird stattdessen `node cli.js` verwendet, siehe [Aus einem Klon heraus arbeiten](#aus-einem-klon-heraus-arbeiten).
+
 ## Behandlung der Argumente
 
 Alles, was kein bekannter Unterbefehl ist, gilt als Suchanfrage - und zwar als **genau ein Argument**.
