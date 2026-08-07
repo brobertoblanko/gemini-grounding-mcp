@@ -138,7 +138,11 @@ npx -p @brobertoblanko/gemini-grounding-mcp gemini-grounding "your query"
 It prints the full error including the original Google API message, which the
 MCP server has to condense into a single line for the client. An
 `ApiError: {"error":{"code":503, ...}}` means the request did not get through to
-Google, which is a different problem from a broken installation.
+Google, which is a different problem from a broken installation. That one is
+worth simply retrying: 503 is temporary overload on Google's side, and the
+server already repeats such a request up to four times on its own before
+reporting it - which is also why an answer can take some ten seconds longer than
+usual when the service is busy.
 
 </details>
 

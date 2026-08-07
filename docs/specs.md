@@ -744,3 +744,66 @@ Such a case therefore produces one warning naming the path and the original mess
 
 It goes to **stderr**, never to stdout: the MCP server speaks JSON-RPC over stdout, where a single stray line breaks the connection to the client.
 A module-level flag limits it to one occurrence, because `readConfig()` runs twice per call - once for the model, once for the thinking level.
+
+## Transient errors and retries
+
+Two of the errors the API returns are not defects: the request would have succeeded a moment later.
+`429 RESOURCE_EXHAUSTED` is throttling, `503 UNAVAILABLE` is temporary overload on Google's side.
+Only the second one has actually been observed here - three times in a row within a minute, each time with the message "This model is currently experiencing high demand".
+
+### The SDK retries nothing unless told to
+
+`@google/genai` ships a complete retry, but it is inactive by default.
+`apiCall()` in `dist/index.mjs` begins with `if (!retryOptions) { return fetch(url, requestInit); }`, and `retryOptions` is only ever passed through from `clientOptions.httpOptions` - no default is set anywhere.
+A plain `new GoogleGenAI({ apiKey })` therefore never repeats a request.
+
+This is worth stating because the [Gemini troubleshooting guide](https://ai.google.dev/gemini-api/docs/troubleshooting) claims the official client SDKs "include automatic retry logic with exponential backoff by default" and then illustrates it with the Python SDK only.
+For the JavaScript SDK the claim does not hold.
+
+The server therefore configures it explicitly, as the exported constant `RETRY_OPTIONS` in `gemini.js`:
+
+```javascript
+export const RETRY_OPTIONS = {
+  attempts: 4,
+  httpStatusCodes: [408, 500, 502, 503, 504],
+};
+```
+
+### Why 429 is missing from that list
+
+Google's own default is `[408, 429, 500, 502, 503, 504]`.
+Exactly one entry is left out here, and the reason is the one thing about this configuration that is not self-evident.
+
+On a 429 the API supplies the waiting time itself, as a `RetryInfo` entry inside `error.details`:
+
+```json
+{ "@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "53s" }
+```
+
+The SDK does not read it.
+The string `RetryInfo` does not occur anywhere in the bundle; the retryable codes are a flat membership list, so a 429 gets the same blind exponential backoff as any 5xx.
+Against a demanded 53 seconds all four attempts would be spent after roughly 15 - long before the block expires.
+The same behaviour in the Python SDK is tracked as [googleapis/python-genai#1875](https://github.com/googleapis/python-genai/issues/1875).
+
+A 429 is therefore passed straight to the client, unchanged and immediately, instead of padding the response with waiting time that cannot help.
+For `408` and `5xx` no such server-supplied hint exists - there, blind backoff is the only thing available and hence the right thing.
+
+Client errors are excluded for the ordinary reason: a broken request, an invalid key or a withdrawn model fails identically on the second try.
+This matches Google's own guidance to retry only on `408`, `429` and `5xx`, never on `400` or `403`.
+
+### What this costs in waiting time
+
+`attempts` counts the initial call, so four attempts mean three repeats.
+With the SDK defaults - `initialDelay` 1 s, `expBase` 2, jitter between factor 1 and 2 - the delays are roughly 1-2 s, 2-4 s and 4-8 s, adding **7 to 14 seconds** before the error surfaces.
+The 60 s `maxDelay` cap never comes into play at these settings; it would first bind from the sixth repeat onwards.
+
+The observed triple 503 spanned about half a minute, so a retry of this length would not reliably have rescued it.
+The configuration reduces how often a transient error reaches the client; it does not remove the error class.
+
+### Why the retry does not appear in the footer
+
+The repeats happen inside the SDK and leave no trace.
+Neither `ApiError` nor the successful `HttpResponse` carries an attempt count, and `HttpOptions` offers no transport or fetch hook that could observe one - it exposes `baseUrl`, `baseUrlResourceScope`, `apiVersion`, `headers`, `timeout`, `extraBody` and `retryOptions`, nothing else.
+
+Counting them would mean wrapping the global `fetch` and propagating a per-call context through `AsyncLocalStorage`, because several `gemini-search` calls can run in parallel and a global counter would mix them up.
+That was judged out of proportion to a footnote, so the footer reports model, thinking level and token usage as before - and the possible extra seconds are documented here instead.

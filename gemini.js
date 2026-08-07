@@ -1,6 +1,42 @@
 import { GoogleGenAI } from "@google/genai";
 import { insertCitations } from "./citations.js";
 
+/**
+ * Wiederholungen bei voruebergehenden Fehlern. Ohne httpOptions.retryOptions
+ * wiederholt das SDK NICHTS - dist/index.mjs beginnt apiCall() mit
+ * "if (!retryOptions) { return fetch(url, requestInit); }", und einen Default
+ * setzt es nirgends. Die Gemini-Doku behauptet pauschal, die offiziellen SDKs
+ * haetten Retry ab Werk; belegt ist das nur fuers Python-SDK.
+ *
+ * 429 FEHLT ABSICHTLICH in der Liste - das ist der einzige nicht offensichtliche
+ * Teil dieser Konfiguration. Googles Default waere
+ * [408, 429, 500, 502, 503, 504], hier fehlt genau ein Eintrag, und das sieht
+ * ohne diese Begruendung wie ein Tippfehler aus:
+ *
+ * Bei 429 liefert die API die Wartezeit selbst mit, als RetryInfo in
+ * error.details ("retryDelay": "53s"). Das SDK wertet sie nicht aus - die
+ * Zeichenkette "RetryInfo" kommt im gesamten Bundle nicht vor - und rechnet
+ * stattdessen blind exponentiell. Bei den geforderten 53 Sekunden waeren alle
+ * vier Versuche nach rund 15 Sekunden verbraucht, also lange bevor die Sperre
+ * ueberhaupt ablaeuft. Fuer dasselbe Verhalten im Python-SDK laeuft
+ * googleapis/python-genai#1875. Ein 429 kommt deshalb unveraendert und sofort
+ * beim Client an, statt die Antwort um wirkungslose Wartezeit zu verlaengern.
+ *
+ * Bei 5xx und 408 gibt es keine Serverangabe, an der man sich ausrichten
+ * koennte - dort ist blinder Backoff das einzig Moegliche und deshalb richtig.
+ *
+ * attempts zaehlt den Erstversuch mit. Vier Versuche bedeuten drei
+ * Wiederholungen und mit den SDK-Defaults (initialDelay 1s, expBase 2, Jitter)
+ * zwischen 7 und 14 Sekunden zusaetzlicher Wartezeit, bevor der Fehler kommt.
+ *
+ * Als exportierte Konstante, damit test/retry.test.js die Auslassung von 429
+ * pruefen kann, ohne einen Client zu bauen oder SDK-Interna anzunehmen.
+ */
+export const RETRY_OPTIONS = {
+  attempts: 4,
+  httpStatusCodes: [408, 500, 502, 503, 504],
+};
+
 function getClient() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -9,7 +45,7 @@ function getClient() {
         "variable (never hardcoded).",
     );
   }
-  return new GoogleGenAI({ apiKey });
+  return new GoogleGenAI({ apiKey, httpOptions: { retryOptions: RETRY_OPTIONS } });
 }
 
 /**
