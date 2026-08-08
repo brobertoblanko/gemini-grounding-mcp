@@ -8,12 +8,12 @@ import { insertCitations } from "./citations.js";
  * setzt es nirgends. Die Gemini-Doku behauptet pauschal, die offiziellen SDKs
  * haetten Retry ab Werk; belegt ist das nur fuers Python-SDK.
  *
- * 429 FEHLT ABSICHTLICH in der Liste - das ist der einzige nicht offensichtliche
- * Teil dieser Konfiguration. Googles Default waere
- * [408, 429, 500, 502, 503, 504], hier fehlt genau ein Eintrag, und das sieht
- * ohne diese Begruendung wie ein Tippfehler aus:
+ * ZWEI Codes fehlen ABSICHTLICH. Googles Default waere
+ * [408, 429, 500, 502, 503, 504]; hier fehlen 429 und 504, jeder aus einem
+ * eigenen Grund. Ohne diese Begruendung sieht die Liste wie unvollstaendig
+ * abgeschrieben aus:
  *
- * Bei 429 liefert die API die Wartezeit selbst mit, als RetryInfo in
+ * 429: Die API liefert die Wartezeit selbst mit, als RetryInfo in
  * error.details ("retryDelay": "53s"). Das SDK wertet sie nicht aus - die
  * Zeichenkette "RetryInfo" kommt im gesamten Bundle nicht vor - und rechnet
  * stattdessen blind exponentiell. Bei den geforderten 53 Sekunden waeren alle
@@ -22,20 +22,88 @@ import { insertCitations } from "./citations.js";
  * googleapis/python-genai#1875. Ein 429 kommt deshalb unveraendert und sofort
  * beim Client an, statt die Antwort um wirkungslose Wartezeit zu verlaengern.
  *
- * Bei 5xx und 408 gibt es keine Serverangabe, an der man sich ausrichten
- * koennte - dort ist blinder Backoff das einzig Moegliche und deshalb richtig.
+ * 504: Seit dieser Server eine eigene Frist mitschickt (siehe
+ * SERVER_DEADLINE_SECONDS), ist ein 504 im Regelfall genau diese Frist und
+ * nicht Googles ueberlastetes Gateway. Ihn zu wiederholen hiesse, dieselbe
+ * Generierung noch dreimal bis zum Fristende laufen zu lassen - und dreimal zu
+ * bezahlen, denn abgerechnet wird sie trotzdem. Die beiden Faelle sind hier
+ * nicht zu trennen: Die Retry-Entscheidung faellt am Statuscode, lange bevor
+ * irgendwer das DEADLINE_EXCEEDED im Body zu sehen bekaeme. Von den beiden
+ * moeglichen Ursachen ist die teure die wahrscheinlichere, also gibt die Liste
+ * den Code auf.
+ *
+ * Bei 500, 502, 503 und 408 gibt es keine Serverangabe, an der man sich
+ * ausrichten koennte - dort ist blinder Backoff das einzig Moegliche und
+ * deshalb richtig. 408 steht dabei der Vollstaendigkeit halber in der Liste:
+ * Laeuft die Frist ab, antwortet Google mit 504, und laeuft die Anfrage ganz
+ * ins Leere, bricht Node sie ohne jeden HTTP-Status ab (gemessen nach 306,8
+ * Sekunden). Ein echter 408 kaeme nur von einer Zwischenstation.
  *
  * attempts zaehlt den Erstversuch mit. Vier Versuche bedeuten drei
  * Wiederholungen und mit den SDK-Defaults (initialDelay 1s, expBase 2, Jitter)
  * zwischen 7 und 14 Sekunden zusaetzlicher Wartezeit, bevor der Fehler kommt.
  *
- * Als exportierte Konstante, damit test/retry.test.js die Auslassung von 429
- * pruefen kann, ohne einen Client zu bauen oder SDK-Interna anzunehmen.
+ * Als exportierte Konstante, damit test/retry.test.js die Auslassungen pruefen
+ * kann, ohne einen Client zu bauen oder SDK-Interna anzunehmen.
  */
 export const RETRY_OPTIONS = {
   attempts: 4,
-  httpStatusCodes: [408, 500, 502, 503, 504],
+  httpStatusCodes: [408, 500, 502, 503],
 };
+
+/**
+ * Die Frist, die Googles Gateway mitbekommt: Nach dieser Zeit soll es die
+ * Generierung abbrechen, statt weiterzurechnen. Das SDK schickt sie als Header
+ * X-Server-Timeout in ganzen Sekunden.
+ *
+ * Der Wert leitet sich aus dem kuerzesten Glied der Kette ab, und alle drei
+ * Zahlen sind gemessen, nicht geschaetzt:
+ * - Node bricht eine schweigende Verbindung nach 306,8 s ab (Undicis
+ *   headersTimeout von 300 s plus Verbindungsaufbau)
+ * - der MCP-Client von Claude Code wartet 1800 s, also sechsmal laenger
+ * - Google selbst kennt ohne diesen Header ueberhaupt keine Frist
+ *
+ * Node kappt also zuerst. Alles, was Google jenseits dieser Grenze noch
+ * generiert, kann niemand mehr entgegennehmen - bezahlt wird es trotzdem:
+ * Input-Tokens voll, Output-Tokens bis zum tatsaechlichen Ende des Laufs.
+ * Kostenlos sind nur Ablehnungen vor der Ausfuehrung (400, 401, 403, 429).
+ * 290 Sekunden liegen knapp unter Nodes Grenze, damit Google aufhoert, bevor
+ * die Leitung gekappt wird - und der Fehler als 504 mit Begruendung ankommt
+ * statt als blosser Verbindungsabbruch.
+ *
+ * Bewusst NICHT ueber httpOptions.timeout gesetzt, obwohl das SDK denselben
+ * Header daraus baut: Es erzeugte aus dem Wert zusaetzlich einen clientseitigen
+ * AbortController, also eine zweite Uhr, die mit Googles Antwort um die Wette
+ * liefe. Wer dieses Rennen gewinnt, ist Zufall, und gewinnt die eigene Uhr,
+ * kommt "This operation was aborted" an statt der Begruendung.
+ *
+ * Die Standard-Header bleiben unangetastet: patchHttpOptions() mischt beide
+ * Objekte per Object.assign, User-Agent und Content-Type gehen nicht verloren.
+ */
+export const SERVER_DEADLINE_SECONDS = 290;
+
+/**
+ * Uebersetzt einen Fehler in eine Zeile, die auch dann noch etwas aussagt, wenn
+ * er aus dem Netzwerk kommt statt aus der API.
+ *
+ * Ein ApiError traegt den Grund im Klartext (message ist der rohe JSON-Body der
+ * Fehlerantwort) und braucht nichts weiter. Ein Netzwerkfehler dagegen heisst
+ * bei Node IMMER "fetch failed" - abgelehnte Verbindung, unbekannter Host,
+ * Zeitueberschreitung, alles dasselbe Wort. Was tatsaechlich geschah, steht
+ * ausschliesslich in error.cause, und genau die verliert der Client, weil ein
+ * MCP-Tool nur eine Zeile Text zurueckgeben kann.
+ *
+ * Der Code ist optional: Gemessen liefert "bad port" gar keinen, ECONNREFUSED
+ * dagegen schon. Ohne diese Zeile steht bei einer abgebrochenen Verbindung nur
+ * "fetch failed" beim aufrufenden Agenten, und der kann dem Nutzer nichts
+ * erklaeren, was ueber "hat nicht geklappt" hinausgeht.
+ */
+export function describeError(error) {
+  const cause = error?.cause;
+  if (!cause) return error?.message ?? String(error);
+  const code = cause.code ? `${cause.code}: ` : "";
+  return `${error.message} (${code}${cause.message ?? cause})`;
+}
 
 function getClient() {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -45,7 +113,13 @@ function getClient() {
         "variable (never hardcoded).",
     );
   }
-  return new GoogleGenAI({ apiKey, httpOptions: { retryOptions: RETRY_OPTIONS } });
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      retryOptions: RETRY_OPTIONS,
+      headers: { "X-Server-Timeout": String(SERVER_DEADLINE_SECONDS) },
+    },
+  });
 }
 
 /**

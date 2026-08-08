@@ -8,7 +8,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { runSearch, listModels } from "./gemini.js";
+import { runSearch, listModels, describeError } from "./gemini.js";
 import {
   CONFIG_PATH,
   getSavedModel,
@@ -96,7 +96,7 @@ server.registerTool(
       return { content: [{ type: "text", text }] };
     } catch (error) {
       return {
-        content: [{ type: "text", text: `Error in gemini-search: ${error.message}` }],
+        content: [{ type: "text", text: `Error in gemini-search: ${describeError(error)}` }],
         isError: true,
       };
     }
@@ -129,7 +129,7 @@ server.registerTool(
       return { content: [{ type: "text", text }] };
     } catch (error) {
       return {
-        content: [{ type: "text", text: `Error in gemini-list-models: ${error.message}` }],
+        content: [{ type: "text", text: `Error in gemini-list-models: ${describeError(error)}` }],
         isError: true,
       };
     }

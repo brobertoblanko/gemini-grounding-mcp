@@ -765,14 +765,18 @@ The server therefore configures it explicitly, as the exported constant `RETRY_O
 ```javascript
 export const RETRY_OPTIONS = {
   attempts: 4,
-  httpStatusCodes: [408, 500, 502, 503, 504],
+  httpStatusCodes: [408, 500, 502, 503],
 };
 ```
 
-### Why 429 is missing from that list
+Whether that configuration reaches the client is what `test/retry.test.js` checks, and it checks it at the behaviour rather than at the constant: it replaces the global `fetch`, so the number of calls is the number of attempts.
+A 503 followed by a 200 has to produce exactly two of them.
+Asserting that a list contains what it contains would stay true even with the `httpOptions` removed from `getClient()` - the one edit that would silently restore the old behaviour.
+
+### Why 429 and 504 are missing from that list
 
 Google's own default is `[408, 429, 500, 502, 503, 504]`.
-Exactly one entry is left out here, and the reason is the one thing about this configuration that is not self-evident.
+Two entries are left out here, each for its own reason - and they are the only things about this configuration that are not self-evident.
 
 On a 429 the API supplies the waiting time itself, as a `RetryInfo` entry inside `error.details`:
 
@@ -786,7 +790,16 @@ Against a demanded 53 seconds all four attempts would be spent after roughly 15 
 The same behaviour in the Python SDK is tracked as [googleapis/python-genai#1875](https://github.com/googleapis/python-genai/issues/1875).
 
 A 429 is therefore passed straight to the client, unchanged and immediately, instead of padding the response with waiting time that cannot help.
-For `408` and `5xx` no such server-supplied hint exists - there, blind backoff is the only thing available and hence the right thing.
+
+`504` is left out for a different reason, and only since this server sends a deadline of its own (see below).
+A gateway timeout is then no longer predominantly Google's overload - it is that deadline expiring.
+Retrying it would mean running the same generation to the deadline three more times and paying for each, because an aborted generation is billed all the same.
+The two causes cannot be told apart here: the retry decision is made on the status code, long before anyone gets to see the `DEADLINE_EXCEEDED` in the body.
+Of the two possible causes the expensive one is the more likely, so the list gives up the code.
+
+For `500`, `502`, `503` and `408` no server-supplied hint exists - there, blind backoff is the only thing available and hence the right thing.
+`408` is in the list for completeness: an expired deadline comes back as `504`, and a request that runs into nothing is aborted by Node without any HTTP status at all.
+A genuine 408 would have to come from an intermediary.
 
 Client errors are excluded for the ordinary reason: a broken request, an invalid key or a withdrawn model fails identically on the second try.
 This matches Google's own guidance to retry only on `408`, `429` and `5xx`, never on `400` or `403`.
@@ -799,6 +812,65 @@ The 60 s `maxDelay` cap never comes into play at these settings; it would first 
 
 The observed triple 503 spanned about half a minute, so a retry of this length would not reliably have rescued it.
 The configuration reduces how often a transient error reaches the client; it does not remove the error class.
+
+### The deadline this server does send
+
+Three limits apply to a request, and only one of them decides. All three are measured, not estimated:
+
+| Limit | Value | Effect |
+| --- | --- | --- |
+| Node (`headersTimeout`) | **306.8 s** measured | Severs the connection - **cuts in first** |
+| MCP client (Claude Code 2.1.224) | **1800 s** measured | Six times more patient, never reached |
+| Google without a deadline | none | Generates to the end regardless |
+
+Node cuts first, so everything Google produces beyond that point can no longer be received by anyone.
+Billed it is all the same: input tokens in full once processing starts, output tokens up to the actual end of the run.
+Only rejections before execution (`400`, `401`, `403`, `429`) are free.
+
+`gemini.js` therefore tells the gateway a deadline of its own, as an ordinary header:
+
+```javascript
+export const SERVER_DEADLINE_SECONDS = 290;
+```
+
+290 s sits just below Node's limit, so Google stops before the line is cut - and the failure arrives as a `504` with a reason instead of a bare connection abort.
+Google honours the header as an execution deadline and does abort the generation server-side; the value goes out in whole seconds.
+
+**Deliberately not via `httpOptions.timeout`**, even though the SDK builds the same header from it.
+That option produces a client-side `AbortController` from the same value - a second clock, racing Google's answer.
+Which one wins is chance, and when the local one wins, what surfaces is `This operation was aborted` instead of the reason.
+A header alone has no second moving part.
+
+The measured timer, incidentally, does not meter what its name suggests: `headersTimeout` is the wait for the response headers, not the total duration.
+Since `generateContent` does not stream, both amount to the same thing here - Google answers in one piece once generation is done.
+
+Setting `httpOptions.headers` does not replace the SDK's own headers: `patchHttpOptions()` merges both objects with `Object.assign`, so `User-Agent` and `Content-Type` survive.
+`test/retry.test.js` asserts that in the same case as the deadline itself - if the merge were a replacement, the requests would fail at the server and no test would have noticed.
+A hang is therefore accepted rather than paid for with three moving parts. What was kept from the attempt is the error message - see below.
+
+### What reaches the client when a request fails
+
+An MCP tool can return a single line of text. Which line that is decides whether the calling agent can explain anything to the user.
+
+For an `ApiError` this is unproblematic: its `message` carries the raw JSON body of the error response and thus code, status and Google's own wording.
+A network error is the opposite case. In Node every one of them is called `fetch failed` - refused connection, unknown host, timeout, all the same two words - and what actually happened lives solely in `error.cause`, which a single line would drop.
+
+`describeError()` in `gemini.js` therefore appends the cause, with its code where one exists (measured: `bad port` supplies none, `ECONNREFUSED` does):
+
+```text
+Error in gemini-search: fetch failed (UND_ERR_HEADERS_TIMEOUT: Headers Timeout Error)
+```
+
+That example is the measured one, not an invented illustration: it is exactly what the 306.8 s abort above produces.
+
+`test/errors.test.js` checks this against a **real** `fetch` error rather than a hand-built one - the shape of `error.cause` is an assumption about the runtime and is best verified against it.
+
+Such an error is **not** retried, which is worth stating because the opposite is the natural assumption - measured, it surfaces in well under a second.
+p-retry 4.6.2 stops on any `TypeError` whose message is not one of four hardcoded browser wordings (`Failed to fetch`, `NetworkError when attempting to fetch resource.`, `The Internet connection appears to be offline.`, `Network request failed`).
+Node throws `TypeError: fetch failed`, which is not among them.
+
+The retry configured above therefore covers the API's status codes only.
+A DNS hiccup or a reset connection reaches the client immediately and unrepeated - which makes the message that reaches it the only thing it has to go on.
 
 ### Why the retry does not appear in the footer
 
