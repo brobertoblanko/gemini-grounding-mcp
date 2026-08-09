@@ -62,18 +62,77 @@ An option that has no meaning for the given command aborts with exit code 1 - it
 | `"<query>" --model <id> --thinking <level>` | Used for this call only, nothing is saved |
 | `set-model <id> --thinking <level>` | Saves **both** |
 | `set-thinking <level> --model <id>` | Saves **both** |
+| `set-backup <id> --thinking <level>` | Saves the backup model **and** its own thinking level |
+| `set-backup <id>` | Saves the backup model and **removes** a previously saved backup level |
+| `set-backup --thinking <level>` | Changes only the level of the backup already saved |
+| `set-backup off --thinking <level>` | Error - a disabled backup has no thinking level |
 | `set-model <id> --model <id2>` | Error - two models, and only you know which one is meant |
 | `models --all` | Lists every model, including the unusable ones |
 | `config`, `help`, `models` with `--model` / `--thinking` | Error |
 
-The confirmation line names every value that was actually written:
+Every save answers twice - what changed, and what applies from now on:
 
 ```console
 $ gemini-grounding set-model gemini-flash-latest --thinking low
 Saved - Model: gemini-flash-latest, Thinking level: low
+
+Primary: gemini-flash-latest · low
+Backup:  gemini-3.5-flash · low (inherited)
 ```
 
-Whatever is not listed there did not end up in the file.
+The first line names every value that was actually written; whatever is not listed there did not end up in the file.
+The two below name the complete stored state, so a change never has to be followed by `config` to see what the next query will actually run with.
+
+On the backup, the level is shown as the value rather than the bare word "inherited": what the backup would run with if it stepped in right now is the answer you are after.
+The suffix says the value is not its own but travels along - hand a call its own `--thinking`, and the backup inherits that one instead.
+
+## The backup model
+
+`set-backup <id>` names a model that the same request is sent to when the default model fails, for instance because it is overloaded (`503`).
+Off unless you set it; `set-backup off` switches it off again.
+Which errors trigger it: [google_errors.md](./google_errors.md).
+
+Unlike the default model and its level, the backup is written **as a unit**.
+Naming a backup model without `--thinking` removes a previously saved backup level, and the backup inherits the level of the call it stands in for.
+The level belongs to that one model - left lying around across a change of backup, it would silently apply to a model it was never chosen for.
+The rule lives in `setSavedConfig` rather than in the CLI, so `gemini-set-model` on the MCP server follows it too.
+
+To change only the level, leave the model out:
+
+```console
+$ gemini-grounding set-backup --thinking minimal
+Saved - Backup thinking level: minimal
+
+Primary: gemini-flash-latest · low
+Backup:  gemini-3.5-flash · minimal
+```
+
+That needs a backup to already be saved and switched on - a level without its model has nothing to belong to:
+
+```console
+$ gemini-grounding set-backup --thinking minimal
+no backup model is set - a thinking level on its own has nothing to belong to. Name the backup model together with the level.
+```
+
+The same applies to `set-backup off --thinking <level>`, which aborts with `a backup that is switched off has no thinking level`.
+Both messages come from `findBackupLevelProblem` in `config.js` and read identically on the MCP server, which is why they name no command of the CLI's.
+
+Default and backup may not be the same model, and every command that writes a model rejects it - `set-model <id>`, `set-thinking <level> --model <id>` and `set-backup <id>` alike:
+
+```console
+$ gemini-grounding set-backup gemini-flash-latest
+"gemini-flash-latest" is already the default model - a backup only helps if it is a different one.
+```
+
+The check runs on the state the write **would produce**, which is why it sits at the one place all three commands pass through (`findModelCollision` in `config.js`, shared with the MCP server).
+A command that names no model at all is let through even when the stored values already collide: `set-thinking low` did not cause that state and should not be blocked by it.
+`runSearch` catches the collision a second time, but only on the next failing call - by then the backup has been silently dead for a while, which is what this check is for.
+
+**`--model` on a search disables the backup for that call.**
+Naming a model is usually a way of checking that particular model, and an answer from a different one does not answer that question.
+
+`gemini-grounding config` shows all three states - a model, `disabled`, or `not set`.
+The last two behave identically; the distinction records whether the decision was ever made.
 
 ## Errors stay fully visible
 
@@ -87,11 +146,18 @@ Nobody needs a stack trace for a typo.
 
 ## Checking the API key
 
-```bash
-gemini-grounding config
+```console
+$ gemini-grounding config
+Primary: gemini-flash-latest · medium
+Backup:  gemini-3.5-flash · medium (inherited)
+API key: set (39 chars)
+Config:  /home/you/.config/gemini-grounding-mcp/config.json
 ```
 
-This only checks whether a key arrives in the environment at all and prints its length - **never the value itself**, not even shortened.
+The first two lines are the same ones every save prints, so there is only one rendering of "which models am I using" to learn.
+`config` adds the two things that are only of interest here.
+
+The key check only establishes whether a key arrives in the environment at all and prints its length - **never the value itself**, not even shortened.
 Whether the key is actually valid is something only a real request can tell you, so a successful `config` is a necessary but not a sufficient condition.
 
 ## Working from a clone

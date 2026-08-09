@@ -11,10 +11,13 @@ zum bereits implementierten lokalen Memory-System.
 
 Architektur, genutzte Gemini-API-Tools, Antwortformat und technische
 Referenzen: siehe [specs.de.md](./docs/specs.de.md). Installation und
-Registrierung: siehe [README.md](./README.md).
+Registrierung: siehe [README.md](./README.md). Was ein einzelner Fehlercode der
+Gemini-API bedeutet, ob er wiederholt wird und was er kostet:
+[google_errors.de.md](./docs/google_errors.de.md).
 
-**Zweisprachige Doku:** Für `docs/specs.md` und `docs/cli.md` ist jeweils die
-englische Fassung kanonisch, `docs/specs.de.md` und `docs/cli.de.md` sind die
+**Zweisprachige Doku:** Für `docs/specs.md`, `docs/cli.md` und
+`docs/google_errors.md` ist jeweils die englische Fassung kanonisch,
+`docs/specs.de.md`, `docs/cli.de.md` und `docs/google_errors.de.md` sind die
 deutschen Übersetzungen. Beide Fassungen eines Paares sind inhaltsgleich zu
 halten - wird an einer etwas geändert, gehört dieselbe Änderung im selben
 Commit in die andere. Eine Fassung allein zu aktualisieren ist schlimmer als
@@ -52,8 +55,8 @@ verbindlich:
   an eine Redirect-URL. Einziger ausgehender Verkehr ist der SDK-Aufruf an die
   Gemini-API.
 - **I4 - Nichts wird zwischengespeichert.** Grounded Results berühren nie die
-  Festplatte. `config.json` enthält ausschließlich Modellname und
-  Thinking-Level.
+  Festplatte. `config.json` enthält ausschließlich Modellnamen und
+  Thinking-Level (Standard und Backup), sonst nichts.
 
 Deduplizieren nach identischer URI ist erlaubt, weil dabei kein Ziel
 verlorengeht. Deduplizieren nach Domain ist es nicht.
@@ -97,11 +100,16 @@ und unzuverlässig.
 
 - Welches Modell und Thinking-Level ein `gemini-search`-Aufruf tatsächlich genutzt hat, muss für mich als User **immer sichtbar** sein - dafür steht es im Antwort-Footer (siehe specs.md). Ich soll nie raten müssen, was verwendet wurde
 - Standardmäßig den gespeicherten Standard (Modell + Thinking-Level aus `config.json`) nutzen und bei `gemini-search` nichts explizit setzen, außer ich fordere für diesen einen Aufruf ausdrücklich etwas Abweichendes
-- Kein automatisches Fallback auf ein anderes Modell ohne Rückfrage
+- **Kein selbstgewähltes Fallback auf ein anderes Modell.** Scheitert ein
+  Aufruf, wird der Fehler gemeldet - nicht auf gut Glück ein anderes Modell
+  probiert. Das einzige zulässige Ausweichen ist das Backup-Modell, das ich
+  vorab in der `config.json` eingetragen habe; es läuft im Server ab und steht
+  danach im Footer. Ein bei `gemini-search` ausdrücklich genanntes `model`
+  schaltet es für diesen Aufruf ab
 - Vor einer Modelländerung immer zuerst `gemini-list-models` aufrufen, um zu
   prüfen, ob das gewünschte Modell tatsächlich verfügbar ist
 - `gemini-set-model` nur nach expliziter Anweisung durch mich nutzen, nie
-  eigenständig das Standardmodell wechseln
+  eigenständig das Standardmodell oder das Backup-Modell wechseln
 - Nach einer Änderung kurz bestätigen, welches Modell ab jetzt als Standard aktiv ist
 
 **API-Key-Sicherheit:**

@@ -66,7 +66,11 @@ Umgesetzt in flachen Modulen ohne `src/`-Layout und ohne Build-Step
   Nodes eingebauten Test-Runner, ohne zusätzliche Abhängigkeit).
 - `config.js` - liest/schreibt die dauerhafte Modellwahl in einer `config.json`
   am plattformüblichen Ort für Nutzer-State (siehe „Speicherort der
-  Konfiguration" unten).
+  Konfiguration" unten). Hier liegt auch `resolveCallConfig`, die einzige
+  Antwort darauf, womit ein einzelner Aufruf tatsächlich läuft, und ebenso
+  `formatSavedValues` und `formatConfigState`, die einzige Antwort darauf, was
+  ein Speichern geändert hat und was danach gilt - alle drei gemeinsam genutzt
+  von `index.js` und `cli.js`.
 - `cli.js` - zweites Frontend auf denselben Kern: dieselben Exporte aus
   `gemini.js` und `config.js`, die auch `index.js` nutzt, über die
   Kommandozeile erreichbar. Ohne zusätzliche Abhängigkeit (ein `switch` über
@@ -120,7 +124,22 @@ Umgesetzt in flachen Modulen ohne `src/`-Layout und ohne Build-Step
   Befehls bleibt ein Fehler - `set-model x --model y` nennt zwei Modelle, und
   welches gemeint ist, weiß nur der Aufrufer. Die Bestätigungszeile nennt jeden
   geschriebenen Wert, damit ein gespeicherter Wert nie von einem verworfenen zu
-  unterscheiden ist.
+  unterscheiden ist, und darunter folgt der gespeicherte Zustand (siehe
+  „Was nach dem Speichern gemeldet wird" unten).
+
+  Das Backup ist das eine, was diese Merge-Regel bricht, und zwar absichtlich:
+  Es wird **als Einheit** geschrieben, sodass ein Backup-Modell ohne Level ein
+  zuvor gespeichertes entfernt, statt es stehen zu lassen. Das Level gehört zu
+  diesem einen Modell - über einen Wechsel des Backups hinweg gälte es
+  stillschweigend für ein Modell, für das es nie gewählt wurde. Das Modell
+  wegzulassen und nur ein Level zu übergeben ist der Weg, das Level des bereits
+  gespeicherten Backups zu ändern.
+
+  Die Regel steht in `setSavedConfig` und nicht in `cli.js`, aus demselben
+  Grund wie `resolveCallConfig`: Der MCP-Handler schreibt dieselbe Datei, und
+  ein Modell, das dort ein neues Backup setzt, hat keinen Anlass, ausdrücklich
+  `null` mitzuschicken. Zwei Schnittstellen mit gegenläufiger Semantik auf
+  einer Datei kann später niemand mehr erklären.
 
 ## Verifizierte API-Fakten (Stand 07/2026)
 
@@ -587,7 +606,8 @@ const skippedNote =
 const footer =
   `\n\n---\n🔢 ${inputTokens} input / ${outputTokens} output / ${thinkingTokens} thinking tokens ` +
   `| 🔍 ${sources.length} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}${skippedNote}` +
-  formatSearchQueries(searchQueries);
+  formatSearchQueries(searchQueries) +
+  formatFallbackNote(fallback);
 
 const sourcesBlock = sourceList ? `\n\nSources:\n${sourceList}` : "";
 
@@ -616,6 +636,10 @@ Aussagekraft der Antwort verändert: Fehlt ein Marker, kann die Stelle
 ungegroundet sein - oder die Prüfung hat ihn verworfen. Das entspricht dem
 Zweck des Footers, den tatsächlichen Zustand jedes einzelnen Aufrufs sichtbar
 zu machen.
+
+`formatFallbackNote` folgt demselben Muster wie `formatSearchQueries`: Ohne Fallback liefert es einen leeren String, und damit entfällt die Zeile ganz.
+Es nutzt 🔁 und nicht ⚠️, weil ein geglückter Fallback keine beeinträchtigte Antwort ist - das Warnzeichen bleibt den Fällen vorbehalten, in denen mit der Antwort selbst etwas nicht stimmt.
+Einzelheiten unten in „Das optionale Backup-Modell".
 
 ### Die Zeile mit den Suchanfragen
 
@@ -665,7 +689,7 @@ dann, wenn die Änderung als Aufräumen, Kürzen oder Optimieren daherkommt.
 | I1 | Kein Link wird je weggelassen | Jeder `groundingChunk` mit URI erscheint in der Liste, auch ohne Marker darauf. Keine Obergrenze, keine Auswahl, keine Deduplizierung nach Domain |
 | I2 | Kein Link wird verändert, URI **und** Titel | Redirect-URLs gehen byteidentisch hinaus; der Titel zählt als Bestandteil des Links |
 | I3 | Kein Redirect wird aufgelöst | Einziger ausgehender Verkehr ist der SDK-Aufruf an die Gemini-API |
-| I4 | Nichts wird zwischengespeichert | Grounded Results berühren nie die Festplatte; `config.json` enthält Modellname und Thinking-Level, sonst nichts |
+| I4 | Nichts wird zwischengespeichert | Grounded Results berühren nie die Festplatte; `config.json` enthält Modellnamen und Thinking-Level, sonst nichts |
 
 Deduplizieren nach identischer URI verstößt gegen keine davon, weil dabei kein
 Ziel verlorengeht.
@@ -794,11 +818,38 @@ weist im Hinweistext darauf hin, statt eine leere Ausgabe zu erzeugen.
 
 ### gemini-set-model
 
-Speichert Modell-ID und/oder Thinking-Level dauerhaft in einer `config.json`
-(Ort siehe unten). Beide Werte lassen sich unabhängig voneinander setzen - ein
-Merge sorgt dafür, dass das Setzen des einen Werts den bereits gespeicherten
-anderen Wert nicht überschreibt. Diese Wahl bleibt über Server-Neustarts hinweg
-bestehen, bis sie erneut geändert wird.
+Speichert Modell-ID, Thinking-Level und/oder Backup-Modell dauerhaft in einer
+`config.json` (Ort siehe unten). Die Werte lassen sich unabhängig voneinander
+setzen - ein Merge sorgt dafür, dass das Setzen des einen Werts die bereits
+gespeicherten anderen nicht überschreibt. Diese Wahl bleibt über
+Server-Neustarts hinweg bestehen, bis sie erneut geändert wird.
+
+Zwei der vier Parameter kennen einen Zustand jenseits von „ein Wert":
+
+| Parameter | `undefined` | Ein Wert | Besonderheit |
+| --- | --- | --- | --- |
+| `backupModel` | unangetastet lassen | Modell-ID | `false` schaltet den Fallback ab und hält fest, dass das Absicht war |
+| `backupThinkingLevel` | unangetastet lassen, **außer** neben einem `backupModel`, dort wird es zurückgesetzt | Thinking-Level | `null` löscht den Schlüssel, das Backup erbt wieder das Level des Aufrufs |
+
+`null` löscht bei allen vier Schlüsseln, nicht nur bei `backupThinkingLevel` - eine Sonderregel für genau ein Feld kann später niemand mehr erklären.
+`false` bei `backupModel` wird bewusst gespeichert statt gelöscht: Für das Verhalten sind „nie eingestellt" und „abgeschaltet" dasselbe, für den Leser von `gemini-grounding config` sind es zwei verschiedene Auskünfte.
+
+Die Ausnahme in dieser Tabelle ist die Einheits-Regel aus dem Abschnitt „Implementierung": Ein `backupModel`, das ohne eigenes Level ankommt, setzt das gespeicherte zurück, damit ein für das vorherige Backup gewähltes Level nicht stillschweigend auf das neue Modell übergeht.
+`setSavedConfig` liefert deshalb zurück, was es tatsächlich geschrieben hat, `null` eingeschlossen - nur so kann die Bestätigung das weggefallene Level nennen, statt es zu verschweigen.
+`backupThinkingLevel` allein zu übergeben ist der Weg, das Level des gespeicherten Backups zu ändern, ohne das Modell anzufassen.
+Dafür braucht es ein gespeichertes, eingeschaltetes Backup: Ein Level ohne sein Modell hat keinen Bezug, stünde wirkungslos in der Datei, und die Bestätigung nennte einen Wert, den der Zustandsblock zwei Zeilen darunter als `not set` oder `disabled` wieder einkassiert.
+`findBackupLevelProblem` in `config.js` weist beide Fälle ab, bevor irgendetwas geschrieben wird - `null` bleibt ausgenommen, denn der Weg zurück auf „erbt vom Aufruf" muss auch dann offenstehen, wenn kein Backup mehr da ist.
+
+Diese Prüfung und `findModelCollision` weiter unten haben aus demselben Grund dieselbe Bauform, und beide sichern beide Schnittstellen ab.
+Die Regel lag zuerst allein in `cli.js`, wo `gemini-set-model` nicht vorbeikam: Ein Modell, das ein Backup-Level speichern soll, hat keinen Anlass, vorher den gespeicherten Zustand zu lesen.
+
+**Standard und Backup dürfen nicht dasselbe Modell werden**, und `findModelCollision` in `config.js` weist das ab, bevor irgendetwas geschrieben wird.
+Wären beide gleich, fände überhaupt kein Fallback mehr statt: `runSearch` lehnt ihn mit „it is the same model as the default" ab - ein Fangnetz, das erst beim nächsten fehlgeschlagenen Aufruf greift und das Backup bis dahin lautlos tot liegen lässt.
+
+Geprüft wird der Zustand, den das Schreiben **erzeugen würde**, und nicht das einzelne Argument: Dieser Handler ist die einzige Stelle, die beide Werte in einem Aufruf setzen kann - `{ model: "x", backupModel: "x" }` besteht jede Einzelprüfung und hinterlässt die Konfiguration trotzdem kaputt.
+Dieselbe Funktion sichert `set-model`, `set-thinking --model` und `set-backup` in der CLI ab; `set-thinking --model <id>` war der Pfad, dem sie fehlte, und deshalb steht die Regel jetzt dort, wo alle durchlaufen, statt in jedem Zweig.
+
+Ein Aufruf, der gar kein Modell nennt, wird auch dann durchgelassen, wenn die gespeicherten Werte bereits kollidieren - er hat den Zustand nicht verursacht, und ihn zu blockieren stoppte ausgerechnet die Befehle, die nichts damit zu tun haben.
 
 Die Bestätigung nennt den vollständigen Pfad, und der Aufruf liegt in einem
 `try`/`catch`: Das Zielverzeichnis wird erst beim Speichern angelegt und kann je
@@ -821,22 +872,59 @@ server.registerTool(
         .enum(["minimal", "low", "medium", "high"])
         .optional()
         .describe("Denktiefe des Modells"),
+      backupModel: z
+        .union([z.string(), z.literal(false)])
+        .optional()
+        .describe("Modell fuer den zweiten Versuch; false schaltet es ab"),
+      backupThinkingLevel: z
+        .enum(["minimal", "low", "medium", "high"])
+        .nullable()
+        .optional()
+        .describe("Denktiefe des Backup-Modells"),
     },
   },
-  async ({ model, thinkingLevel }) => {
+  async ({ model, thinkingLevel, backupModel, backupThinkingLevel }) => {
     // mindestens ein Parameter ist Pflicht, sonst Fehler
-    setSavedConfig({ model, thinkingLevel }); // Merge statt Ueberschreiben, siehe config.js
+    // findModelCollision und findBackupLevelProblem vor dem Schreiben - siehe config.js
+    // Merge statt Ueberschreiben, ausser bei der Backup-Einheit - siehe config.js
+    const saved = setSavedConfig({ model, thinkingLevel, backupModel, backupThinkingLevel });
     return {
       content: [
         {
           type: "text",
-          text: `Gespeichert - Modell: ${model}, Thinking-Level: ${thinkingLevel}`,
+          text: `Saved to ${CONFIG_PATH} - ${formatSavedValues(saved)}\n\n` + formatConfigState(),
         },
       ],
     };
   },
 );
 ```
+
+### Was nach dem Speichern gemeldet wird
+
+Jedes Speichern beantwortet zwei verschiedene Fragen, und beide werden gebraucht:
+
+```text
+Saved - Backup: gemini-3.5-flash, Backup thinking level: inherited from the call
+
+Primary: gemini-flash-latest · high
+Backup:  gemini-3.5-flash · high (inherited)
+```
+
+`formatSavedValues` nennt jeden geschriebenen Wert.
+Diese Zeile existiert, weil ein gespeicherter Wert sonst von einem verworfenen Parameter nicht zu unterscheiden wäre - der Fehler, gegen den sie eingeführt wurde.
+Sie läuft auf dem **Rückgabewert** von `setSavedConfig` und nicht auf den Argumenten, sodass ein von der Einheits-Regel entferntes Level erscheint, statt lautlos zu verschwinden.
+
+`formatConfigState` nennt den vollständigen gespeicherten Zustand.
+Ohne diese Zeilen müsste auf eine Änderung ein `config` folgen, um zu erfahren, womit die nächste Anfrage tatsächlich läuft - und genau in dieser Lücke arbeitet am Ende jemand mit einem Modell, das er nicht gemeint hat.
+Für den MCP-Server erfüllt diese Zeile die Arbeitsregel aus `CLAUDE.md`, dass nach einer Modelländerung bestätigt wird, welches Modell ab jetzt gilt.
+
+Beide Funktionen liegen in `config.js` und werden von der CLI und dem MCP-Handler gleichermaßen genutzt, die sich nur im Präfix unterscheiden.
+Zwei getrennte Fassungen liefen auseinander, und dann sagte dieselbe Änderung je nach Schnittstelle etwas anderes.
+
+Beim Backup steht das geerbte Level als Wert und nicht als bloßes Wort „inherited": Womit das Backup liefe, wenn es jetzt einspränge, ist die Auskunft, um die es geht.
+Der Zusatz sagt dazu, dass der Wert nicht ihm gehört, sondern mitwandert - ein Aufruf mit eigenem `thinkingLevel` wird stattdessen geerbt.
+Der Mittelpunkt trennt wie in `formatSearchQueries`: Modellnamen enthalten selbst Bindestriche und Ziffern, zwischen denen ein weiterer Bindestrich untergeht.
 
 ### Speicherort der Konfiguration
 
@@ -900,23 +988,37 @@ in der README beschrieben, das Zurücksetzen kostet einen Aufruf.
 
 Das Tool `gemini-search` nutzt die gespeicherten Werte als Standard, sofern
 beim jeweiligen Aufruf nichts explizit angegeben wird. Die Auflösung passiert
-bewusst **im Handler zur Aufrufzeit** (`model ?? getSavedModel()`), nicht als
-Zod-`.default()` im `inputSchema`: ein Schema-Default würde einmal beim
-Registrieren des Tools ausgewertet und eingefroren, sodass `gemini-set-model`
-erst nach einem Serverneustart wirken würde. `model` und `thinkingLevel` sind
-im Schema deshalb `optional()`.
+bewusst **zur Aufrufzeit**, nicht als Zod-`.default()` im `inputSchema`: ein
+Schema-Default würde einmal beim Registrieren des Tools ausgewertet und
+eingefroren, sodass `gemini-set-model` erst nach einem Serverneustart wirken
+würde. `model` und `thinkingLevel` sind im Schema deshalb `optional()`.
+
+`resolveCallConfig` in `config.js` beantwortet die Frage für den MCP-Handler und die CLI gemeinsam, damit beide zu derselben Antwort kommen:
 
 ```javascript
-function getSavedModel() {
-  return readConfig().model ?? FALLBACK_MODEL; // "gemini-flash-latest" ohne config.json
-}
-
-function getSavedThinkingLevel() {
-  return readConfig().thinkingLevel ?? FALLBACK_THINKING_LEVEL; // "medium" ohne config.json
+export function resolveCallConfig({ model, thinkingLevel } = {}) {
+  const backup = model === undefined ? getSavedBackup() : {};
+  return {
+    model: model ?? getSavedModel(), // "gemini-flash-latest" ohne config.json
+    thinkingLevel: thinkingLevel ?? getSavedThinkingLevel(), // "medium" ohne config.json
+    backupModel: backup.model,
+    backupThinkingLevel: backup.thinkingLevel,
+  };
 }
 ```
 
-Tatsächlich implementiert (inkl. `setSavedConfig`) in `config.js` - siehe „Implementierung" oben.
+**Ein beim Aufruf genanntes Modell bekommt kein Backup.**
+Wer eines nennt, will dieses eine - häufig gerade, um zu prüfen, ob es überhaupt erreichbar ist.
+Eine Antwort von einem anderen Modell beantwortet diese Frage nicht, sie verdeckt sie.
+
+Die Regel ist syntaktisch und greift auch dann, wenn das genannte Modell zufällig dem gespeicherten Standard entspricht: Was zählt, ist die ausdrückliche Nennung, nicht der Wert.
+Sonst verhielte sich derselbe Aufruf je nach gespeichertem Standard anders, und dem Aufruf sähe man nicht an, wie.
+Ein ausdrückliches `thinkingLevel` berührt den Fallback nicht, weil das Modell dabei der gespeicherte Standard bleibt.
+
+Die Regel steht in dieser einen Funktion und nicht in `runSearch` - genau das hält `gemini.js` frei von ihr: Dort wird ein Backup genutzt, wenn eines übergeben wurde, und das ist alles.
+Als reine Funktion ohne Netzwerkzugriff ist `resolveCallConfig` zugleich der einzige Ort, an dem sich die Regel überhaupt prüfen lässt (`test/resolve.test.js`) - über die CLI bräuchte es dafür einen echten API-Aufruf.
+
+Tatsächlich implementiert (inkl. `setSavedConfig` und `getSavedBackup`) in `config.js` - siehe „Implementierung" oben.
 
 `readConfig()` fällt bei **jeder** unlesbaren Datei auf die Standardwerte zurück, schweigt aber nur über die fehlende.
 Vor dem ersten gespeicherten Wert gibt es keine Datei, und die Standardwerte sind dann genau das Gewollte.
@@ -924,7 +1026,7 @@ Alles andere - kaputtes JSON nach einem abgebrochenen Schreibvorgang, fehlende L
 Ein solcher Fall erzeugt deshalb eine Warnung, die den Pfad und die Originalmeldung nennt.
 
 Sie geht nach **stderr**, nie nach stdout: Der MCP-Server spricht über stdout JSON-RPC, wo eine einzelne verirrte Zeile die Verbindung zum Client zerstört.
-Ein Flag auf Modulebene begrenzt sie auf ein Vorkommen, denn `readConfig()` läuft pro Aufruf zweimal - einmal für das Modell, einmal für das Thinking-Level.
+Ein Flag auf Modulebene begrenzt sie auf ein Vorkommen, denn `readConfig()` läuft pro Aufruf dreimal - einmal für das Modell, einmal für das Thinking-Level, einmal für das Backup. Ohne das Flag stünde dieselbe Warnung dreimal da und sähe nach drei Fehlern aus.
 
 ## Vorübergehende Fehler und Wiederholungen
 
@@ -1053,9 +1155,83 @@ Node wirft `TypeError: fetch failed`, und das steht dort nicht.
 Die oben eingerichtete Wiederholung deckt damit ausschließlich die Statuscodes der API ab.
 Ein DNS-Aussetzer oder eine abgerissene Verbindung erreicht den Client sofort und unwiederholt - womit die Meldung, die dort ankommt, das Einzige ist, woran er sich halten kann.
 
+### Das optionale Backup-Modell
+
+Der Retry senkt, wie oft ein vorübergehender Fehler beim Client ankommt; die Fehlerklasse schafft er nicht ab.
+Der beobachtete dreifache 503 überlebte alle vier Versuche.
+Was danach bleibt, ist ein zweites Modell - denn die Überlastung ist beobachtbar **modellabhängig**, offenbar sogar zwischen einem Alias und dem Modell, auf das er zeigt.
+
+**Opt-in.** Ohne eingerichtetes `backupModel` ändert sich nichts: Der Fehler geht hinaus wie zuvor.
+Genau das hält die Arbeitsregel „kein automatisches Fallback ohne Rückfrage" intakt - der Nutzer benennt das Ausweichmodell vorab, und jeder Aufruf, der es genutzt hat, sagt das im Footer.
+
+Ablauf in `runSearch`, nachdem das SDK seine vier Versuche verbraucht hat:
+
+1. `error.status` gegen `NO_FALLBACK_STATUS`; ein Netzwerkfehler trägt keinen Status und scheidet von selbst aus
+2. dieselbe Anfrage an `backupModel`, mit `backupThinkingLevel ?? thinkingLevel`
+3. der Retry des SDK greift automatisch erneut, weil er am Client hängt und nicht am Aufruf
+4. scheitert auch der: ein Fehler, der beide Modelle und beide Ursachen nennt
+
+#### Welche Fehler ihn auslösen
+
+Eine **Negativliste**, und das ist hier die eigentliche Entscheidung.
+Ein heute unbekannter, künftiger Fehlercode bekommt damit automatisch den Fallback, statt lautlos durch eine Positivliste zu fallen.
+
+```javascript
+export const NO_FALLBACK_STATUS = [401, 403, 504];
+```
+
+Die drei Ausnahmen haben zwei verschiedene Gründe.
+`401` und `403` sind **aussichtslos**: Beide hängen am API-Schlüssel, und der zweite Aufruf nutzt denselben - das Modell kann die Ursache gar nicht sein.
+`504` ist **zu teuer**: Bei diesem Server ist das im Regelfall die eigene Frist, also eine vollständig gelaufene und abgerechnete Generierung. Ein Fallback verdoppelt sie und legt bis zu 290 weitere Sekunden Wartezeit drauf.
+
+Bewusst **nicht** dieselbe Liste wie `RETRY_OPTIONS`.
+Die beiden beantworten verschiedene Fragen - der Retry „hilft Warten?", der Fallback „kann ein anderes Modell der Unterschied sein?".
+Bei `429` gehen die Antworten auseinander: Warten bringt nichts, weil das SDK Googles `retryDelay` ignoriert, ausweichen dagegen sofort etwas, weil Kontingente pro Modell zählen.
+`test/fallback.test.js` nagelt dieses Auseinandergehen fest, weil die beiden Listen einander ähnlich genug sehen, um zu einer „aufgeräumt" zu werden.
+
+Eine gemessene Einzelheit schlägt den Statuscode als alleiniges Kriterium aus dem Feld: **Ein ungültiger API-Schlüssel kommt nicht als 401 oder 403, sondern als `400 INVALID_ARGUMENT`** mit `API key not valid`.
+Ein 400 rechtfertigt sonst durchaus einen Fallback - dahinter kann ein Modell stehen, das das Thinking-Level nicht kennt, und dass ein anderes Modell dieselbe Anfrage annimmt, ist genau der Beweis dafür.
+Der Schlüssel dagegen gilt für beide.
+Dieser eine Fall wird deshalb am `reason: "API_KEY_INVALID"` in `error.details` erkannt - die einzige Stelle, an der dieser Server etwas unterhalb des Statuscodes auswertet.
+
+#### Was der Footer sagt
+
+Das `🤖`-Feld stimmt nach einem Fallback von allein, weil `formatFooter` das Modell und Level bekommt, das tatsächlich gelaufen ist.
+Es zeigt aber nur, **was** geantwortet hat, nicht dass etwas schiefging - daher die zusätzliche Zeile:
+
+```text
+🔁 gemini-flash-latest does not exist (404) - answered by backup. Update your default.
+```
+
+Drei Codes bekommen einen Zusatz, weil bei ihnen etwas **zu tun** ist:
+
+| Auslöser | Zeile |
+| --- | --- |
+| 404 | `does not exist (404) - answered by backup. Update your default.` |
+| 429 | `hit its quota (429) - answered by backup.` |
+| 400 | `rejected the request (400) - answered by backup. Check the thinking level of your default model.` |
+| alles andere | `failed (503 UNAVAILABLE) - answered by backup.` |
+
+Ohne diese Unterscheidung liest sich ein dauerhafter 404 wie eine vorübergehende Störung, und niemand korrigiert je das kaputte Standardmodell.
+Der 400 ist der einzige, bei dem die Zeile echte Diagnose leistet.
+
+Position innerhalb des Footers, aus drei Gründen: Der Footer bleibt letzter Bestandteil, zwischen Antwort und Links kommt weiterhin nichts vom Server dazwischen (siehe „Wo der Server Inhalt hinzufügt oder umstellt"), und die Zeile steht direkt neben dem `🤖`-Feld, das sie erklärt.
+
+#### Die drei Fälle ohne Footer
+
+Findet kein Fallback statt, gibt es keine Antwort und damit auch keinen Footer - der Grund muss dann in der Fehlermeldung mitreisen.
+Ohne ihn bleibt die unbeantwortbare Frage „warum hat mein Backup nicht gegriffen?":
+
+- **beide gescheitert** - beide Fehler, jeweils mit dem Modell davor. Stünde dort nur der zweite, suchte man am falschen Modell. Gebaut über das vorhandene `describeError()` auf beiden, damit die `cause` eines Netzwerkfehlers erhalten bleibt
+- **Fallback bewusst ausgelassen** - `backup not tried: …` samt Grund, für die Ausnahmen oben
+- **Backup identisch zum Standard** - ein Konfigurationsfehler; jeder Schreibpfad weist ihn vorher ab (`findModelCollision`, siehe „gemini-set-model"), und `runSearch` fängt ihn ein zweites Mal, weil eine von Hand bearbeitete `config.json` gar keinen Schreibpfad durchläuft
+
+Ein beim Aufruf ausdrücklich genanntes Modell gehört **nicht** zu diesen Fällen und bekommt keinen Hinweis.
+`resolveCallConfig` übergibt dann schlicht kein Backup, und dass ein selbst genanntes Modell nicht ersetzt wird, ist für den Aufrufer keine Überraschung.
+
 ### Warum der Retry nicht im Footer erscheint
 
-Die Wiederholungen laufen im SDK und hinterlassen keine Spur.
+Anders als der Fallback, der eigener Kontrollfluss dieses Servers und deshalb beobachtbar ist, laufen die Wiederholungen im SDK und hinterlassen keine Spur.
 Weder `ApiError` noch die erfolgreiche `HttpResponse` trägt eine Versuchszahl, und `HttpOptions` bietet keinen Transport- oder Fetch-Einhängepunkt, an dem sie zu beobachten wäre - vorhanden sind dort nur `baseUrl`, `baseUrlResourceScope`, `apiVersion`, `headers`, `timeout`, `extraBody` und `retryOptions`.
 
 Sie zu zählen hieße, das globale `fetch` zu umhüllen und einen Kontext pro Aufruf über `AsyncLocalStorage` zu propagieren, denn mehrere `gemini-search`-Aufrufe können parallel laufen und ein globaler Zähler würde sie vermischen.

@@ -12,6 +12,45 @@ import { fileURLToPath } from "node:url";
 
 const CLI = fileURLToPath(new URL("../cli.js", import.meta.url));
 
+/** Eine Fehlerantwort im Format, das die Gemini-API liefert. */
+export const errorResponse = (code, status) =>
+  new Response(JSON.stringify({ error: { code, message: "test", status } }), {
+    status: code,
+    headers: { "content-type": "application/json" },
+  });
+
+/** Die kleinstmoegliche erfolgreiche Antwort, die runSearch durchlaeuft. */
+export const okResponse = () =>
+  new Response(
+    JSON.stringify({
+      candidates: [{ content: { parts: [{ text: "answer" }] }, finishReason: "STOP" }],
+      usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+
+/**
+ * Ersetzt das globale fetch durch eine Folge vorbereiteter Antworten und
+ * liefert die Liste der Aufrufe, die dabei entstehen. Das SDK ruft fetch in
+ * apiCall() direkt auf, sodass die Zahl der Aufrufe die Zahl der Versuche IST -
+ * damit laesst sich am Verhalten pruefen, was sonst nur behauptet waere.
+ *
+ * Jeder Aufruf nimmt die naechste Antwort; ist die Folge erschoepft, wiederholt
+ * sich die letzte. So braucht ein Fall, der auf dauerhaftes Scheitern zielt,
+ * nicht zu wissen, wie oft es dazu kommt.
+ *
+ * Kein Testfall erreicht dabei die API: Der Schluessel ist ein Platzhalter, und
+ * der Ersatz faengt jede Anfrage ab, bevor sie das Netz sieht.
+ */
+export function mockFetch(...responses) {
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return responses[Math.min(calls.length - 1, responses.length - 1)]();
+  };
+  return calls;
+}
+
 /** Ein frisches, leeres Verzeichnis als XDG_CONFIG_HOME fuer einen Testfall. */
 export function freshConfigHome() {
   return mkdtempSync(path.join(tmpdir(), "gemini-grounding-test-"));

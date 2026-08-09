@@ -7,8 +7,11 @@
 import { runSearch, listModels } from "./gemini.js";
 import {
   CONFIG_PATH,
-  getSavedModel,
-  getSavedThinkingLevel,
+  findBackupLevelProblem,
+  findModelCollision,
+  formatConfigState,
+  formatSavedValues,
+  resolveCallConfig,
   setSavedConfig,
   THINKING_LEVELS,
 } from "./config.js";
@@ -20,17 +23,24 @@ Usage:
   gemini-grounding <command> [argument]
 
 Commands:
-  config                 Show saved model, thinking level and API key status
+  config                 Show saved model, thinking level, backup and API key
+                         status
   models [--all]         List models usable with this server; --all lists every
                          model the API key exposes, including unusable ones
   set-model <id>         Persist the default model; add --thinking <level> to
                          persist both in one call
   set-thinking <level>   Persist the default thinking level; add --model <id> to
                          persist both in one call
+  set-backup <id|off>    Persist a model to retry a failed request with; add
+                         --thinking <level> to give it its own level, leave it
+                         out to inherit the level of the call. "off" disables it
+  set-backup --thinking <level>
+                         Change only the level of the backup already saved
   help                   Show this help
 
 Options:
-  --model <id>           On a search: use for this call only, nothing is saved
+  --model <id>           On a search: use for this call only, nothing is saved.
+                         Also disables the backup model for that call
   --thinking <level>     On a search: use for this call only, nothing is saved
 
 Thinking levels: ${THINKING_LEVELS.join(", ")}
@@ -84,15 +94,31 @@ function takeSwitch(args, name) {
 }
 
 /**
- * Bestaetigt jeden gespeicherten Wert einzeln, nach demselben Muster wie der
- * MCP-Handler in index.js. Wird nur eines von beiden gesetzt, steht auch nur
- * eines da - die Ausgabe sagt damit genau, was in der Datei gelandet ist.
+ * Schreibt und meldet in einem: erst was sich geaendert hat, dann was ab jetzt
+ * gilt. Beide Zeilen kommen aus config.js, damit der MCP-Handler dieselbe
+ * Auskunft gibt.
+ *
+ * Die zweite Haelfte ist der Grund fuer diese Funktion: Ohne sie muesste man
+ * nach jedem set-Befehl "config" hinterherschicken, um zu sehen, womit die
+ * naechste Recherche tatsaechlich laeuft.
  */
-function formatSaved({ model, thinkingLevel }) {
-  const parts = [];
-  if (model !== undefined) parts.push(`Model: ${model}`);
-  if (thinkingLevel !== undefined) parts.push(`Thinking level: ${thinkingLevel}`);
-  return `Saved - ${parts.join(", ")}`;
+function saveAndReport(values) {
+  // Standard und Backup duerfen nicht dasselbe Modell werden - lautlos gaebe
+  // es danach kein Ausweichen mehr. Die Pruefung sitzt hier und nicht in den
+  // einzelnen Zweigen, damit sie keinen Schreibpfad auslassen kann: "set-model
+  // x", "set-thinking low --model x" und "set-backup x" schreiben alle ein
+  // Modell, und der zweite hatte sie frueher nicht.
+  const collision = findModelCollision(values);
+  if (collision) fail(collision);
+
+  // Aus demselben Grund an derselben Stelle: ein Backup-Level ohne sein Modell.
+  // Beide Pruefungen liegen in config.js, weil gemini-set-model dieselbe Datei
+  // schreibt und beide Werte sogar in einem Aufruf setzen kann.
+  const levelProblem = findBackupLevelProblem(values);
+  if (levelProblem) fail(levelProblem);
+
+  console.log(`Saved - ${formatSavedValues(setSavedConfig(values))}`);
+  console.log(`\n${formatConfigState()}`);
 }
 
 async function main() {
@@ -163,13 +189,16 @@ async function main() {
       const keyStatus = apiKey
         ? `set (${apiKey.length} chars)`
         : "NOT SET - set the GEMINI_API_KEY environment variable";
-      console.log(`${"Model:".padEnd(16)}${getSavedModel()}`);
-      console.log(`${"Thinking level:".padEnd(16)}${getSavedThinkingLevel()}`);
-      console.log(`${"API key:".padEnd(16)}${keyStatus}`);
+      // Dieselben zwei Zeilen wie nach jedem set-Befehl - "config" ist damit
+      // nicht eine zweite Darstellung derselben Sache, sondern dieselbe plus
+      // das, was nur hier interessiert. Drei Zustaende des Backups bleiben
+      // dabei unterscheidbar: ein Modell, "disabled", "not set".
+      console.log(formatConfigState());
+      console.log(`API key: ${keyStatus}`);
       // Der Pfad wird immer genannt, auch wenn die Datei noch gar nicht
       // existiert - dann steht dort, wo sie beim ersten set-model entstehen
       // wird, und die obigen Werte sind die eingebauten Defaults.
-      console.log(`${"Config file:".padEnd(16)}${CONFIG_PATH}`);
+      console.log(`Config:  ${CONFIG_PATH}`);
       break;
     }
 
@@ -190,9 +219,9 @@ async function main() {
       if (rest.length !== 1) {
         fail("Usage: gemini-grounding set-model <model-id> [--thinking <level>]");
       }
-      const model = rest[0];
-      setSavedConfig({ model, thinkingLevel: thinkingFlag });
-      console.log(formatSaved({ model, thinkingLevel: thinkingFlag }));
+      // Die Kollisionspruefung sitzt in saveAndReport und gilt damit fuer
+      // set-model, set-thinking --model und set-backup gleichermassen.
+      saveAndReport({ model: rest[0], thinkingLevel: thinkingFlag });
       break;
     }
 
@@ -204,8 +233,43 @@ async function main() {
         );
       }
       const level = requireThinkingLevel(rest[0], "set-thinking");
-      setSavedConfig({ model: modelFlag, thinkingLevel: level });
-      console.log(formatSaved({ model: modelFlag, thinkingLevel: level }));
+      saveAndReport({ model: modelFlag, thinkingLevel: level });
+      break;
+    }
+
+    // Anders als bei den beiden set-Befehlen oben wird das Backup als EINHEIT
+    // geschrieben: Ohne --thinking entfernt setSavedConfig() ein zuvor
+    // gespeichertes Level, statt es stehen zu lassen. Das Level gehoert zu
+    // diesem einen Modell - bliebe es beim Wechsel des Backups liegen, gaelte
+    // es stillschweigend fuer ein anderes Modell als das, fuer das es gesetzt
+    // wurde. Die Regel steht in config.js, weil sie fuer den MCP-Handler
+    // genauso gilt.
+    case "set-backup": {
+      allowFlags("thinking");
+
+      // Ohne Modellargument gilt der Befehl dem bereits gespeicherten Backup
+      // und aendert nur dessen Level. Ohne diesen Zweig muesste man das Modell
+      // erneut abtippen, um an seinem Level etwas zu drehen - und ein Vertipper
+      // dabei traefe stillschweigend ein anderes Modell.
+      //
+      // Nur eine Weiche, keine Pruefung: Dass es dafuer ein gespeichertes,
+      // eingeschaltetes Backup braucht, weist findBackupLevelProblem() in
+      // saveAndReport ab - und zwar mit demselben Wortlaut wie fuer den
+      // MCP-Handler, der diesen Zweig nicht durchlaeuft.
+      if (rest.length === 0 && thinkingFlag !== undefined) {
+        saveAndReport({ backupThinkingLevel: thinkingFlag });
+        break;
+      }
+
+      if (rest.length !== 1) {
+        fail("Usage: gemini-grounding set-backup <model-id|off> [--thinking <level>]");
+      }
+      // false und nicht loeschen: Der Unterschied zwischen "nie eingestellt"
+      // und "bewusst abgeschaltet" bleibt damit in der Datei erhalten. Ein
+      // --thinking dazu faengt ebenfalls saveAndReport ab: Ein abgeschaltetes
+      // Backup hat kein Level, und die Option verfaellt nicht stillschweigend.
+      const backupModel = rest[0] === "off" ? false : rest[0];
+      saveAndReport({ backupModel, backupThinkingLevel: thinkingFlag });
       break;
     }
 
@@ -227,13 +291,14 @@ async function main() {
       // gesetzten Shell-Variablen - als Anfrage an die API und kostet Tokens.
       if (query === "") fail("The query is empty.");
 
-      // Gleiches Muster wie im MCP-Handler (index.js): ein Flag gilt nur fuer
-      // diesen Aufruf, sonst greift der gespeicherte Standard. config.json wird
-      // dabei nicht angefasst.
+      // Gleiches Muster wie im MCP-Handler (index.js), und ueber dieselbe
+      // Funktion: ein Flag gilt nur fuer diesen Aufruf, sonst greift der
+      // gespeicherte Standard. config.json wird dabei nicht angefasst. Aus
+      // resolveCallConfig kommt zugleich die Regel, dass --model das Backup
+      // fuer diesen Aufruf abschaltet.
       const text = await runSearch({
         query,
-        model: modelFlag ?? getSavedModel(),
-        thinkingLevel: thinkingFlag ?? getSavedThinkingLevel(),
+        ...resolveCallConfig({ model: modelFlag, thinkingLevel: thinkingFlag }),
       });
       console.log(text);
     }

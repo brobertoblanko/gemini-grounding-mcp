@@ -83,6 +83,34 @@ export const RETRY_OPTIONS = {
 export const SERVER_DEADLINE_SECONDS = 290;
 
 /**
+ * Fehler, bei denen NICHT auf das Backup-Modell ausgewichen wird. Alles andere
+ * loest den Fallback aus, sofern ein Backup konfiguriert ist.
+ *
+ * Eine Negativliste, und das ist die eigentliche Entscheidung: Ein kuenftiger,
+ * heute unbekannter Fehlercode bekommt damit automatisch den Fallback, statt
+ * lautlos durch eine Positivliste zu fallen. Bewusst NICHT dieselbe Liste wie
+ * RETRY_OPTIONS - die beiden beantworten verschiedene Fragen. Der Retry fragt
+ * "hilft Warten?", der Fallback "kann ein anderes Modell der Unterschied sein?".
+ * Bei 429 gehen die Antworten auseinander: Warten bringt nichts, weil das SDK
+ * Googles retryDelay ignoriert, ausweichen dagegen sofort etwas, weil
+ * Kontingente pro Modell zaehlen.
+ *
+ * Die drei Ausnahmen haben zwei verschiedene Gruende:
+ *
+ * 401 und 403 sind aussichtslos. Beide haengen am API-Schluessel, und der
+ * zweite Aufruf nutzt denselben - das Modell kann die Ursache gar nicht sein.
+ *
+ * 504 ist zu teuer. Bei diesem Server ist das im Regelfall die eigene Frist
+ * (siehe SERVER_DEADLINE_SECONDS), also eine vollstaendig gelaufene und
+ * abgerechnete Generierung. Ein Fallback verdoppelt sie und legt bis zu 290
+ * weitere Sekunden Wartezeit drauf.
+ *
+ * Ein Netzwerkfehler steht nicht in der Liste und braucht es nicht: Er traegt
+ * gar keinen status und scheidet dadurch von selbst aus.
+ */
+export const NO_FALLBACK_STATUS = [401, 403, 504];
+
+/**
  * Uebersetzt einen Fehler in eine Zeile, die auch dann noch etwas aussagt, wenn
  * er aus dem Netzwerk kommt statt aus der API.
  *
@@ -349,6 +377,43 @@ export function formatSearchQueries(queries = []) {
   return `\n🔎 Searched: ${shown.join(" · ")}${rest > 0 ? ` (+${rest} more)` : ""}`;
 }
 
+/**
+ * Die Zeile ueber einen geglueckten Fallback auf das Backup-Modell. Ohne
+ * Fallback ein leerer String und damit keine Zeile - gleiche Regel wie bei den
+ * Suchanfragen: Der Normalfall verlaengert den Footer nicht.
+ *
+ * 🔁 und nicht ⚠️: Ein geglueckter Fallback ist keine beeintraechtigte Antwort.
+ * Das Warnzeichen bleibt den Faellen vorbehalten, in denen mit der Antwort
+ * selbst etwas nicht stimmt (verworfene Marker, uebersprungene Quellen,
+ * finishReason, blockReason).
+ *
+ * Drei Codes bekommen einen Zusatz, weil bei ihnen etwas ZU TUN ist; bei allen
+ * uebrigen - 503, 500, 502, 408 und allem Kuenftigen - ist die Stoerung
+ * voruebergehend und der blosse Code sagt genug. Der 400 ist dabei der einzige,
+ * bei dem die Zeile echte Diagnose leistet: Dass das Backup dieselbe Anfrage
+ * annimmt, beweist, dass nicht die Anfrage das Problem war, sondern das Modell.
+ */
+export function formatFallbackNote(fallback) {
+  if (!fallback) return "";
+
+  const { model, status, statusName } = fallback;
+  const answered = "answered by backup";
+
+  switch (status) {
+    case 404:
+      return `\n🔁 ${model} does not exist (404) - ${answered}. Update your default.`;
+    case 429:
+      return `\n🔁 ${model} hit its quota (429) - ${answered}.`;
+    case 400:
+      return (
+        `\n🔁 ${model} rejected the request (400) - ${answered}. ` +
+        "Check the thinking level of your default model."
+      );
+    default:
+      return `\n🔁 ${model} failed (${statusName ? `${status} ${statusName}` : status}) - ${answered}.`;
+  }
+}
+
 export function formatFooter({
   usageMetadata,
   model,
@@ -357,6 +422,7 @@ export function formatFooter({
   dropped,
   skipped,
   searchQueries,
+  fallback,
 }) {
   const inputTokens = usageMetadata?.promptTokenCount ?? 0;
   const outputTokens = usageMetadata?.candidatesTokenCount ?? 0;
@@ -378,19 +444,80 @@ export function formatFooter({
   return (
     `\n\n---\n🔢 ${inputTokens} input / ${outputTokens} output / ${thinkingTokens} thinking tokens ` +
     `| 🔍 ${sourceCount} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}${skippedNote}` +
-    formatSearchQueries(searchQueries)
+    formatSearchQueries(searchQueries) +
+    formatFallbackNote(fallback)
   );
 }
 
 /**
- * Fuehrt eine Gemini-Recherche mit allen drei Built-in-Tools durch
- * (Google Search, URL Context, Code Execution), setzt die Belegmarker in den
- * Antworttext und haengt Quellenliste sowie Token-Footer an.
+ * Der Fehlerkoerper der API als Objekt: status ("UNAVAILABLE", "NOT_FOUND",
+ * ...) und, falls vorhanden, der maschinenlesbare Grund aus error.details.
+ *
+ * Die message eines ApiError IST der JSON-Koerper der Fehlerantwort, auch bei
+ * einer Antwort ohne JSON - das SDK baut dann selbst eine. Trotzdem in einem
+ * try: Beides ist Beiwerk, und daran darf kein Aufruf scheitern, der sonst
+ * durchgelaufen waere.
  */
-export async function runSearch({ query, model, thinkingLevel }) {
-  const ai = getClient();
+function readErrorBody(error) {
+  try {
+    const body = JSON.parse(error.message)?.error;
+    return {
+      statusName: body?.status,
+      reason: body?.details?.find((detail) => detail.reason)?.reason,
+    };
+  } catch {
+    return {};
+  }
+}
 
-  const response = await ai.models.generateContent({
+/**
+ * Warum bei EINGERICHTETEM Backup trotzdem nicht ausgewichen wird - oder
+ * undefined, wenn der Fallback stattfindet.
+ *
+ * Jeder dieser Gruende geht als Text an den Nutzer, weil er sonst die
+ * unbeantwortbare Frage "warum hat mein Backup nicht gegriffen?" zuruecklaesst.
+ * Ein nicht eingerichtetes Backup kommt hier gar nicht an: Dann gibt es nichts
+ * zu erklaeren.
+ */
+function fallbackRefusal({ error, model, backupModel, reason }) {
+  if (backupModel === model) {
+    return "backup not tried: it is the same model as the default";
+  }
+  // Gemessen: Ein unbrauchbarer Schluessel kommt NICHT als 401 oder 403,
+  // sondern als 400 INVALID_ARGUMENT mit "API key not valid" - der Statuscode
+  // allein reicht hier also nicht. Ein 400 loest sonst durchaus einen Fallback
+  // aus, weil dahinter ein Modell stehen kann, das das Thinking-Level nicht
+  // kennt. Der Schluessel dagegen gilt fuer beide Modelle: aussichtslos.
+  if (reason === "API_KEY_INVALID") {
+    return "backup not tried: the API key is not valid, and the backup would use the same one";
+  }
+  const status = error?.status;
+  if (typeof status !== "number") {
+    // Kein HTTP-Status heisst: Die Anfrage hat die API nie erreicht oder die
+    // Verbindung brach ab. Beim zweiten Modell liefe sie ueber dieselbe
+    // Leitung zu demselben Host.
+    return "backup not tried: the request never reached the API";
+  }
+  if (NO_FALLBACK_STATUS.includes(status)) {
+    return status === 504
+      ? "backup not tried: the generation ran to the deadline and is billed - a retry would double it"
+      : `backup not tried: ${status} applies to the API key, not to the model`;
+  }
+  return undefined;
+}
+
+/**
+ * Ein Fehler, der zusaetzlich sagt, warum kein Backup versucht wurde. Als
+ * schlichter Error ohne cause, damit describeError() ihn unveraendert
+ * durchreicht - die Ursache eines Netzwerkfehlers steckt bereits im Text.
+ */
+function withRefusal(error, refusal) {
+  return new Error(`${describeError(error)} (${refusal})`);
+}
+
+/** Ein Aufruf an die API. Alles, was pro Versuch gleich bleibt, steht hier. */
+function generate(ai, { query, model, thinkingLevel }) {
+  return ai.models.generateContent({
     model,
     contents: query,
     config: {
@@ -414,6 +541,65 @@ export async function runSearch({ query, model, thinkingLevel }) {
       thinkingConfig: { thinkingLevel },
     },
   });
+}
+
+/**
+ * Fuehrt eine Gemini-Recherche mit allen drei Built-in-Tools durch
+ * (Google Search, URL Context, Code Execution), setzt die Belegmarker in den
+ * Antworttext und haengt Quellenliste sowie Token-Footer an.
+ *
+ * Scheitert das Modell und ist ein Backup uebergeben, laeuft dieselbe Anfrage
+ * ein zweites Mal - mit demselben Retry, weil der am Client haengt und nicht am
+ * Aufruf. Ob ein Backup uebergeben WIRD, entscheidet resolveCallConfig() in
+ * config.js: Ein namentlich genanntes Modell bekommt keines.
+ *
+ * Die gesamte Auswertung danach laeuft auf der Antwort, die gewonnen hat, und
+ * weiss vom Fallback nichts - bis auf den Footer, der ihn nennen muss.
+ */
+export async function runSearch({
+  query,
+  model,
+  thinkingLevel,
+  backupModel,
+  backupThinkingLevel,
+}) {
+  const ai = getClient();
+
+  let response;
+  // Bleibt undefined, wenn der Erstversuch durchlaeuft, und laesst dann die
+  // Footer-Zeile ganz entfallen.
+  let fallback;
+
+  try {
+    response = await generate(ai, { query, model, thinkingLevel });
+  } catch (error) {
+    // Ohne eingerichtetes Backup aendert sich nichts: Der Fehler geht
+    // unveraendert hinaus, wie vor diesem Feature.
+    if (!backupModel) throw error;
+
+    const { statusName, reason } = readErrorBody(error);
+    const refusal = fallbackRefusal({ error, model, backupModel, reason });
+    if (refusal) throw withRefusal(error, refusal);
+
+    fallback = { model, status: error.status, statusName };
+    model = backupModel;
+    // Ohne eigenes Level erbt das Backup das fuer DIESEN Aufruf tatsaechlich
+    // genutzte, nicht den gespeicherten Standard: Wer thinkingLevel "high"
+    // uebergeben hat, will es auch beim Ausweichmodell.
+    thinkingLevel = backupThinkingLevel ?? thinkingLevel;
+
+    try {
+      response = await generate(ai, { query, model, thinkingLevel });
+    } catch (backupError) {
+      // Beide Fehler mit ihrem Modell davor. Stuende hier nur der zweite,
+      // suchte man am falschen Modell; describeError() auf beiden, damit die
+      // cause eines Netzwerkfehlers nicht verlorengeht.
+      throw new Error(
+        `${fallback.model}: ${describeError(error)} | ` +
+          `backup ${backupModel}: ${describeError(backupError)}`,
+      );
+    }
+  }
 
   const candidate = response.candidates?.[0];
   const { sources, chunkNumbers, skipped } = buildSourceList(candidate);
@@ -441,6 +627,10 @@ export async function runSearch({ query, model, thinkingLevel }) {
     // Gleiche Absicherung wie bei den Supports: Ohne Suchtreffer fehlt das
     // Feld, dann entfaellt die Zeile.
     searchQueries: candidate?.groundingMetadata?.webSearchQueries ?? [],
+    // model und thinkingLevel oben zeigen nach einem Fallback bereits das
+    // Backup - der Footer nennt damit von selbst, was tatsaechlich geantwortet
+    // hat. Diese Zeile sagt zusaetzlich, warum.
+    fallback,
   });
 
   // Der Footer bleibt in jedem Fall der letzte Bestandteil der Antwort.

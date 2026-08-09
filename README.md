@@ -31,9 +31,14 @@ training data alone. It builds on nothing but the official `@google/genai` and
   overridden for a single request, and both are read at call time, so a change
   applies to the next answer rather than after a client restart. The thinking
   level is the main lever on how many tokens a query consumes.
+- **An optional backup model.** Gemini's overload is model-dependent, so you can
+  name a second model that the same request goes to once the retries are used
+  up. Off unless you set it, never a model of the server's choosing, and the
+  footer says whenever it stood in.
 - **Failures stay visible.** An answer cut off at the token limit or stopped by a
   filter is marked as such, dropped citation markers are counted, and a failing
-  model returns an error instead of a quiet switch to a different one.
+  model returns an error rather than quietly switching to something you did not
+  choose.
 - **Search, URL Context and Code Execution in one call.** Gemini can read a page
   you name and run code; if it did, the code and its output are part of the
   answer. The only instruction the server adds is today's date - what gets
@@ -170,7 +175,8 @@ individual call visible.
 - **`gemini-search`** - research via Google Search, URL Context and Code
   Execution in one call. Besides the query it accepts an optional `model` and
   `thinkingLevel` that apply to this one call; left out, the saved defaults are
-  used. The answer contains inline citation markers, a source
+  used, and naming a `model` also disables the backup for that call. The answer
+  contains inline citation markers, a source
   list and a token footer. If Gemini executed code, the code and its result
   appear under `Code execution:` after the answer text - the calculation is
   evidence, so it belongs where the sources are. If the answer did not finish
@@ -178,8 +184,10 @@ individual call visible.
 - **`gemini-list-models`** - lists the models available for your API key with
   their token limits. By default only those usable with this server; with
   `all: true`, every one.
-- **`gemini-set-model`** - persists the default model and/or default thinking
-  level (only those two values, never the API key).
+- **`gemini-set-model`** - persists the default model, the default thinking
+  level and/or the backup model (only those values, never the API key). The
+  answer names what was written and the resulting configuration in full, so
+  which models are in force is never something to be guessed at.
 
 ## Citations and searches
 
@@ -252,17 +260,29 @@ npx -p @brobertoblanko/gemini-grounding-mcp gemini-grounding config
 `npx @brobertoblanko/gemini-grounding-mcp` starts the MCP server rather than the
 CLI - it then waits silently on stdio, which looks like a hang.
 
-| Command                                 | Effect                                                                                                |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `gemini-grounding "<query>"`            | Search using the saved defaults; `--model <id>` and `--thinking <level>` apply to this call only      |
-| `gemini-grounding config`               | Shows the saved model, thinking level, whether an API key is present, and where the config file lives |
-| `gemini-grounding models [--all]`       | Lists the models usable with this server and their token limits; `--all` lists every one              |
-| `gemini-grounding set-model <id>`       | Persists the default model; add `--thinking <level>` to save both in one call                         |
-| `gemini-grounding set-thinking <level>` | Persists the default thinking level (`minimal`, `low`, `medium`, `high`); `--model <id>` saves both   |
-| `gemini-grounding help`                 | Short help                                                                                            |
+| Command                                 | Effect                                                                                                                              |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `gemini-grounding "<query>"`            | Search using the saved defaults; `--model <id>` and `--thinking <level>` apply to this call only                                    |
+| `gemini-grounding config`               | Shows the saved default and backup model with their thinking levels, whether an API key is present, and where the config file lives |
+| `gemini-grounding models [--all]`       | Lists the models usable with this server and their token limits; `--all` lists every one                                            |
+| `gemini-grounding set-model <id>`       | Persists the default model; add `--thinking <level>` to save both in one call                                                       |
+| `gemini-grounding set-thinking <level>` | Persists the default thinking level (`minimal`, `low`, `medium`, `high`); `--model <id>` saves both                                 |
+| `gemini-grounding set-backup <id\|off>` | Persists a model to retry a failed request with; `--thinking <level>` gives it its own level, on its own it changes only that level |
+| `gemini-grounding help`                 | Short help                                                                                                                          |
 
 Which model and thinking level a call actually used is shown in the footer under
-every answer.
+every answer. Every save prints the resulting configuration, so a change never
+has to be followed by `config`:
+
+```console
+$ gemini-grounding set-backup gemini-3.5-flash
+Saved - Backup: gemini-3.5-flash, Backup thinking level: inherited from the call
+
+Primary: gemini-flash-latest · high
+Backup:  gemini-3.5-flash · high (inherited)
+```
+
+The MCP server's `gemini-set-model` answers with the same two lines.
 
 **Shared configuration.** The CLI and the MCP server read and write the same
 config file. A `set-model` in the terminal therefore also changes what the MCP
@@ -392,8 +412,8 @@ the service terms and your configuration are appropriate for it.
 
 ## Where settings are stored
 
-`gemini-set-model` and the CLI's `set-*` commands write the default model and
-thinking level to:
+`gemini-set-model` and the CLI's `set-*` commands write the default model,
+thinking level and backup model to:
 
 | Platform                         | Location                                            |
 | -------------------------------- | --------------------------------------------------- |
@@ -403,9 +423,9 @@ thinking level to:
 
 Neither the file nor its directory is created until you save a setting for the
 first time. Delete the file to return to the built-in defaults
-(`gemini-flash-latest`, thinking level `medium`). It holds nothing but those two
-values - **never the API key**. Run `gemini-grounding config` to see the exact
-path on your machine.
+(`gemini-flash-latest`, thinking level `medium`, no backup model). It holds
+nothing but model names and thinking levels - **never the API key**. Run
+`gemini-grounding config` to see the exact path on your machine.
 
 ## Which models are usable
 
@@ -428,6 +448,7 @@ condition prevents:
 
 - [specs.md](https://github.com/brobertoblanko/gemini-grounding-mcp/blob/main/docs/specs.md) - architecture and design decisions, also [in German](https://github.com/brobertoblanko/gemini-grounding-mcp/blob/main/docs/specs.de.md)
 - [cli.md](https://github.com/brobertoblanko/gemini-grounding-mcp/blob/main/docs/cli.md) - the command line tool in detail, also [in German](https://github.com/brobertoblanko/gemini-grounding-mcp/blob/main/docs/cli.de.md)
+- [google_errors.md](https://github.com/brobertoblanko/gemini-grounding-mcp/blob/main/docs/google_errors.md) - what each Gemini API error code means, whether it is retried and what it costs, also [in German](https://github.com/brobertoblanko/gemini-grounding-mcp/blob/main/docs/google_errors.de.md)
 - [CLAUDE.md](https://github.com/brobertoblanko/gemini-grounding-mcp/blob/main/CLAUDE.md) - working rules for Claude Code in this repository (German)
 
 ## License

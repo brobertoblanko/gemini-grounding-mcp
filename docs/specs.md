@@ -55,7 +55,10 @@ Implemented as flat modules without a `src/` layout and without a build step
   built-in test runner, without an additional dependency).
 - `config.js` - reads and writes the persistent model choice in a `config.json`
   at the platform's conventional location for user state (see "Configuration
-  file location" below).
+  file location" below). `resolveCallConfig` also lives here, the single answer
+  to what a given call actually runs with, and so do `formatSavedValues` and
+  `formatConfigState`, the single answer to what a save changed and what
+  applies afterwards - all three shared by `index.js` and `cli.js`.
 - `cli.js` - a second frontend on the same core: the same exports from
   `gemini.js` and `config.js` that `index.js` uses, reachable from the command
   line. Without an additional dependency (a `switch` over `process.argv` is
@@ -107,7 +110,20 @@ Implemented as flat modules without a `src/` layout and without a build step
   does not want half the statement to expire. The command's own option stays an
   error - `set-model x --model y` names two models, and which one is meant only
   the caller knows. The confirmation line names every value that was written,
-  so a stored value is never indistinguishable from a discarded one.
+  so a stored value is never indistinguishable from a discarded one, and the
+  stored state follows underneath (see "Reporting what was saved" below).
+
+  The backup is the one thing that breaks that merge rule, deliberately: it is
+  written **as a unit**, so naming a backup model without a level removes a
+  previously stored one rather than leaving it in place. The level belongs to
+  that one model - carried across a change of backup, it would silently apply
+  to a model it was never chosen for. Leaving the model out and passing only a
+  level is the way to change the level of the backup already stored.
+
+  The rule sits in `setSavedConfig` rather than in `cli.js`, for the same
+  reason `resolveCallConfig` does: the MCP handler writes the same file, and a
+  model setting a new backup there has no reason to explicitly pass `null`. Two
+  interfaces with opposing semantics on one file is not explainable later.
 
 ## Verified API facts (as of 07/2026)
 
@@ -485,7 +501,8 @@ const skippedNote =
 const footer =
   `\n\n---\n🔢 ${inputTokens} input / ${outputTokens} output / ${thinkingTokens} thinking tokens ` +
   `| 🔍 ${sources.length} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}${skippedNote}` +
-  formatSearchQueries(searchQueries);
+  formatSearchQueries(searchQueries) +
+  formatFallbackNote(fallback);
 
 const sourcesBlock = sourceList ? `\n\nSources:\n${sourceList}` : "";
 
@@ -510,6 +527,10 @@ Sources:
 
 The number of dropped markers belongs in the footer because it changes how much the response can be relied on: if a marker is missing, the passage may be ungrounded - or the verification discarded it.
 That matches the purpose of the footer, which is to make the actual state of each individual call visible.
+
+`formatFallbackNote` follows the same pattern as `formatSearchQueries`: with no fallback it returns an empty string, so the line disappears entirely.
+It uses 🔁 rather than ⚠️, because a successful fallback is not a degraded answer - the warning sign stays reserved for cases where something is wrong with the answer itself.
+Details in "The optional backup model" below.
 
 ### The search queries line
 
@@ -546,7 +567,7 @@ They are met today, and they are binding from here on: **anyone considering a ch
 | I1 | No link is ever omitted | Every `groundingChunk` with a URI appears in the list, even when no marker points at it. No cap, no selection, no deduplication by domain |
 | I2 | No link is altered, URI **and** title | Redirect URLs go out byte for byte; the title counts as part of the link |
 | I3 | No redirect is resolved | The only outgoing traffic is the SDK call to the Gemini API |
-| I4 | Nothing is cached | Grounded Results never touch the disk; `config.json` holds the model name and thinking level, nothing else |
+| I4 | Nothing is cached | Grounded Results never touch the disk; `config.json` holds model names and thinking levels, nothing else |
 
 Deduplicating by identical URI violates none of them, because no destination is lost in the process.
 Deduplicating by domain would violate I1.
@@ -642,9 +663,36 @@ If the filter yields no model at all - because the API no longer provides the fi
 
 ### gemini-set-model
 
-Stores the model ID and/or thinking level persistently in a `config.json` (location see below).
-The two values can be set independently of one another - a merge makes sure that setting one does not overwrite the other already-stored value.
+Stores the model ID, thinking level and/or backup model persistently in a `config.json` (location see below).
+The values can be set independently of one another - a merge makes sure that setting one does not overwrite the others already stored.
 This choice survives server restarts until it is changed again.
+
+Two of the four parameters have a state beyond "a value":
+
+| Parameter | `undefined` | A value | Special |
+| --- | --- | --- | --- |
+| `backupModel` | leave untouched | model ID | `false` switches the fallback off, and records that this was deliberate |
+| `backupThinkingLevel` | leave untouched, **except** alongside a `backupModel`, where it resets | thinking level | `null` deletes the key, so the backup inherits the level of the call again |
+
+`null` deletes for all four keys, not just for `backupThinkingLevel` - a special rule for exactly one field is not explainable later.
+`false` for `backupModel` is deliberately stored rather than deleted: for behaviour, "never configured" and "switched off" are the same thing, but for the reader of `gemini-grounding config` they are two different statements.
+
+The exception in that table is the unit rule described under "Implementation": a `backupModel` arriving without a level of its own resets the stored one, so a level chosen for the previous backup does not silently carry over to the new model.
+`setSavedConfig` therefore returns what it actually wrote, `null` included - only then can the confirmation name the level that fell away instead of concealing it.
+Passing `backupThinkingLevel` on its own is how the level of the stored backup is changed without touching the model.
+That requires a stored backup that is switched on: a level without its model has nothing to belong to, would sit in the file without effect, and the confirmation would name a value that the state block two lines below revokes as `not set` or `disabled`.
+`findBackupLevelProblem` in `config.js` rejects both cases before anything is written - `null` stays exempt, because the way back to "inherits from the call" must remain open even when no backup is left.
+
+That check and `findModelCollision` below are the same shape for the same reason, and both guard both interfaces.
+The rule used to live in `cli.js` alone, where `gemini-set-model` did not pass it: a model told to store a backup level has no reason to read the stored state first.
+
+**Default and backup may not become the same model**, and `findModelCollision` in `config.js` rejects that before anything is written.
+Were they equal, no fallback would take place at all: `runSearch` refuses it with "it is the same model as the default" - a safety net that only fires on the next failing call, leaving the backup silently dead until then.
+
+The check runs on the state the write **would produce**, not on the individual argument, because this handler is the only place that can set both values in a single call - `{ model: "x", backupModel: "x" }` passes every per-argument check and still leaves the configuration broken.
+The same function guards the CLI's `set-model`, `set-thinking --model` and `set-backup`; `set-thinking --model <id>` was the path that used to be missing one, which is why the rule now sits where all of them pass through rather than in each branch.
+
+A call that names no model at all is let through even when the stored values already collide - it did not cause that state, and blocking it would stop exactly the commands that have nothing to do with it.
 
 The confirmation names the full path, and the call sits inside a `try`/`catch`: the target directory is only created when saving and may be unwritable depending on permissions or a relocated `%APPDATA%`.
 Without the `catch`, a write error would escape the handler uncaught instead of arriving at the client as an `isError` response.
@@ -664,22 +712,59 @@ server.registerTool(
         .enum(["minimal", "low", "medium", "high"])
         .optional()
         .describe("Reasoning depth of the model"),
+      backupModel: z
+        .union([z.string(), z.literal(false)])
+        .optional()
+        .describe("Model to retry the same request with; false switches it off"),
+      backupThinkingLevel: z
+        .enum(["minimal", "low", "medium", "high"])
+        .nullable()
+        .optional()
+        .describe("Reasoning depth of the backup model"),
     },
   },
-  async ({ model, thinkingLevel }) => {
+  async ({ model, thinkingLevel, backupModel, backupThinkingLevel }) => {
     // at least one parameter is required, otherwise an error
-    setSavedConfig({ model, thinkingLevel }); // merge instead of overwrite, see config.js
+    // findModelCollision and findBackupLevelProblem before writing - see config.js
+    // merge instead of overwrite, except for the backup unit - see config.js
+    const saved = setSavedConfig({ model, thinkingLevel, backupModel, backupThinkingLevel });
     return {
       content: [
         {
           type: "text",
-          text: `Saved - model: ${model}, thinking level: ${thinkingLevel}`,
+          text: `Saved to ${CONFIG_PATH} - ${formatSavedValues(saved)}\n\n` + formatConfigState(),
         },
       ],
     };
   },
 );
 ```
+
+### Reporting what was saved
+
+Every save answers two different questions, and both are needed:
+
+```text
+Saved - Backup: gemini-3.5-flash, Backup thinking level: inherited from the call
+
+Primary: gemini-flash-latest · high
+Backup:  gemini-3.5-flash · high (inherited)
+```
+
+`formatSavedValues` names each value that was written.
+That line exists because a stored value would otherwise be indistinguishable from a discarded parameter - the failure it was introduced against.
+It runs on the **return value** of `setSavedConfig`, not on the arguments, so a level dropped by the unit rule appears rather than vanishing silently.
+
+`formatConfigState` names the complete stored state.
+Without it, a change would have to be followed by `config` to find out what the next query actually runs with, and that gap is exactly where somebody ends up working with a model they did not mean.
+For the MCP server this line is what satisfies the working rule in `CLAUDE.md` that a model change is confirmed by naming the default now in force.
+
+Both functions live in `config.js` and are used by the CLI and the MCP handler alike, which differ only in their prefix.
+Two separate copies would drift, and then the same change would say different things depending on which interface made it.
+
+On the backup, the inherited level is printed as its value rather than as the bare word "inherited": what the backup would run with if it stepped in right now is the information being asked for.
+The suffix says the value is not its own but travels along - a call carrying its own `thinkingLevel` is inherited instead.
+The middle dot separates as it does in `formatSearchQueries`: model names contain hyphens and digits of their own, between which another hyphen would disappear.
 
 ### Configuration file location
 
@@ -722,20 +807,35 @@ The way there is described in the README, and resetting costs a single call.
 ### Resolving the defaults per call
 
 The `gemini-search` tool uses the stored values as defaults, provided nothing is passed explicitly on the call.
-Resolution deliberately happens **in the handler at call time** (`model ?? getSavedModel()`) rather than as a Zod `.default()` in the `inputSchema`: a schema default would be evaluated once when the tool is registered and then frozen, so `gemini-set-model` would only take effect after a server restart.
+Resolution deliberately happens **at call time** rather than as a Zod `.default()` in the `inputSchema`: a schema default would be evaluated once when the tool is registered and then frozen, so `gemini-set-model` would only take effect after a server restart.
 `model` and `thinkingLevel` are therefore `optional()` in the schema.
 
-```javascript
-function getSavedModel() {
-  return readConfig().model ?? FALLBACK_MODEL; // "gemini-flash-latest" without config.json
-}
+`resolveCallConfig` in `config.js` answers the question for the MCP handler and the CLI alike, so both give the same answer:
 
-function getSavedThinkingLevel() {
-  return readConfig().thinkingLevel ?? FALLBACK_THINKING_LEVEL; // "medium" without config.json
+```javascript
+export function resolveCallConfig({ model, thinkingLevel } = {}) {
+  const backup = model === undefined ? getSavedBackup() : {};
+  return {
+    model: model ?? getSavedModel(), // "gemini-flash-latest" without config.json
+    thinkingLevel: thinkingLevel ?? getSavedThinkingLevel(), // "medium" without config.json
+    backupModel: backup.model,
+    backupThinkingLevel: backup.thinkingLevel,
+  };
 }
 ```
 
-Actually implemented (including `setSavedConfig`) in `config.js` - see "Implementation" above.
+**A model named on the call gets no backup.**
+Whoever names one wants that one - frequently in order to check whether it is reachable at all.
+An answer from a different model does not answer that question, it hides it.
+
+The rule is syntactic and applies even when the named model happens to equal the stored default: what counts is the explicit naming, not the value.
+Otherwise the same call would behave differently depending on what is stored, and nothing about the call would show which.
+An explicit `thinkingLevel` does not affect the fallback, because the model then still is the stored default.
+
+The rule lives in this one function rather than in `runSearch`, which is what keeps `gemini.js` free of any notion of it: there, a backup is used if one was passed, and that is all.
+As a pure function without network access, `resolveCallConfig` is also the only place where the rule can be tested at all (`test/resolve.test.js`) - through the CLI it would take a real API call to observe.
+
+Actually implemented (including `setSavedConfig` and `getSavedBackup`) in `config.js` - see "Implementation" above.
 
 `readConfig()` falls back to the defaults for **any** unreadable file, but it only stays silent about the missing one.
 Before the first stored value there is no file, and the defaults are exactly what is wanted then.
@@ -743,7 +843,7 @@ Everything else - broken JSON after an interrupted write, missing read permissio
 Such a case therefore produces one warning naming the path and the original message.
 
 It goes to **stderr**, never to stdout: the MCP server speaks JSON-RPC over stdout, where a single stray line breaks the connection to the client.
-A module-level flag limits it to one occurrence, because `readConfig()` runs twice per call - once for the model, once for the thinking level.
+A module-level flag limits it to one occurrence, because `readConfig()` runs three times per call - once for the model, once for the thinking level, once for the backup. Without the flag the same warning would stand there three times over and look like three separate faults.
 
 ## Transient errors and retries
 
@@ -872,9 +972,83 @@ Node throws `TypeError: fetch failed`, which is not among them.
 The retry configured above therefore covers the API's status codes only.
 A DNS hiccup or a reset connection reaches the client immediately and unrepeated - which makes the message that reaches it the only thing it has to go on.
 
+### The optional backup model
+
+The retry reduces how often a transient error reaches the client; it does not remove the error class.
+The observed triple 503 outlasted all four attempts.
+What remains after that is a second model - because the overload is observably **model-dependent**, apparently even between an alias and the model it points to.
+
+**Opt-in.** Without a configured `backupModel` nothing changes: the error goes out exactly as before.
+That is what keeps the working rule "no automatic fallback without asking" intact - the user names the evasive model in advance, and every call that used it says so in the footer.
+
+Sequence in `runSearch`, once the SDK has exhausted its four attempts:
+
+1. `error.status` against `NO_FALLBACK_STATUS`; a network error carries no status and drops out by itself
+2. same request to `backupModel`, with `backupThinkingLevel ?? thinkingLevel`
+3. the SDK's retry applies again automatically, because it hangs on the client rather than on the call
+4. if that fails too: one error naming both models and both causes
+
+#### Which errors trigger it
+
+A **negative list**, and that is the actual decision here.
+An unknown future error code gets the fallback automatically, instead of dropping silently through a positive list.
+
+```javascript
+export const NO_FALLBACK_STATUS = [401, 403, 504];
+```
+
+The three exceptions come from two different reasons.
+`401` and `403` are **hopeless**: both hang on the API key, and the second call uses the same one, so the model cannot possibly be the cause.
+`504` is **too expensive**: on this server it is usually the server's own deadline, hence a generation that ran in full and is billed. A fallback would double it and add up to another 290 seconds of waiting.
+
+Deliberately **not** the same list as `RETRY_OPTIONS`.
+The two answer different questions - the retry "does waiting help?", the fallback "can a different model be the difference?".
+On `429` the answers diverge: waiting achieves nothing, because the SDK ignores Google's `retryDelay`, while switching achieves something at once, because quotas count per model.
+`test/fallback.test.js` pins that divergence down, because the two lists look similar enough to be "tidied up" into one.
+
+One measured detail defeats the status code as the sole criterion: **an invalid API key does not arrive as 401 or 403 but as a `400 INVALID_ARGUMENT`** carrying `API key not valid`.
+A 400 otherwise does justify a fallback - behind it can be a model that does not know the thinking level, and that another model accepts the same request is precisely the proof.
+The key, however, applies to both.
+This one case is therefore recognised by `reason: "API_KEY_INVALID"` in `error.details`, the only place where this server evaluates anything below the status code.
+
+#### What the footer says
+
+The `🤖` field is correct after a fallback all by itself, because `formatFooter` receives the model and level that actually ran.
+It only shows **what** answered, though, not that anything went wrong - hence the extra line:
+
+```text
+🔁 gemini-flash-latest does not exist (404) - answered by backup. Update your default.
+```
+
+Three codes get a suffix, because with them there is something **to do**:
+
+| Trigger | Line |
+| --- | --- |
+| 404 | `does not exist (404) - answered by backup. Update your default.` |
+| 429 | `hit its quota (429) - answered by backup.` |
+| 400 | `rejected the request (400) - answered by backup. Check the thinking level of your default model.` |
+| everything else | `failed (503 UNAVAILABLE) - answered by backup.` |
+
+Without that distinction, a permanent 404 reads like a transient glitch and nobody ever fixes the broken default.
+The 400 is the only one where the line performs real diagnosis.
+
+Position inside the footer, for three reasons: the footer stays the last component, nothing from the server comes between the answer and its links (see "Where the server adds or rearranges content"), and the line sits right next to the `🤖` field it explains.
+
+#### The three cases without a footer
+
+When no fallback happens there is no answer, so there is no footer either - the reason has to travel in the error message.
+Without it, the unanswerable question "why did my backup not kick in?" is what remains:
+
+- **both failed** - both errors, each with its model in front of it. With only the second one there, you would go looking at the wrong model. Built through the existing `describeError()` on both, so the `cause` of a network error survives
+- **fallback deliberately skipped** - `backup not tried: …` plus the reason, for the exceptions above
+- **backup identical to the default** - a configuration mistake; every write path rejects it beforehand (`findModelCollision`, see "gemini-set-model"), and `runSearch` catches it a second time, because a hand-edited `config.json` reaches no write path at all
+
+A model named explicitly on the call is **not** among these cases and gets no note.
+`resolveCallConfig` then simply passes no backup, and that a self-named model is not replaced comes as no surprise to the caller.
+
 ### Why the retry does not appear in the footer
 
-The repeats happen inside the SDK and leave no trace.
+Unlike the fallback, which is this server's own control flow and therefore observable, the repeats happen inside the SDK and leave no trace.
 Neither `ApiError` nor the successful `HttpResponse` carries an attempt count, and `HttpOptions` offers no transport or fetch hook that could observe one - it exposes `baseUrl`, `baseUrlResourceScope`, `apiVersion`, `headers`, `timeout`, `extraBody` and `retryOptions`, nothing else.
 
 Counting them would mean wrapping the global `fetch` and propagating a per-call context through `AsyncLocalStorage`, because several `gemini-search` calls can run in parallel and a global counter would mix them up.

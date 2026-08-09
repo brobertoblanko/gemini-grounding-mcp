@@ -62,18 +62,77 @@ Eine Option ohne Bedeutung für den gewählten Befehl bricht mit Exit-Code 1 ab 
 | `"<anfrage>" --model <id> --thinking <level>` | Gilt nur für diesen Aufruf, nichts wird gespeichert |
 | `set-model <id> --thinking <level>` | Speichert **beides** |
 | `set-thinking <level> --model <id>` | Speichert **beides** |
+| `set-backup <id> --thinking <level>` | Speichert das Backup-Modell **und** sein eigenes Thinking-Level |
+| `set-backup <id>` | Speichert das Backup-Modell und **entfernt** ein zuvor gespeichertes Backup-Level |
+| `set-backup --thinking <level>` | Ändert nur das Level des bereits gespeicherten Backups |
+| `set-backup off --thinking <level>` | Fehler - ein abgeschaltetes Backup hat kein Thinking-Level |
 | `set-model <id> --model <id2>` | Fehler - zwei Modelle, und welches gemeint ist, wissen nur Sie |
 | `models --all` | Listet alle Modelle, auch die unbrauchbaren |
 | `config`, `help`, `models` mit `--model` / `--thinking` | Fehler |
 
-Die Bestätigungszeile nennt jeden Wert, der tatsächlich geschrieben wurde:
+Jedes Speichern antwortet zweimal - was sich geändert hat, und was ab jetzt gilt:
 
 ```console
 $ gemini-grounding set-model gemini-flash-latest --thinking low
 Saved - Model: gemini-flash-latest, Thinking level: low
+
+Primary: gemini-flash-latest · low
+Backup:  gemini-3.5-flash · low (inherited)
 ```
 
-Was dort nicht steht, ist auch nicht in der Datei gelandet.
+Die erste Zeile nennt jeden Wert, der tatsächlich geschrieben wurde; was dort nicht steht, ist auch nicht in der Datei gelandet.
+Die beiden darunter nennen den vollständigen gespeicherten Zustand, sodass auf eine Änderung nie ein `config` folgen muss, um zu sehen, womit die nächste Anfrage tatsächlich läuft.
+
+Beim Backup steht dabei der Wert und nicht bloß das Wort „inherited": Womit das Backup liefe, wenn es jetzt einspränge, ist die Auskunft, um die es geht.
+Der Zusatz sagt dazu, dass der Wert nicht ihm gehört, sondern mitwandert - bekommt ein Aufruf sein eigenes `--thinking`, erbt das Backup dieses.
+
+## Das Backup-Modell
+
+`set-backup <id>` benennt ein Modell, an das dieselbe Anfrage geht, wenn das Standardmodell scheitert - etwa weil es überlastet ist (`503`).
+Ohne Einstellung aus; `set-backup off` schaltet es wieder ab.
+Welche Fehler es auslösen: [google_errors.de.md](./google_errors.de.md).
+
+Anders als das Standardmodell und sein Level wird das Backup **als Einheit** geschrieben.
+Ein Backup-Modell ohne `--thinking` zu nennen entfernt ein zuvor gespeichertes Backup-Level, und das Backup erbt das Level des Aufrufs, für den es einspringt.
+Das Level gehört zu diesem einen Modell - bliebe es beim Wechsel des Backups liegen, gälte es stillschweigend für ein Modell, für das es nie gewählt wurde.
+Die Regel steht in `setSavedConfig` und nicht in der CLI, damit `gemini-set-model` auf dem MCP-Server ihr ebenfalls folgt.
+
+Um nur das Level zu ändern, lassen Sie das Modell weg:
+
+```console
+$ gemini-grounding set-backup --thinking minimal
+Saved - Backup thinking level: minimal
+
+Primary: gemini-flash-latest · low
+Backup:  gemini-3.5-flash · minimal
+```
+
+Dafür muss bereits ein Backup gespeichert und eingeschaltet sein - ein Level ohne sein Modell hat keinen Bezug:
+
+```console
+$ gemini-grounding set-backup --thinking minimal
+no backup model is set - a thinking level on its own has nothing to belong to. Name the backup model together with the level.
+```
+
+Dasselbe gilt für `set-backup off --thinking <level>`, das mit `a backup that is switched off has no thinking level` abbricht.
+Beide Meldungen kommen aus `findBackupLevelProblem` in `config.js` und lauten auf dem MCP-Server genauso - deshalb nennen sie keinen Befehl der CLI.
+
+Standard und Backup dürfen nicht dasselbe Modell sein, und jeder Befehl, der ein Modell schreibt, weist das ab - `set-model <id>`, `set-thinking <level> --model <id>` und `set-backup <id>` gleichermaßen:
+
+```console
+$ gemini-grounding set-backup gemini-flash-latest
+"gemini-flash-latest" is already the default model - a backup only helps if it is a different one.
+```
+
+Geprüft wird der Zustand, den das Schreiben **erzeugen würde**, und deshalb sitzt die Prüfung an der einen Stelle, durch die alle drei Befehle laufen (`findModelCollision` in `config.js`, gemeinsam mit dem MCP-Server genutzt).
+Ein Befehl, der gar kein Modell nennt, wird auch dann durchgelassen, wenn die gespeicherten Werte bereits kollidieren: `set-thinking low` hat diesen Zustand nicht verursacht und soll nicht an ihm scheitern.
+`runSearch` fängt die Kollision ein zweites Mal ab, aber erst beim nächsten fehlgeschlagenen Aufruf - bis dahin war das Backup lautlos tot, und genau dafür gibt es diese Prüfung.
+
+**`--model` bei einer Suche schaltet das Backup für diesen Aufruf ab.**
+Ein Modell zu nennen heißt meist, genau dieses Modell prüfen zu wollen, und eine Antwort von einem anderen beantwortet diese Frage nicht.
+
+`gemini-grounding config` zeigt alle drei Zustände - ein Modell, `disabled` oder `not set`.
+Die letzten beiden verhalten sich gleich; der Unterschied hält fest, ob die Entscheidung je getroffen wurde.
 
 ## Fehler bleiben vollständig sichtbar
 
@@ -87,11 +146,18 @@ Für einen Tippfehler braucht niemand einen Stacktrace.
 
 ## Den API-Key prüfen
 
-```bash
-gemini-grounding config
+```console
+$ gemini-grounding config
+Primary: gemini-flash-latest · medium
+Backup:  gemini-3.5-flash · medium (inherited)
+API key: set (39 chars)
+Config:  /home/sie/.config/gemini-grounding-mcp/config.json
 ```
 
-Geprüft wird nur, ob überhaupt ein Key in der Umgebung ankommt; ausgegeben wird seine Länge - **niemals der Wert selbst**, auch nicht gekürzt.
+Die ersten beiden Zeilen sind dieselben, die jedes Speichern ausgibt - es gibt damit nur eine Darstellung von „womit arbeite ich gerade", die man kennen muss.
+`config` ergänzt die beiden Angaben, die nur hier interessieren.
+
+Beim Key wird nur geprüft, ob überhaupt einer in der Umgebung ankommt; ausgegeben wird seine Länge - **niemals der Wert selbst**, auch nicht gekürzt.
 Ob der Key tatsächlich gültig ist, kann nur eine echte Anfrage zeigen; ein erfolgreiches `config` ist also eine notwendige, keine hinreichende Bedingung.
 
 ## Aus einem Klon heraus arbeiten
