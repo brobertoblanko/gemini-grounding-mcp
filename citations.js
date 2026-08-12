@@ -1,58 +1,50 @@
-// Belegmarker ([1], [2]) fuer den Antworttext. Die Gemini-API weist ueber
-// groundingSupports aus, welche Textstelle durch welche Quelle gestuetzt ist;
-// diese Datei setzt daraus Marker in den Text. Sichtbar werden soll dabei
-// weniger, WELCHE Quelle einen Satz stuetzt, als vielmehr, OB er ueberhaupt
-// belegt ist - gemessen an einer realen Antwort waren 27 % des Textes durch
-// keinen einzigen Support gedeckt, ohne dass man es der Antwort ansah.
+// Citation markers ([1], [2]) for the answer text, built from the API's
+// groundingSupports. What should become visible is less WHICH source backs a
+// sentence than WHETHER it is backed at all - measured on a real response, 27 %
+// of the text was covered by no support, and nothing about it showed.
 //
-// Die Datei greift bewusst weder auf die API noch auf die Konfiguration zu:
-// Sie bekommt Text und Metadaten uebergeben und liefert Text zurueck. Damit
-// ist sie ohne Netzwerk und ohne API-Key pruefbar (test/citations.test.js).
+// No access to the API or the configuration: text and metadata in, text out,
+// hence checkable without network or API key (test/citations.test.js).
 //
-// Bei strenger Lesart stellt sich hier eine Frage aus Googles Terms: Sie
-// untersagen es, "any other content" zwischen die Grounded Results zu mischen,
-// und genau das tun die Marker. Die Entlastung ist dieselbe Quelle, auf die
-// dieser Kommentar wegen des Byte-Offset-Fehlers ohnehin verweist - Googles
-// eigene Referenzimplementierung in der Gemini CLI setzt die Marker genauso.
-// Wenn Google das Verfahren selbst vorfuehrt, meint die Klausel nicht es,
-// sondern fremde Inhalte wie Werbung. Die Marker verweisen ausserdem auf die
-// mitgelieferten Links, statt von ihnen wegzufuehren.
+// On a strict reading the terms raise a question here: they forbid
+// interspersing "any other content" with the Grounded Results, and that is what
+// the markers do. The exemption is the same source this comment cites for the
+// byte offsets anyway - Google's own reference implementation in the Gemini CLI
+// places the markers the same way. If Google demonstrates the practice itself,
+// the clause means foreign content such as advertising. The markers also point
+// at the supplied links rather than away from them.
 //
-// Gerechnet wird durchgehend in BYTES, nicht in Zeichen: startIndex und
-// endIndex sind laut Typdefinition "measured in bytes". Bei einer deutschen
-// Testantwort stimmte keine einzige von 28 Positionen zeichenbasiert, alle 28
-// bytebasiert; Text und Bytes liefen am Ende um 44 Stellen auseinander. Google
-// selbst hatte diesen Fehler in der Gemini CLI (PR google-gemini/
-// gemini-cli#5956, aufgefallen an japanischem Text).
+// All arithmetic is in BYTES, never characters: startIndex and endIndex are
+// documented as "measured in bytes". On a German test response not one of 28
+// positions matched character-based and all 28 matched byte-based; by the end,
+// text and bytes had drifted 44 places apart. Google made the same mistake in
+// the Gemini CLI (PR google-gemini/gemini-cli#5956, noticed on Japanese text).
+// Full derivation: docs/specs.md, "Implementation (`citations.js`)".
 
 /**
- * Findet die Bereiche, in die kein Marker gesetzt werden darf: Markdown-Code
- * im Fliesstext. Ein Marker mitten in einem Codebeispiel macht aus
- * `copy.replace(obj, x=1)` ein `copy.replace(obj[3], x=1)` - syntaktisch
- * gueltig, inhaltlich falsch. Da gegen die Antworten dieses Servers Code
- * geschrieben wird, wiegt das schwerer als ein fehlender Marker.
+ * The ranges no marker may be placed in: Markdown code in running text. A
+ * marker inside a code example turns `copy.replace(obj, x=1)` into
+ * `copy.replace(obj[3], x=1)` - syntactically valid, factually wrong. Code gets
+ * written against the answers of this server, so that outweighs a missing
+ * marker.
  *
- * Gemeint ist NUR Code, den das Modell selbst in seinen Fliesstext schreibt.
- * Die Bloecke aus Code Execution sind eigene Parts, werden von buildText()
- * erst nach dem Einfuegen angehaengt und koennen hier nicht auftauchen.
+ * Only code the model writes into its own prose. The code execution blocks are
+ * separate parts, appended by buildText() after insertion, and cannot appear
+ * here.
  *
- * Gesucht wird in EINEM Durchlauf. Der Scan laeuft von links nach rechts, und
- * weil die umzaeunten Bloecke in der Alternation vorn stehen, verschluckt ein
- * Zaun alles, was in ihm steht - auch einzelne Backticks, die sonst als
- * Inline-Code gelesen wuerden. Eine zweite Suche mit Ueberlappungspruefung
- * braucht es dadurch nicht.
+ * One pass, left to right: the fenced blocks come first in the alternation, so
+ * a fence swallows everything inside it, including single backticks that would
+ * otherwise read as inline code. No second scan with an overlap check needed.
  *
- * Verworfen wurde die einfachere Variante, die Backticks vor der Zielposition
- * zu zaehlen und bei ungerader Anzahl zu verwerfen: Ein einzelner unpaariger
- * Backtick im Text kippt diese Zaehlung fuer den gesamten Rest, ein mit vier
- * Backticks geschlossener Block ebenso, und innerhalb einer Backtick-Sequenz
- * oszilliert sie bedeutungslos.
+ * Counting the backticks before the target position and discarding on an odd
+ * count was rejected: one unpaired backtick tips that count for the whole
+ * remaining text, a block closed with four backticks does the same, and inside
+ * a backtick sequence it oscillates meaninglessly.
  *
- * Nicht erkannt werden eingerueckte Codebloecke (vier Leerzeichen). Sie sind
- * die einzige bekannte Luecke; nachruestbar als dritte Regel, falls sie in
- * echten Antworten auftauchen.
+ * Indented code blocks (four spaces) are not detected - the only known gap,
+ * retrofittable as a third rule should it show up in real answers.
  *
- * Rueckgabe sind BYTE-Bereiche, passend zu den Offsets der API.
+ * Returns BYTE ranges, matching the API's offsets.
  */
 function findCodeRanges(text) {
   const toByte = (charIndex) => Buffer.byteLength(text.slice(0, charIndex), "utf8");
@@ -64,28 +56,28 @@ function findCodeRanges(text) {
 }
 
 /**
- * Setzt Belegmarker in den Text EINES Parts.
+ * Places citation markers in the text of ONE part.
  *
- * - text:         der Rohtext genau eines Text-Parts
- * - supports:     die groundingSupports, die zu DIESEM Part gehoeren
- * - chunkNumbers: Map vom Index in groundingChunks auf die Nummer in der
- *                 ausgegebenen Quellenliste (siehe buildSourceList)
+ * - text:         the raw text of exactly one text part
+ * - supports:     the groundingSupports belonging to THAT part
+ * - chunkNumbers: map from the index in groundingChunks to the number in the
+ *                 emitted source list (see buildSourceList)
  *
- * Liefert den Text mit Markern und die Zahl der verworfenen Marker. Verworfen
- * wird bewusst grosszuegig: Ein fehlender Marker laesst eine belegte Aussage
- * unbelegt wirken und loest damit nur zusaetzliche Vorsicht aus. Ein falsch
- * gesetzter Marker verweist auf eine Quelle, die die Aussage nicht stuetzt -
- * oder zerstoert Code. Deshalb im Zweifel immer gegen den Marker.
+ * Returns the marked text and the number of markers dropped. Dropping is
+ * deliberately generous: a missing marker makes a backed statement look
+ * unbacked and merely triggers extra caution, while a misplaced one points at a
+ * source that does not support the statement, or destroys code. When in doubt,
+ * always against the marker.
  */
 export function insertCitations({ text, supports, chunkNumbers }) {
   if (!text || supports.length === 0) return { text, dropped: 0 };
 
   const bytes = Buffer.from(text, "utf8");
   const codeRanges = findCodeRanges(text);
-  // Gesammelt wird pro Byte-Position, nicht pro Support: Zwei Supports duerfen
-  // auf derselben Position enden - die API stuetzt denselben Satzteil dann
-  // mehrfach. Ein Array je Support ergaebe daraus zwei nebeneinander
-  // eingesetzte Marker und bei ueberschneidenden Quellen ein [1][1].
+  // Collected per byte position, not per support: two supports may end at the
+  // same position, the API then backing the same clause more than once. One
+  // entry per support would place two markers side by side, and [1][1] where
+  // the sources overlap.
   const numbersByIndex = new Map();
   let dropped = 0;
 
@@ -94,15 +86,14 @@ export function insertCitations({ text, supports, chunkNumbers }) {
     const end = segment.endIndex;
     if (typeof end !== "number") continue;
 
-    // Protobuf laesst Defaultwerte weg: startIndex fehlt im JSON, wenn er 0
-    // ist. Ohne ?? 0 ergaebe die Pruefung darunter NaN und schluege immer fehl.
+    // Protobuf omits default values: startIndex is absent from the JSON when it
+    // is 0. Without ?? 0 the check below would be NaN and always fail.
     const start = segment.startIndex ?? 0;
 
-    // Die einzige Absicherung gegen eine stille Aenderung der
-    // Offset-Semantik: Die API liefert den erwarteten Ausschnitt in
-    // segment.text mit. Passt er nicht zur berechneten Position, wird nicht
-    // geraten, sondern der Marker weggelassen. Damit kann ein Marker nie an
-    // der falschen Stelle landen - er kann nur fehlen.
+    // The only safeguard against a silent change of the offset semantics: the
+    // API ships the expected excerpt in segment.text. If it does not match the
+    // computed position, the marker is dropped rather than guessed. A marker can
+    // therefore never land in the wrong place - it can only be missing.
     if (segment.text !== undefined && bytes.subarray(start, end).toString("utf8") !== segment.text) {
       dropped++;
       continue;
@@ -113,16 +104,15 @@ export function insertCitations({ text, supports, chunkNumbers }) {
       continue;
     }
 
-    // groundingChunkIndices verweist auf die UNDEDUPLIZIERTE Trefferliste der
-    // API - gemessen 14 Treffer bei nur 4 eindeutigen URLs. Ein naives
-    // index + 1 schriebe damit Nummern bis [14] in eine Liste mit vier
-    // Eintraegen. chunkNumbers uebersetzt; Treffer, die es nicht in die Liste
-    // geschafft haben, erzeugen keinen Marker.
+    // groundingChunkIndices points at the API's UNDEDUPLICATED hit list -
+    // measured 14 hits for only 4 distinct URLs. A naive index + 1 would write
+    // numbers up to [14] into a list of four entries. chunkNumbers translates;
+    // hits that did not make the list produce no marker.
     const numbers = (support.groundingChunkIndices ?? [])
       .map((index) => chunkNumbers.get(index))
       .filter((number) => number !== undefined);
 
-    // Kein dropped++: Hier gab es nichts zu setzen, nichts ging verloren.
+    // No dropped++: there was nothing to place here, so nothing was lost.
     if (numbers.length === 0) continue;
 
     const atIndex = numbersByIndex.get(end) ?? new Set();
@@ -132,9 +122,9 @@ export function insertCitations({ text, supports, chunkNumbers }) {
 
   if (numbersByIndex.size === 0) return { text, dropped };
 
-  // Ein Marker je Position, Nummern darin aufsteigend - und von hinten nach
-  // vorn eingesetzt, damit bereits eingesetzte Zeichen die noch ausstehenden
-  // Positionen nicht verschieben.
+  // One marker per position, the numbers within it ascending, and inserted back
+  // to front so that characters already placed do not shift the pending
+  // positions.
   const insertions = [...numbersByIndex]
     .map(([index, numbers]) => ({
       index,
@@ -145,17 +135,17 @@ export function insertCitations({ text, supports, chunkNumbers }) {
     }))
     .sort((a, b) => b.index - a.index);
 
-  // Die Bytestuecke werden gesammelt und EINMAL zusammengesetzt, statt bei
-  // jedem Marker einen neuen Puffer zu bauen (Muster aus Googles
-  // Referenzimplementierung). Buffer statt TextEncoder/Uint8Array: identische
-  // Byte-Semantik, aber kuerzer - der Server laeuft ausschliesslich unter
-  // Node, die Portabilitaet, wegen der Google dort TextEncoder nutzt, wird
-  // hier nicht gebraucht.
+  // The byte pieces are collected and joined ONCE instead of building a new
+  // buffer per marker (pattern from Google's reference implementation). Buffer
+  // rather than TextEncoder/Uint8Array: identical byte semantics but shorter -
+  // this server runs on Node only, so the portability Google needs there is not
+  // needed here.
   const chunks = [];
   let lastIndex = bytes.length;
   for (const { index, marker } of insertions) {
-    // Faengt einen Offset ab, der ueber das Textende hinausweist - sonst
-    // entstuende ein leeres subarray und der Marker landete am falschen Ort.
+    // Catches an offset pointing past the end of the text - otherwise the
+    // subarray would come out empty and the marker would land in the wrong
+    // place.
     const position = Math.min(index, lastIndex);
     chunks.unshift(bytes.subarray(position, lastIndex));
     chunks.unshift(Buffer.from(marker, "utf8"));
