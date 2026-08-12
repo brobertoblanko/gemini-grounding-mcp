@@ -94,6 +94,51 @@ stattdessen Platzhalter verwenden. Im Zweifel gehört ein Inhalt nach
 `CLAUDE.local.md` - nachträgliches Bereinigen der Git-Historie ist aufwendig
 und unzuverlässig.
 
+## Kommentare im Code
+
+**Sprache:** Englisch, ausnahmslos. Das gilt für Kommentare, Testtitel und
+Assertion-Messages gleichermaßen - Testtitel erscheinen in der CI-Ausgabe und
+sind damit so öffentlich wie der Code selbst. Ausgabetexte, Tool- und
+Parameterbeschreibungen sind es ohnehin. Einzige Ausnahme sind Testdaten, die
+ihren Zweck nur mit fremdsprachigem Inhalt erfüllen, etwa mehrbytige Zeichen
+für die Byte-gegen-Zeichen-Prüfung in `test/citations.test.js`.
+
+**Sieben Regeln für den Stil:**
+
+1. Präsens, sachlich. Keine rhetorischen Fragen, keine Erzählung, keine
+   Wertung des Codes.
+2. Ein Satz sagt, warum es so ist. Ein zweiter kommt nur dazu, wenn es eine
+   Falle gibt.
+3. Kontrafaktisches als Halbsatz, nicht als Absatz:
+   `Without X the SDK repeats nothing.`
+4. Eine Meta-Regel wird **einmal** erklärt, an der Stelle, an der sie zuerst
+   auftritt. Weitere Vorkommen entfallen ersatzlos.
+5. Kein Kommentar beschreibt, was ein Test prüft. Einzige Ausnahme: bei einer
+   Invariante ein angehängtes `Pinned by test/<datei>.test.js`.
+6. Jede Zahl, jeder Eigenname und jeder Fremdverweis bleibt wörtlich erhalten:
+   Statuscodes, Messwerte, SDK-Funktionsnamen, Issue-Links.
+7. Ein Kommentar bleibt ohne den verlinkten Spec-Abschnitt vollständig
+   handlungsleitend. Der Verweis liefert Tiefe, nicht Verständlichkeit.
+
+**Verweise auf die Spec** statt wiederholter Herleitung, in der Form
+`Full derivation: docs/specs.md, "<exakte Überschrift>".` Verwiesen wird auf
+die englische Fassung, weil sie kanonisch ist, und **niemals über
+Zeilennummern** - die verrutschen lautlos und sind unprüfbar, während eine
+umbenannte Überschrift per `grep` auffindbar bleibt. Verweise auf Symbole im
+eigenen Code (`see SERVER_DEADLINE_SECONDS`) sind die haltbarste Form.
+
+**Keine Aussage darf nirgends landen.** Wer eine Begründung aus einem Kommentar
+entfernt, prüft vorher, ob sie in `docs/specs.md` steht. Tut sie das nicht,
+bleibt sie im Kommentar oder wird in `docs/specs.md` **und** `docs/specs.de.md`
+im selben Commit ergänzt. Besonders zu schützen sind gemessene Zahlen,
+verworfene Alternativen samt Grund, unsichtbare SDK-Interna und
+Verhaltensfallen wie `console.error` statt `console.log` (über stdout läuft
+JSON-RPC).
+
+Kommentare an den Invarianten I1 bis I4 werden redigiert, aber nicht
+verdichtet: Invariantennummer, Warnung und der Verweis auf diese Datei plus
+`docs/specs.md, "Terms compliance"` bleiben in jedem Fall stehen.
+
 ## Verhaltensregeln für Claude Code in diesem Projekt
 
 **Modellwahl und Thinking-Level:**
