@@ -1,8 +1,7 @@
-// Gemeinsame Werkzeuge fuer die Tests, die die CLI als eigenen Prozess
-// starten. Die Datei enthaelt selbst keine Testfaelle; das Testskript laedt
-// deshalb ausdruecklich nur "test/*.test.js" - der Vorgabewert von
-// "node --test" nimmt alles unterhalb von test/ und meldete diese Datei sonst
-// wie einen Testfall.
+// Shared helpers for the tests that start the CLI as a separate process. This
+// file holds no test cases, so the test script loads "test/*.test.js"
+// explicitly; the default of "node --test" takes everything below test/ and
+// reported this file like a test case.
 
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
@@ -12,14 +11,14 @@ import { fileURLToPath } from "node:url";
 
 const CLI = fileURLToPath(new URL("../cli.js", import.meta.url));
 
-/** Eine Fehlerantwort im Format, das die Gemini-API liefert. */
+/** An error response in the format the Gemini API returns. */
 export const errorResponse = (code, status) =>
   new Response(JSON.stringify({ error: { code, message: "test", status } }), {
     status: code,
     headers: { "content-type": "application/json" },
   });
 
-/** Die kleinstmoegliche erfolgreiche Antwort, die runSearch durchlaeuft. */
+/** The smallest successful response that passes through runSearch. */
 export const okResponse = () =>
   new Response(
     JSON.stringify({
@@ -30,17 +29,16 @@ export const okResponse = () =>
   );
 
 /**
- * Ersetzt das globale fetch durch eine Folge vorbereiteter Antworten und
- * liefert die Liste der Aufrufe, die dabei entstehen. Das SDK ruft fetch in
- * apiCall() direkt auf, sodass die Zahl der Aufrufe die Zahl der Versuche IST -
- * damit laesst sich am Verhalten pruefen, was sonst nur behauptet waere.
+ * Replaces the global fetch with a sequence of prepared responses and returns
+ * the list of calls made against it. The SDK calls fetch directly in apiCall(),
+ * so the number of calls IS the number of attempts.
  *
- * Jeder Aufruf nimmt die naechste Antwort; ist die Folge erschoepft, wiederholt
- * sich die letzte. So braucht ein Fall, der auf dauerhaftes Scheitern zielt,
- * nicht zu wissen, wie oft es dazu kommt.
+ * Each call takes the next response; once the sequence is exhausted, the last
+ * one repeats. A case aiming at permanent failure therefore need not know how
+ * many attempts that takes.
  *
- * Kein Testfall erreicht dabei die API: Der Schluessel ist ein Platzhalter, und
- * der Ersatz faengt jede Anfrage ab, bevor sie das Netz sieht.
+ * No case reaches the API: the key is a placeholder, and the replacement
+ * intercepts every request before it sees the network.
  */
 export function mockFetch(...responses) {
   const calls = [];
@@ -51,29 +49,28 @@ export function mockFetch(...responses) {
   return calls;
 }
 
-/** Ein frisches, leeres Verzeichnis als XDG_CONFIG_HOME fuer einen Testfall. */
+/** A fresh, empty directory to serve as XDG_CONFIG_HOME for one case. */
 export function freshConfigHome() {
   return mkdtempSync(path.join(tmpdir(), "gemini-grounding-test-"));
 }
 
-/** Wo config.js seine Datei unterhalb eines XDG_CONFIG_HOME anlegt. */
+/** Where config.js creates its file below a given XDG_CONFIG_HOME. */
 export function configFile(configHome) {
   return path.join(configHome, "gemini-grounding-mcp", "config.json");
 }
 
 /**
- * Startet die CLI als eigenen Prozess und liefert Exit-Code, stdout und stderr.
+ * Starts the CLI as a separate process and returns exit code, stdout and
+ * stderr.
  *
- * Der eigene Prozess ist keine Bequemlichkeit, sondern noetig: config.js legt
- * seinen Pfad beim Import einmalig fest, und dasselbe gilt fuer das Flag, das
- * die Warnung vor einer unlesbaren Datei auf einmal begrenzt. Jeder Fall
- * braucht deshalb einen frischen Prozess.
+ * The separate process is required, not a convenience: config.js fixes its path
+ * once at import time, and so does the flag that limits the warning about an
+ * unreadable file to a single occurrence. Every case therefore needs a fresh
+ * process.
  *
- * XDG_CONFIG_HOME zeigt auf ein Temp-Verzeichnis - ohne diese Isolierung
- * schriebe jeder set-Testfall in die echte Konfiguration dieses Rechners.
- * Der API-Key wird bewusst durch einen Platzhalter ersetzt: Kein Testfall darf
- * die API erreichen, und mit einem ueberschriebenen Key kann keiner es
- * versehentlich doch.
+ * XDG_CONFIG_HOME points at a temp directory; without that isolation every set
+ * case would write into this machine's real configuration. The API key is
+ * replaced by a placeholder so that no case can reach the API by accident.
  */
 export function runCli(args, { configHome = freshConfigHome() } = {}) {
   const result = spawnSync(process.execPath, [CLI, ...args], {
@@ -90,7 +87,7 @@ export function runCli(args, { configHome = freshConfigHome() } = {}) {
     stdout: result.stdout,
     stderr: result.stderr,
     configHome,
-    /** Die gespeicherte Konfiguration, oder {} wenn keine angelegt wurde. */
+    /** The saved configuration, or {} when none was created. */
     savedConfig() {
       try {
         return JSON.parse(readFileSync(configFile(configHome), "utf8"));

@@ -1,4 +1,5 @@
-# Zeilenenden vereinheitlichen: im Repository immer LF, im Arbeitsverzeichnis
-# das jeweils plattformübliche Format. Verhindert, dass ein Klon unter Windows
-# und einer unter Linux dieselbe Datei unterschiedlich sieht.
+# Unify line endings: LF in the repository and LF in the working tree as well,
+# on every platform. eol=lf is what extends the rule to the checkout; text=auto
+# alone would hand Windows a CRLF copy. Without it a clone on Windows and one on
+# Linux see the same file differently.
 * text=auto eol=lf

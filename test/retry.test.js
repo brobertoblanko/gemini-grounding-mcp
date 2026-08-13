@@ -1,13 +1,11 @@
-// Die Wiederholungen bei voruebergehenden API-Fehlern. Geprueft wird am
-// Verhalten und nicht an der Konstante: Ob die Liste einen bestimmten Code
-// enthaelt, sagt fuer sich genommen nichts - entscheidend ist, dass sie den
-// Client ueberhaupt erreicht. Ohne die httpOptions in getClient() waere die
-// Konfiguration wirkungslos und jede Behauptung ueber sie trotzdem wahr.
+// The retries on transient API errors, checked against behavior rather than
+// against the constant: whether the list contains a given code says nothing on
+// its own, what matters is that it reaches the client at all. Without the
+// httpOptions in getClient() the configuration has no effect and every claim
+// about it stays true anyway.
 //
-// Dafuer wird das globale fetch ersetzt (mockFetch in helpers.js). Das SDK ruft
-// es in apiCall() direkt auf, sodass die Zahl der Aufrufe die Zahl der Versuche
-// IST. Kein Testfall erreicht dabei die API - der Schluessel ist ein
-// Platzhalter, und der Ersatz faengt jede Anfrage ab, bevor sie das Netz sieht.
+// The global fetch is replaced for that (mockFetch in helpers.js). The SDK calls
+// it directly in apiCall(), so the number of calls IS the number of attempts.
 
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -24,59 +22,56 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-test("wiederholt einen 503 und liefert die Antwort des zweiten Versuchs", async () => {
-  // Der eigentliche Test dieser Datei, und der einzige, der die Verdrahtung
-  // erfasst: Ohne httpOptions.retryOptions am Client wiederholt das SDK NICHTS
-  // (apiCall() beginnt mit "if (!retryOptions) return fetch(...)"), der zweite
-  // Aufruf faende nie statt und der 503 schlueg bis zum Nutzer durch. Genau der
-  // Zustand vor der Einfuehrung der Konstante.
+test("retries a 503 and returns the second attempt's response", async () => {
+  // The only case that covers the wiring: without httpOptions.retryOptions on
+  // the client the SDK repeats NOTHING - apiCall() starts with
+  // "if (!retryOptions) return fetch(...)" - so the second call never happens
+  // and the 503 reaches the user.
   //
-  // 503 ist der einzige Fehler, der hier je beobachtet wurde: dreimal in Folge
-  // innerhalb einer Minute, jeweils "high demand ... usually temporary".
+  // 503 is the only error ever observed here: three times in a row within one
+  // minute, each "high demand ... usually temporary".
   //
-  // Der Fall wartet echte ein bis zwei Sekunden - den ersten Backoff des SDK
-  // (initialDelay 1s, Jitter zwischen Faktor 1 und 2). Das ist der Preis dafuer,
-  // das Verhalten zu pruefen statt eines Objektliterals.
+  // This case waits a real one to two seconds, the SDK's first backoff
+  // (initialDelay 1s, jitter between factor 1 and 2). That is the price of
+  // checking behavior instead of an object literal.
   const calls = mockFetch(() => errorResponse(503, "UNAVAILABLE"), okResponse);
 
   const result = await runSearch(SEARCH);
 
-  assert.equal(calls.length, 2, "der 503 haette wiederholt werden muessen");
+  assert.equal(calls.length, 2, "the 503 should have been retried");
   assert.match(result, /^answer/);
 });
 
-test("wiederholt einen 429 nicht, sondern meldet ihn sofort", async () => {
-  // Googles Default waere [408, 429, 500, 502, 503, 504] - wer die Liste daran
-  // angleicht, macht die Konfiguration schlechter, ohne dass es auffiele: Bei
-  // 429 nennt die API die Wartezeit selbst (RetryInfo.retryDelay), das SDK liest
-  // sie nicht aus und haette seine vier Versuche verbraucht, bevor die Sperre
-  // ablaeuft. Ausfuehrlich in gemini.js ueber RETRY_OPTIONS.
+test("does not retry a 429 but reports it immediately", async () => {
+  // Google's default would be [408, 429, 500, 502, 503, 504]; aligning the list
+  // with it makes the configuration worse without being noticed, because on 429
+  // the API names the wait itself (RetryInfo.retryDelay), the SDK does not read
+  // it and would burn its four attempts before the block expires. See
+  // RETRY_OPTIONS in gemini.js.
   const calls = mockFetch(() => errorResponse(429, "RESOURCE_EXHAUSTED"));
 
   await assert.rejects(() => runSearch(SEARCH));
 
-  assert.equal(calls.length, 1, "429 darf nicht wiederholt werden");
+  assert.equal(calls.length, 1, "429 must not be retried");
 });
 
-test("wiederholt einen 504 nicht, weil das die eigene Frist ist", async () => {
-  // Der zweite Code, der aus Googles Standardliste fehlt. Seit dieser Server
-  // eine Frist mitschickt, ist ein 504 im Regelfall genau diese Frist - und
-  // dann bedeutet jede Wiederholung eine weitere volle Generierung, die
-  // abgerechnet wird, ohne je anzukommen. Begruendung in gemini.js ueber
-  // RETRY_OPTIONS.
+test("does not retry a 504 because that is the server's own deadline", async () => {
+  // The second code missing from Google's default list. Since this server sends
+  // a deadline along, a 504 usually is that deadline, and then every retry means
+  // another full generation that is billed without ever arriving. See
+  // RETRY_OPTIONS in gemini.js.
   const calls = mockFetch(() => errorResponse(504, "DEADLINE_EXCEEDED"));
 
   await assert.rejects(() => runSearch(SEARCH));
 
-  assert.equal(calls.length, 1, "504 darf nicht wiederholt werden");
+  assert.equal(calls.length, 1, "504 must not be retried");
 });
 
-test("schickt die Frist mit, ohne die Standard-Header zu verlieren", async () => {
-  // Zwei Dinge in einem Fall, weil sie zusammengehoeren: Die Frist muss
-  // ankommen, und sie darf die Header des SDK nicht ersetzen. httpOptions
-  // werden per Object.assign gemischt - stimmte das nicht, fehlten hier
-  // Content-Type und User-Agent, und die Anfrage schluege beim Server fehl,
-  // ohne dass ein Test es merkte.
+test("sends the deadline without losing the default headers", async () => {
+  // Two things in one case because they belong together: the deadline has to
+  // arrive, and it must not replace the SDK's headers. httpOptions are merged
+  // via Object.assign; were that wrong, content-type and user-agent would be
+  // missing here and the request would fail at the server unnoticed.
   const calls = mockFetch(okResponse);
 
   await runSearch(SEARCH);
@@ -84,13 +79,13 @@ test("schickt die Frist mit, ohne die Standard-Header zu verlieren", async () =>
   const headers = new Headers(calls[0].init.headers);
   assert.equal(headers.get("x-server-timeout"), String(SERVER_DEADLINE_SECONDS));
   assert.equal(headers.get("content-type"), "application/json");
-  assert.ok(headers.get("user-agent"), "der User-Agent des SDK muss erhalten bleiben");
+  assert.ok(headers.get("user-agent"), "the SDK's user-agent must be preserved");
 });
 
-test("wiederholt nicht, was sich von allein nicht behebt", async () => {
-  // 400 (kaputte Anfrage), 403 (Schluessel) und 404 (Modell zurueckgezogen)
-  // gehen beim zweiten Mal genauso schief. Googles eigene Empfehlung dazu:
-  // "Do not retry on client errors (like 400 or 403)."
+test("does not retry what cannot fix itself", async () => {
+  // 400 (broken request), 403 (key) and 404 (model withdrawn) fail the same way
+  // on the second try. Google's own recommendation: "Do not retry on client
+  // errors (like 400 or 403)."
   for (const [code, status] of [
     [400, "INVALID_ARGUMENT"],
     [403, "PERMISSION_DENIED"],
@@ -100,18 +95,16 @@ test("wiederholt nicht, was sich von allein nicht behebt", async () => {
 
     await assert.rejects(() => runSearch(SEARCH));
 
-    assert.equal(calls.length, 1, `${code} darf nicht wiederholt werden`);
+    assert.equal(calls.length, 1, `${code} must not be retried`);
   }
 });
 
-test("begrenzt die Zahl der Versuche", async () => {
-  // Der einzige Wert, der hier an der Konstante geprueft wird statt am
-  // Verhalten: Vier Versuche abzuwarten dauert mit den SDK-Backoffs 7 bis 14
-  // Sekunden, und diese Zeit ist eine Zusicherung ueber Googles Timer, nicht
-  // ueber diesen Server.
+test("caps the number of attempts", async () => {
+  // The only value checked against the constant instead of against behavior:
+  // waiting out four attempts takes 7 to 14 seconds with the SDK backoffs, and
+  // that time is an assurance about Google's timers, not about this server.
   //
-  // Die Obergrenze ist keine Feinheit, sondern die Wartezeit, die der Client
-  // ohne jedes Signal aussitzt: attempts zaehlt den Erstversuch mit, der
-  // SDK-Default waere 5.
+  // The cap is the wait the client sits through without any signal: attempts
+  // counts the first try, and the SDK default would be 5.
   assert.equal(RETRY_OPTIONS.attempts, 4);
 });

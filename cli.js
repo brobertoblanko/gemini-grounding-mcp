@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Kommandozeilen-Frontend auf denselben Kern, den auch index.js nutzt:
-// gemini.js fuer die API-Aufrufe, config.js fuer die gespeicherten Defaults.
-// Die relativen Imports loesen in ES-Modulen relativ zu DIESER Datei auf,
-// nicht zum Arbeitsverzeichnis - die CLI funktioniert daher aus jedem Ordner.
+// Command line frontend on the same core index.js uses: gemini.js for the API
+// calls, config.js for the stored defaults. Relative imports in ES modules
+// resolve against THIS file and not against the working directory, so the CLI
+// works from any folder.
+// Full derivation: docs/specs.md, "Implementation".
 
 import { runSearch, listModels } from "./gemini.js";
 import {
@@ -52,9 +53,9 @@ The API key is read from the GEMINI_API_KEY environment variable.
 The saved defaults are shared with the MCP server; "config" prints their location.`;
 
 /**
- * Bedienfehler - falsche Argumente, unbekannte Option, leere Anfrage. Wird
- * anders behandelt als ein echter Laufzeitfehler: nur die Meldung, kein
- * Stacktrace, weil ein Tippfehler auf der Kommandozeile keinen braucht.
+ * Usage error - wrong arguments, unknown option, empty query. Handled
+ * differently from a real runtime error: the message only, no stack trace,
+ * because a typo on the command line does not need one.
  */
 class UsageError extends Error {}
 
@@ -70,9 +71,9 @@ function requireThinkingLevel(value, origin) {
 }
 
 /**
- * Holt "--name <wert>" aus der Argumentliste und ENTFERNT beides daraus.
- * Dadurch ist die Position der Flags beliebig und der uebrig bleibende Rest
- * ist sauber Unterbefehl bzw. Suchanfrage.
+ * Takes "--name <value>" out of the argument list and REMOVES both from it.
+ * That makes the position of the flags arbitrary and leaves a remainder that is
+ * cleanly subcommand or search query.
  */
 function takeFlag(args, name) {
   const index = args.indexOf(`--${name}`);
@@ -85,7 +86,7 @@ function takeFlag(args, name) {
   return value;
 }
 
-/** Wie takeFlag, aber fuer Schalter ohne Wert. */
+/** Like takeFlag, but for switches without a value. */
 function takeSwitch(args, name) {
   const index = args.indexOf(`--${name}`);
   if (index === -1) return false;
@@ -94,26 +95,24 @@ function takeSwitch(args, name) {
 }
 
 /**
- * Schreibt und meldet in einem: erst was sich geaendert hat, dann was ab jetzt
- * gilt. Beide Zeilen kommen aus config.js, damit der MCP-Handler dieselbe
- * Auskunft gibt.
+ * Writes and reports in one: first what changed, then what applies from now on.
+ * Both lines come from config.js so that the MCP handler gives the same
+ * information.
  *
- * Die zweite Haelfte ist der Grund fuer diese Funktion: Ohne sie muesste man
- * nach jedem set-Befehl "config" hinterherschicken, um zu sehen, womit die
- * naechste Recherche tatsaechlich laeuft.
+ * The second half is the reason for this function: without it every set command
+ * would need a "config" behind it to see what the next search actually runs
+ * with.
  */
 function saveAndReport(values) {
-  // Standard und Backup duerfen nicht dasselbe Modell werden - lautlos gaebe
-  // es danach kein Ausweichen mehr. Die Pruefung sitzt hier und nicht in den
-  // einzelnen Zweigen, damit sie keinen Schreibpfad auslassen kann: "set-model
-  // x", "set-thinking low --model x" und "set-backup x" schreiben alle ein
-  // Modell, und der zweite hatte sie frueher nicht.
+  // Default and backup must not become the same model - silently there would be
+  // nothing left to fall back to. The check sits here and not in the individual
+  // branches so it cannot miss a write path: "set-model x", "set-thinking low
+  // --model x" and "set-backup x" all write a model, and the second one used to
+  // skip it.
   const collision = findModelCollision(values);
   if (collision) fail(collision);
 
-  // Aus demselben Grund an derselben Stelle: ein Backup-Level ohne sein Modell.
-  // Beide Pruefungen liegen in config.js, weil gemini-set-model dieselbe Datei
-  // schreibt und beide Werte sogar in einem Aufruf setzen kann.
+  // Same place for the same reason: a backup level without its model.
   const levelProblem = findBackupLevelProblem(values);
   if (levelProblem) fail(levelProblem);
 
@@ -122,8 +121,8 @@ function saveAndReport(values) {
 }
 
 async function main() {
-  // argv[0] ist der Node-Interpreter, argv[1] das Skript selbst - erst ab
-  // Index 2 stehen die vom Benutzer uebergebenen Argumente.
+  // argv[0] is the Node interpreter, argv[1] the script itself - the arguments
+  // passed by the user start at index 2.
   const args = process.argv.slice(2);
 
   const modelFlag = takeFlag(args, "model");
@@ -131,19 +130,18 @@ async function main() {
   const allFlag = takeSwitch(args, "all");
   if (thinkingFlag !== undefined) requireThinkingLevel(thinkingFlag, "--thinking");
 
-  // Was jetzt noch wie eine Option aussieht, kennt die CLI nicht. Ohne diese
-  // Pruefung bliebe ein Tippfehler folgenlos liegen: "models --al" haette
-  // stillschweigend die gefilterte Liste gezeigt, die man fuer die
-  // vollstaendige haelt. Bewusst nur "--", damit eine Anfrage wie
-  // "-5 Grad in Fahrenheit" weiterhin durchgeht; "--help" ist ausgenommen,
-  // weil es unten als Unterbefehl behandelt wird.
+  // Whatever still looks like an option is unknown to the CLI. Without this
+  // check a typo would go unnoticed: "models --al" would silently have shown the
+  // filtered list that one takes for the complete one. Deliberately only "--",
+  // so a query like "-5 degrees in Fahrenheit" still gets through; "--help" is
+  // exempt because it is handled as a subcommand below.
   const unknownOption = args.find((arg) => arg.startsWith("--") && arg !== "--help");
   if (unknownOption) fail(`Unknown option "${unknownOption}".`);
 
   const [command, ...rest] = args;
 
-  // Jeder Zweig prueft, dass nichts Ueberzaehliges uebrig bleibt - sonst
-  // wuerde "set-thinking low unsinn" klaglos speichern und den Rest verwerfen.
+  // Every branch checks that nothing surplus is left over - otherwise
+  // "set-thinking low nonsense" would save without complaint and drop the rest.
   const requireNoArgs = () => {
     if (rest.length > 0) fail(`"${command}" takes no arguments.`);
   };
@@ -153,14 +151,13 @@ async function main() {
   if (thinkingFlag !== undefined) givenFlags.push("thinking");
   if (allFlag) givenFlags.push("all");
 
-  // Gegenstueck zu requireNoArgs fuer die Optionen: Jeder Zweig nennt die, die
-  // bei ihm eine Bedeutung haben, alles andere bricht ab. Ohne diese Pruefung
-  // nahm "config --thinking low" die Option kommentarlos entgegen und tat
-  // nichts damit - derselbe stille Verlust, den die Pruefung auf unbekannte
-  // Optionen weiter oben schon verhindert.
+  // Counterpart to requireNoArgs for the options: every branch names the ones
+  // that mean something to it, everything else aborts. Without this check
+  // "config --thinking low" accepted the option without comment and did nothing
+  // with it.
   //
-  // Positivliste und nicht Verbotsliste, damit eine spaeter hinzukommende
-  // Option nicht versehentlich ueberall erlaubt ist.
+  // An allowlist and not a denylist, so an option added later is not
+  // accidentally permitted everywhere.
   const allowFlags = (...allowed) => {
     const unexpected = givenFlags.find((name) => !allowed.includes(name));
     if (unexpected) fail(`"${command}" takes no --${unexpected} option.`);
@@ -168,7 +165,7 @@ async function main() {
 
   switch (command) {
     case undefined:
-      // Aufruf ohne Argumente ist ein Bedienfehler: Hilfe nach stderr, Exit 1.
+      // A call without arguments is a usage error: help to stderr, exit 1.
       fail(HELP);
       break;
 
@@ -184,43 +181,40 @@ async function main() {
       allowFlags();
       requireNoArgs();
       const apiKey = process.env.GEMINI_API_KEY;
-      // Der Wert des Keys wird nie ausgegeben, auch nicht gekuerzt - nur seine
-      // Laenge, weil sich daran ein abgeschnittenes Einfuegen erkennen laesst.
+      // The key's value is never printed, not even shortened - only its length,
+      // because a truncated paste shows up in it.
       const keyStatus = apiKey
         ? `set (${apiKey.length} chars)`
         : "NOT SET - set the GEMINI_API_KEY environment variable";
-      // Dieselben zwei Zeilen wie nach jedem set-Befehl - "config" ist damit
-      // nicht eine zweite Darstellung derselben Sache, sondern dieselbe plus
-      // das, was nur hier interessiert. Drei Zustaende des Backups bleiben
-      // dabei unterscheidbar: ein Modell, "disabled", "not set".
+      // The same two lines as after every set command - "config" is not a second
+      // rendering of the same thing, but that one plus what only matters here.
+      // Three states of the backup stay distinguishable: a model, "disabled",
+      // "not set".
       console.log(formatConfigState());
       console.log(`API key: ${keyStatus}`);
-      // Der Pfad wird immer genannt, auch wenn die Datei noch gar nicht
-      // existiert - dann steht dort, wo sie beim ersten set-model entstehen
-      // wird, und die obigen Werte sind die eingebauten Defaults.
+      // The path is always named, even when the file does not exist yet - it
+      // then states where it will appear on the first set-model, and the values
+      // above are the built-in defaults.
       console.log(`Config:  ${CONFIG_PATH}`);
       break;
     }
 
     case "models":
-      // Vor listModels, damit ein Tippfehler keinen API-Aufruf kostet.
+      // Before listModels, so a typo costs no API call.
       allowFlags("all");
       requireNoArgs();
       console.log(await listModels({ all: allFlag }));
       break;
 
-    // Bei den beiden set-Befehlen persistiert die jeweils andere Option mit:
-    // Wer speichern will, will nicht, dass ein Teil der Angabe wieder
-    // verfaellt. Die eigene Option ist dagegen ein Fehler - "set-model x
-    // --model y" nennt zwei Modelle, und welches gemeint ist, kann nur der
-    // Aufrufer wissen.
+    // With both set commands the respective other option is persisted too:
+    // whoever asks for something to be stored does not want part of the entry to
+    // expire. The command's own option is an error - "set-model x --model y"
+    // names two models, and which one is meant only the caller can know.
     case "set-model": {
       allowFlags("thinking");
       if (rest.length !== 1) {
         fail("Usage: gemini-grounding set-model <model-id> [--thinking <level>]");
       }
-      // Die Kollisionspruefung sitzt in saveAndReport und gilt damit fuer
-      // set-model, set-thinking --model und set-backup gleichermassen.
       saveAndReport({ model: rest[0], thinkingLevel: thinkingFlag });
       break;
     }
@@ -237,25 +231,20 @@ async function main() {
       break;
     }
 
-    // Anders als bei den beiden set-Befehlen oben wird das Backup als EINHEIT
-    // geschrieben: Ohne --thinking entfernt setSavedConfig() ein zuvor
-    // gespeichertes Level, statt es stehen zu lassen. Das Level gehoert zu
-    // diesem einen Modell - bliebe es beim Wechsel des Backups liegen, gaelte
-    // es stillschweigend fuer ein anderes Modell als das, fuer das es gesetzt
-    // wurde. Die Regel steht in config.js, weil sie fuer den MCP-Handler
-    // genauso gilt.
+    // Unlike the two set commands above, the backup is written as a UNIT:
+    // without --thinking, setSavedConfig() expires a previously stored level
+    // instead of leaving it in place (see setSavedConfig).
     case "set-backup": {
       allowFlags("thinking");
 
-      // Ohne Modellargument gilt der Befehl dem bereits gespeicherten Backup
-      // und aendert nur dessen Level. Ohne diesen Zweig muesste man das Modell
-      // erneut abtippen, um an seinem Level etwas zu drehen - und ein Vertipper
-      // dabei traefe stillschweigend ein anderes Modell.
+      // Without a model argument the command applies to the backup already
+      // stored and changes only its level. Without this branch the model would
+      // have to be typed out again to adjust its level, and a typo while doing so
+      // would silently hit a different model.
       //
-      // Nur eine Weiche, keine Pruefung: Dass es dafuer ein gespeichertes,
-      // eingeschaltetes Backup braucht, weist findBackupLevelProblem() in
-      // saveAndReport ab - und zwar mit demselben Wortlaut wie fuer den
-      // MCP-Handler, der diesen Zweig nicht durchlaeuft.
+      // A switch only, no check: that this needs a stored, enabled backup is
+      // rejected by findBackupLevelProblem() in saveAndReport, in the same
+      // wording as for the MCP handler, which does not run through this branch.
       if (rest.length === 0 && thinkingFlag !== undefined) {
         saveAndReport({ backupThinkingLevel: thinkingFlag });
         break;
@@ -264,38 +253,37 @@ async function main() {
       if (rest.length !== 1) {
         fail("Usage: gemini-grounding set-backup <model-id|off> [--thinking <level>]");
       }
-      // false und nicht loeschen: Der Unterschied zwischen "nie eingestellt"
-      // und "bewusst abgeschaltet" bleibt damit in der Datei erhalten. Ein
-      // --thinking dazu faengt ebenfalls saveAndReport ab: Ein abgeschaltetes
-      // Backup hat kein Level, und die Option verfaellt nicht stillschweigend.
+      // false and not deleting: the difference between "never set" and
+      // "deliberately switched off" stays in the file. A --thinking alongside is
+      // caught by saveAndReport as well - a switched-off backup has no level, and
+      // the option does not expire silently.
       const backupModel = rest[0] === "off" ? false : rest[0];
       saveAndReport({ backupModel, backupThinkingLevel: thinkingFlag });
       break;
     }
 
     default: {
-      // Alles, was kein bekannter Unterbefehl ist, gilt als Suchanfrage - und
-      // zwar als genau ein Argument. Eine unquotiert getippte Frage wieder
-      // zusammenzusetzen waere truegerisch: takeFlag hat vorher ein
-      // "--thinking high" mitten aus ihr herausgeschnitten, sodass eine
-      // sinnentstellte Anfrage abgeschickt wuerde, ohne dass es auffaellt.
-      // Eigene Meldung statt allowFlags: Dort stuende der Befehlsname in den
-      // Anfuehrungszeichen, und der ist hier die Suchanfrage selbst.
+      // Anything that is not a known subcommand counts as a search query, and as
+      // exactly one argument. Reassembling an unquoted question would be
+      // deceptive: takeFlag has cut a "--thinking high" out of the middle of it
+      // beforehand, so a distorted query would be sent off unnoticed. An own
+      // message instead of allowFlags: there the command name would stand in the
+      // quotes, and here that name is the search query itself.
       if (allFlag) fail('--all is only valid for the "models" command.');
 
       if (rest.length > 0) {
         fail("The query must be a single argument - put it in quotes.");
       }
       const query = command.trim();
-      // Ohne diese Pruefung ginge ein leeres Argument - etwa aus einer nicht
-      // gesetzten Shell-Variablen - als Anfrage an die API und kostet Tokens.
+      // Without this check an empty argument - from an unset shell variable, say
+      // - would go to the API as a query and cost tokens.
       if (query === "") fail("The query is empty.");
 
-      // Gleiches Muster wie im MCP-Handler (index.js), und ueber dieselbe
-      // Funktion: ein Flag gilt nur fuer diesen Aufruf, sonst greift der
-      // gespeicherte Standard. config.json wird dabei nicht angefasst. Aus
-      // resolveCallConfig kommt zugleich die Regel, dass --model das Backup
-      // fuer diesen Aufruf abschaltet.
+      // Same pattern as in the MCP handler (index.js), and through the same
+      // function: a flag applies to this call only, otherwise the stored default
+      // takes over, and config.json is not touched. resolveCallConfig also
+      // carries the rule that --model switches off the backup for this call.
+      // Full derivation: docs/specs.md, "Resolving the defaults per call".
       const text = await runSearch({
         query,
         ...resolveCallConfig({ model: modelFlag, thinkingLevel: thinkingFlag }),
@@ -308,22 +296,21 @@ async function main() {
 try {
   await main();
 } catch (error) {
-  // Bei einem echten Laufzeitfehler gibt console.error(error) denselben
-  // vollstaendigen Stacktrace aus, den Node bei einem unbehandelten Fehler
-  // zeigen wuerde - beim Testen ist genau das gewollt, im Gegensatz zu
-  // index.js, das den Fehler fuer den Client auf eine Zeile verdichten muss.
-  // Ein Bedienfehler braucht dagegen keinen Stacktrace, nur die Meldung.
+  // On a real runtime error, console.error(error) prints the same full stack
+  // trace Node would show for an unhandled error - while testing that is exactly
+  // what is wanted, unlike index.js, which has to condense the error into a
+  // single line for the client. A usage error needs no stack trace, only the
+  // message.
   //
-  // Gefangen wird er trotzdem, weil Node den Prozess bei einer unbehandelten
-  // Rejection hart beendet: haengt dabei noch eine offene Netzwerkverbindung,
-  // bricht libuv unter Windows mit "Assertion failed ... src\win\async.c" ab
-  // und der Prozess endet mit 0xC0000409 statt mit dem vereinbarten Code 1.
+  // It is caught all the same, because Node ends the process hard on an
+  // unhandled rejection: with a network connection still open, libuv on Windows
+  // aborts with "Assertion failed ... src\win\async.c" and the process ends with
+  // 0xC0000409 instead of the agreed code 1.
   //
-  // process.exitCode statt process.exit(), damit Node regulaer herunterfaehrt -
-  // das gilt ausnahmslos, deshalb wirft auch fail() nur einen UsageError,
-  // statt selbst zu beenden: stdout und stderr sind unter Windows auf einem
-  // TTY asynchron, sodass process.exit() eine laengere Ausgabe wie HELP
-  // abschneiden koennte.
+  // process.exitCode instead of process.exit(), so that Node shuts down normally
+  // - that holds without exception, which is why fail() only throws a UsageError
+  // instead of exiting itself: stdout and stderr are asynchronous on a Windows
+  // TTY, so process.exit() could cut off a longer output such as HELP.
   console.error(error instanceof UsageError ? error.message : error);
   process.exitCode = 1;
 }

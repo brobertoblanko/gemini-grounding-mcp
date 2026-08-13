@@ -2,49 +2,43 @@ import { GoogleGenAI } from "@google/genai";
 import { insertCitations } from "./citations.js";
 
 /**
- * Wiederholungen bei voruebergehenden Fehlern. Ohne httpOptions.retryOptions
- * wiederholt das SDK NICHTS - dist/index.mjs beginnt apiCall() mit
- * "if (!retryOptions) { return fetch(url, requestInit); }", und einen Default
- * setzt es nirgends. Die Gemini-Doku behauptet pauschal, die offiziellen SDKs
- * haetten Retry ab Werk; belegt ist das nur fuers Python-SDK.
+ * Retries for transient errors. Without httpOptions.retryOptions the SDK repeats
+ * NOTHING - apiCall() in dist/index.mjs begins with
+ * "if (!retryOptions) { return fetch(url, requestInit); }", and no default is
+ * set anywhere. The Gemini docs claim the official SDKs retry out of the box;
+ * that is demonstrated for the Python SDK only.
  *
- * ZWEI Codes fehlen ABSICHTLICH. Googles Default waere
- * [408, 429, 500, 502, 503, 504]; hier fehlen 429 und 504, jeder aus einem
- * eigenen Grund. Ohne diese Begruendung sieht die Liste wie unvollstaendig
- * abgeschrieben aus:
+ * TWO codes are missing ON PURPOSE. Google's default would be
+ * [408, 429, 500, 502, 503, 504]; without this note the list reads like an
+ * incomplete copy.
  *
- * 429: Die API liefert die Wartezeit selbst mit, als RetryInfo in
- * error.details ("retryDelay": "53s"). Das SDK wertet sie nicht aus - die
- * Zeichenkette "RetryInfo" kommt im gesamten Bundle nicht vor - und rechnet
- * stattdessen blind exponentiell. Bei den geforderten 53 Sekunden waeren alle
- * vier Versuche nach rund 15 Sekunden verbraucht, also lange bevor die Sperre
- * ueberhaupt ablaeuft. Fuer dasselbe Verhalten im Python-SDK laeuft
- * googleapis/python-genai#1875. Ein 429 kommt deshalb unveraendert und sofort
- * beim Client an, statt die Antwort um wirkungslose Wartezeit zu verlaengern.
+ * 429: the API supplies the waiting time itself, as RetryInfo in error.details
+ * ("retryDelay": "53s"). The SDK does not read it - the string "RetryInfo" does
+ * not occur anywhere in the bundle - and backs off blindly instead, so against
+ * a demanded 53 seconds all four attempts are spent after roughly 15, long
+ * before the block expires. The same behaviour in the Python SDK is tracked as
+ * googleapis/python-genai#1875. A 429 therefore reaches the client unchanged and
+ * immediately.
  *
- * 504: Seit dieser Server eine eigene Frist mitschickt (siehe
- * SERVER_DEADLINE_SECONDS), ist ein 504 im Regelfall genau diese Frist und
- * nicht Googles ueberlastetes Gateway. Ihn zu wiederholen hiesse, dieselbe
- * Generierung noch dreimal bis zum Fristende laufen zu lassen - und dreimal zu
- * bezahlen, denn abgerechnet wird sie trotzdem. Die beiden Faelle sind hier
- * nicht zu trennen: Die Retry-Entscheidung faellt am Statuscode, lange bevor
- * irgendwer das DEADLINE_EXCEEDED im Body zu sehen bekaeme. Von den beiden
- * moeglichen Ursachen ist die teure die wahrscheinlichere, also gibt die Liste
- * den Code auf.
+ * 504: since this server sends a deadline of its own (see
+ * SERVER_DEADLINE_SECONDS), a 504 is usually that deadline rather than Google's
+ * overloaded gateway. Repeating it runs the same generation to the deadline
+ * three more times and pays for each, because an aborted generation is billed
+ * all the same. The two causes cannot be told apart here: the retry decision is
+ * made on the status code, long before anyone gets to see the DEADLINE_EXCEEDED
+ * in the body - and of the two, the expensive one is the more likely.
  *
- * Bei 500, 502, 503 und 408 gibt es keine Serverangabe, an der man sich
- * ausrichten koennte - dort ist blinder Backoff das einzig Moegliche und
- * deshalb richtig. 408 steht dabei der Vollstaendigkeit halber in der Liste:
- * Laeuft die Frist ab, antwortet Google mit 504, und laeuft die Anfrage ganz
- * ins Leere, bricht Node sie ohne jeden HTTP-Status ab (gemessen nach 306,8
- * Sekunden). Ein echter 408 kaeme nur von einer Zwischenstation.
+ * For 500, 502, 503 and 408 no server-supplied hint exists, so blind backoff is
+ * the only option. 408 is in the list for completeness: an expired deadline
+ * comes back as 504, and a request that runs into nothing is aborted by Node
+ * without any HTTP status (measured after 306.8 seconds). A genuine 408 would
+ * have to come from an intermediary.
  *
- * attempts zaehlt den Erstversuch mit. Vier Versuche bedeuten drei
- * Wiederholungen und mit den SDK-Defaults (initialDelay 1s, expBase 2, Jitter)
- * zwischen 7 und 14 Sekunden zusaetzlicher Wartezeit, bevor der Fehler kommt.
+ * attempts counts the initial call, so four attempts mean three repeats and,
+ * with the SDK defaults (initialDelay 1s, expBase 2, jitter), 7 to 14 seconds of
+ * extra waiting before the error surfaces.
  *
- * Als exportierte Konstante, damit test/retry.test.js die Auslassungen pruefen
- * kann, ohne einen Client zu bauen oder SDK-Interna anzunehmen.
+ * Full derivation: docs/specs.md, "Why 429 and 504 are missing from that list".
  */
 export const RETRY_OPTIONS = {
   attempts: 4,
@@ -52,79 +46,74 @@ export const RETRY_OPTIONS = {
 };
 
 /**
- * Die Frist, die Googles Gateway mitbekommt: Nach dieser Zeit soll es die
- * Generierung abbrechen, statt weiterzurechnen. Das SDK schickt sie als Header
- * X-Server-Timeout in ganzen Sekunden.
+ * The deadline Google's gateway is told about: after this time it should abort
+ * the generation instead of computing on. The SDK sends it as the header
+ * X-Server-Timeout in whole seconds.
  *
- * Der Wert leitet sich aus dem kuerzesten Glied der Kette ab, und alle drei
- * Zahlen sind gemessen, nicht geschaetzt:
- * - Node bricht eine schweigende Verbindung nach 306,8 s ab (Undicis
- *   headersTimeout von 300 s plus Verbindungsaufbau)
- * - der MCP-Client von Claude Code wartet 1800 s, also sechsmal laenger
- * - Google selbst kennt ohne diesen Header ueberhaupt keine Frist
+ * The value derives from the shortest link in the chain, and all three numbers
+ * are measured, not estimated:
+ * - Node severs a silent connection after 306.8 s (undici's headersTimeout of
+ *   300 s plus connection setup)
+ * - the MCP client of Claude Code waits 1800 s, six times longer
+ * - Google itself knows no deadline at all without this header
  *
- * Node kappt also zuerst. Alles, was Google jenseits dieser Grenze noch
- * generiert, kann niemand mehr entgegennehmen - bezahlt wird es trotzdem:
- * Input-Tokens voll, Output-Tokens bis zum tatsaechlichen Ende des Laufs.
- * Kostenlos sind nur Ablehnungen vor der Ausfuehrung (400, 401, 403, 429).
- * 290 Sekunden liegen knapp unter Nodes Grenze, damit Google aufhoert, bevor
- * die Leitung gekappt wird - und der Fehler als 504 mit Begruendung ankommt
- * statt als blosser Verbindungsabbruch.
+ * Node therefore cuts first. Everything Google generates beyond that point can
+ * no longer be received by anyone - billed it is all the same: input tokens in
+ * full, output tokens up to the actual end of the run. Only rejections before
+ * execution (400, 401, 403, 429) are free. 290 seconds sits just below Node's
+ * limit, so Google stops before the line is cut - and the failure arrives as a
+ * 504 with a reason instead of a bare connection abort.
  *
- * Bewusst NICHT ueber httpOptions.timeout gesetzt, obwohl das SDK denselben
- * Header daraus baut: Es erzeugte aus dem Wert zusaetzlich einen clientseitigen
- * AbortController, also eine zweite Uhr, die mit Googles Antwort um die Wette
- * liefe. Wer dieses Rennen gewinnt, ist Zufall, und gewinnt die eigene Uhr,
- * kommt "This operation was aborted" an statt der Begruendung.
+ * Deliberately NOT set via httpOptions.timeout, although the SDK builds the same
+ * header from it: that option also produced a client-side AbortController, a
+ * second clock racing Google's answer. Which one wins is chance, and when the
+ * local one wins, "This operation was aborted" arrives instead of the reason.
  *
- * Die Standard-Header bleiben unangetastet: patchHttpOptions() mischt beide
- * Objekte per Object.assign, User-Agent und Content-Type gehen nicht verloren.
+ * The SDK's own headers stay untouched: patchHttpOptions() merges both objects
+ * with Object.assign, so User-Agent and Content-Type are not lost.
+ * Full derivation: docs/specs.md, "The deadline this server does send".
  */
 export const SERVER_DEADLINE_SECONDS = 290;
 
 /**
- * Fehler, bei denen NICHT auf das Backup-Modell ausgewichen wird. Alles andere
- * loest den Fallback aus, sofern ein Backup konfiguriert ist.
+ * Errors that do NOT fall back to the backup model. Everything else triggers the
+ * fallback, provided a backup is configured.
  *
- * Eine Negativliste, und das ist die eigentliche Entscheidung: Ein kuenftiger,
- * heute unbekannter Fehlercode bekommt damit automatisch den Fallback, statt
- * lautlos durch eine Positivliste zu fallen. Bewusst NICHT dieselbe Liste wie
- * RETRY_OPTIONS - die beiden beantworten verschiedene Fragen. Der Retry fragt
- * "hilft Warten?", der Fallback "kann ein anderes Modell der Unterschied sein?".
- * Bei 429 gehen die Antworten auseinander: Warten bringt nichts, weil das SDK
- * Googles retryDelay ignoriert, ausweichen dagegen sofort etwas, weil
- * Kontingente pro Modell zaehlen.
+ * A negative list, and that is the actual decision: an unknown future error code
+ * gets the fallback automatically, instead of dropping silently through a
+ * positive list. Deliberately NOT the same list as RETRY_OPTIONS - the two
+ * answer different questions, the retry "does waiting help?", the fallback "can
+ * a different model be the difference?". On 429 the answers diverge: waiting
+ * achieves nothing, because the SDK ignores Google's retryDelay, while switching
+ * achieves something at once, because quotas count per model.
  *
- * Die drei Ausnahmen haben zwei verschiedene Gruende:
+ * The three exceptions come from two different reasons. 401 and 403 are
+ * hopeless: both hang on the API key, and the second call uses the same one, so
+ * the model cannot possibly be the cause. 504 is too expensive: on this server
+ * it is usually the server's own deadline (see SERVER_DEADLINE_SECONDS), hence a
+ * generation that ran in full and is billed, and a fallback would double it and
+ * add up to another 290 seconds of waiting.
  *
- * 401 und 403 sind aussichtslos. Beide haengen am API-Schluessel, und der
- * zweite Aufruf nutzt denselben - das Modell kann die Ursache gar nicht sein.
- *
- * 504 ist zu teuer. Bei diesem Server ist das im Regelfall die eigene Frist
- * (siehe SERVER_DEADLINE_SECONDS), also eine vollstaendig gelaufene und
- * abgerechnete Generierung. Ein Fallback verdoppelt sie und legt bis zu 290
- * weitere Sekunden Wartezeit drauf.
- *
- * Ein Netzwerkfehler steht nicht in der Liste und braucht es nicht: Er traegt
- * gar keinen status und scheidet dadurch von selbst aus.
+ * A network error is not in the list and does not need to be: it carries no
+ * status at all and drops out by itself.
+ * Full derivation: docs/specs.md, "Which errors trigger it".
  */
 export const NO_FALLBACK_STATUS = [401, 403, 504];
 
 /**
- * Uebersetzt einen Fehler in eine Zeile, die auch dann noch etwas aussagt, wenn
- * er aus dem Netzwerk kommt statt aus der API.
+ * Turns an error into a line that still says something when it comes from the
+ * network rather than from the API.
  *
- * Ein ApiError traegt den Grund im Klartext (message ist der rohe JSON-Body der
- * Fehlerantwort) und braucht nichts weiter. Ein Netzwerkfehler dagegen heisst
- * bei Node IMMER "fetch failed" - abgelehnte Verbindung, unbekannter Host,
- * Zeitueberschreitung, alles dasselbe Wort. Was tatsaechlich geschah, steht
- * ausschliesslich in error.cause, und genau die verliert der Client, weil ein
- * MCP-Tool nur eine Zeile Text zurueckgeben kann.
+ * An ApiError carries the reason in plain text (message is the raw JSON body of
+ * the error response) and needs nothing further. A network error in Node is
+ * ALWAYS called "fetch failed" - refused connection, unknown host, timeout, all
+ * the same two words - and what actually happened lives solely in error.cause,
+ * which the client loses, because an MCP tool can return a single line of text.
  *
- * Der Code ist optional: Gemessen liefert "bad port" gar keinen, ECONNREFUSED
- * dagegen schon. Ohne diese Zeile steht bei einer abgebrochenen Verbindung nur
- * "fetch failed" beim aufrufenden Agenten, und der kann dem Nutzer nichts
- * erklaeren, was ueber "hat nicht geklappt" hinausgeht.
+ * The code is optional: measured, "bad port" supplies none, ECONNREFUSED does.
+ * Without this line a severed connection reaches the calling agent as bare
+ * "fetch failed", which explains nothing beyond "it did not work".
+ * Full derivation: docs/specs.md, "What reaches the client when a request fails".
  */
 export function describeError(error) {
   const cause = error?.cause;
@@ -151,23 +140,23 @@ function getClient() {
 }
 
 /**
- * Baut die Quellenliste aus zwei getrennten Metadaten-Quellen der Gemini-API:
- * - groundingChunks: Treffer der Google-Suche
- * - urlContextMetadata: Seiten, die Gemini gezielt per URL Context gelesen hat
- * Beide Listen werden zusammengefuehrt und nach URL entduplifiziert.
+ * Builds the source list from two separate metadata sources of the Gemini API:
+ * - groundingChunks: hits from the Google search
+ * - urlContextMetadata: pages Gemini read on purpose via URL Context
+ * Both lists are merged and deduplicated by URL.
  *
- * Liefert zusaetzlich chunkNumbers: die Zuordnung vom Index in
- * groundingChunks auf die Nummer in der AUSGEGEBENEN Liste. Beide Zaehlungen
- * laufen auseinander, weil groundingChunks Suchtreffer abbildet und nicht
- * Quellen - gemessen 17 Treffer bei 14 eindeutigen URLs. Ohne diese Zuordnung
- * verwiesen die Marker im Text auf Nummern, die es in der Liste nicht gibt.
+ * Returns chunkNumbers as well: the mapping from the index in groundingChunks to
+ * the number in the EMITTED list. The two counts diverge, because
+ * groundingChunks represents search hits rather than sources - measured 17 hits
+ * for 14 distinct URLs. Without this mapping the markers in the text would point
+ * at numbers the list does not have.
  *
- * INVARIANTE I1 (siehe CLAUDE.md und docs/specs.md, "Terms compliance"): JEDER
- * Chunk mit URI kommt in die Liste, auch wenn kein einziger Support auf ihn
- * zeigt. Dass hier weder gefiltert noch gekappt noch nach Domain dedupliziert
- * wird, ist keine Nachlaessigkeit, sondern Bedingung fuer die Nutzung von
- * Grounding with Google Search. Deduplizieren nach identischer URI ist erlaubt,
- * weil dabei kein Ziel verlorengeht - nach Domain nicht.
+ * INVARIANT I1 (see CLAUDE.md and docs/specs.md, "Terms compliance"): EVERY
+ * chunk with a URI goes into the list, even when not a single support points at
+ * it. That nothing here is filtered, capped or deduplicated by domain is not
+ * carelessness but the condition for using Grounding with Google Search.
+ * Deduplicating by identical URI is allowed, because no destination is lost in
+ * the process - by domain it is not. Pinned by test/sources.test.js.
  */
 export function buildSourceList(candidate) {
   const searchChunks = candidate?.groundingMetadata?.groundingChunks ?? [];
@@ -188,32 +177,29 @@ export function buildSourceList(candidate) {
 
   searchChunks.forEach((chunk, index) => {
     const uri = chunk.web?.uri;
-    // Der einzige Pfad, auf dem hier ein Link verlorengehen kann. Bisher
-    // liefert die API ausschliesslich web-Chunks, das ist gemessen; kaeme ein
-    // zweiter Typ hinzu, verschwaenden dessen Links stillschweigend aus der
-    // Liste und I1 waere gebrochen, ohne dass es jemand saehe. Mehr als das
-    // Zaehlen ist ohne Kenntnis des unbekannten Typs nicht moeglich - der
-    // Footer macht daraus wenigstens einen sichtbaren Verlust.
+    // The one path on which a link can be lost here. So far the API delivers web
+    // chunks only, measured; were a second type added, its links would silently
+    // drop out of the list and I1 would be broken unseen. Counting is all that
+    // can be done without knowing the unfamiliar type - the footer at least
+    // turns it into a visible loss.
     if (!uri) {
       skipped++;
       return;
     }
-    // chunk.web.title ?? uri ersetzt KEINEN vorhandenen Titel, sondern
-    // beschriftet einen Eintrag, zu dem die API keinen mitgeliefert hat. Der
-    // Titel ist laut Terms Bestandteil des Links (I2), ein vorhandener bleibt
-    // deshalb unangetastet.
+    // chunk.web.title ?? uri replaces NO existing title, it labels an entry the
+    // API supplied none for. The title is part of the link under the terms (I2),
+    // so an existing one stays untouched.
     chunkNumbers.set(index, addSource(chunk.web?.title ?? uri, uri));
   });
 
-  // URL-Context-Quellen stehen hinter den Suchtreffern und beeinflussen die
-  // Nummerierung der Marker deshalb nicht.
+  // URL Context sources come after the search hits and therefore do not affect
+  // the numbering of the markers.
   //
-  // Gemessen an einer Anfrage mit konkreter URL: Die gelesene Seite stand
-  // zusaetzlich als groundingChunk in der Antwort - mit echtem Seitentitel,
-  // direkter URL und eigenen Supports. Sie kam ueber die Deduplizierung hier
-  // also gar nicht mehr an und bekam trotzdem Marker. Hier landet nur eine
-  // Seite, die NICHT zugleich Chunk ist; die bleibt dann ohne Marker, weil es
-  // zu ihr keine Supports gibt.
+  // Measured on a request naming a concrete URL: the page read was additionally
+  // present as a groundingChunk - with a real page title, a direct URL and
+  // supports of its own. It never got past the deduplication here and received
+  // markers all the same. Only a page that is NOT also a chunk lands here, and
+  // it then stays without markers, because there are no supports for it.
   for (const entry of urlContextEntries) {
     if (entry.retrievedUrl) addSource(entry.retrievedUrl, entry.retrievedUrl);
   }
@@ -222,12 +208,12 @@ export function buildSourceList(candidate) {
 }
 
 /**
- * INVARIANTE I2: `s.title` und `s.uri` gehen unveraendert hinaus. Die
- * Redirect-URLs sind lang und sehen nach einem Kuerzungskandidaten aus - sie
- * duerfen aber weder gekuerzt noch auf die Domain reduziert noch aufgeloest
- * werden (I3), und der Titel zaehlt ausdruecklich mit. Vier Zeilen, die harmlos
- * aussehen, und denen man den Titel als geschuetzten Bestandteil nicht ansieht:
- * siehe CLAUDE.md und docs/specs.md, "Terms compliance".
+ * INVARIANT I2: `s.title` and `s.uri` go out unchanged. The redirect URLs are
+ * long and look like candidates for shortening - they may be neither shortened
+ * nor reduced to the domain nor resolved (I3), and the title explicitly counts
+ * as part of the link. Four lines that look harmless, and that do not show the
+ * title as a protected component: see CLAUDE.md and docs/specs.md, "Terms compliance".
+ * Pinned by test/sources.test.js.
  */
 export function formatSourcesBlock(sources) {
   if (sources.length === 0) return "";
@@ -238,39 +224,38 @@ export function formatSourcesBlock(sources) {
 }
 
 /**
- * Baut den Antworttext aus den Parts der Antwort, statt `response.text` zu
- * nutzen. Der `.text`-Getter des SDK verwirft alles, was kein Textteil ist -
- * bei aktiviertem Code Execution also gerade den ausgefuehrten Code und dessen
- * Ergebnis - und schreibt dabei pro Aufruf eine Warnung nach stderr. Hier
- * kommen beide als Codebloecke mit in die Antwort, damit nachvollziehbar
- * bleibt, wie eine berechnete Zahl zustande gekommen ist.
+ * Assembles the answer text from the parts of the response instead of using
+ * `response.text`. The SDK's `.text` getter discards everything that is not a
+ * text part - with Code Execution enabled, precisely the executed code and its
+ * result - and writes a warning to stderr on every call. Both go into the answer
+ * as code blocks here, so it stays traceable how a computed number came about.
  *
- * Code und Ergebnis kommen dabei ans ENDE, hinter den Antworttext. Die API
- * liefert die Parts in Ausfuehrungsreihenfolge, sodass die Antwort sonst mit
- * einem Codeblock beginnt und die eigentliche Auskunft erst darunter steht.
- * Der Rechenweg ist ein Beleg und gehoert damit dorthin, wo auch die
- * Quellenliste steht: hinter die Antwort, nicht davor.
+ * Code and result come at the END, after the answer text. The API returns the
+ * parts in execution order, so the answer would otherwise begin with a code
+ * block and the actual information would follow underneath. The computation is
+ * evidence and belongs where the source list is: after the answer, not before.
  *
- * Hier werden ausserdem die Belegmarker gesetzt (siehe citations.js) -
- * bewusst an dieser Stelle, weil die Parts nur hier noch einzeln vorliegen:
- * Die Offsets der API zaehlen ab dem Anfang JEDES Parts, nach dem
- * join("\n\n") waeren sie ab dem zweiten Part um zwei Bytes verschoben.
+ * The citation markers are set here as well (see citations.js), deliberately at
+ * this point, because the parts are only individually available here: the API's
+ * offsets count from the beginning of EACH part, and after the join("\n\n") they
+ * would be off by two bytes from the second part onwards.
+ * Full derivation: docs/specs.md, "Answer text: assembled by hand instead of `response.text`".
  */
 function buildText(candidate, { supports, chunkNumbers }) {
   const textBlocks = [];
   const codeBlocks = [];
   let dropped = 0;
 
-  // forEach statt for...of: Der Schleifenindex IST der partIndex, auf den sich
-  // segment.partIndex bezieht. Denk-Parts werden zwar uebersprungen, zaehlen
-  // dabei aber mit - partIndex zaehlt ueber ALLE Parts des Kandidaten.
+  // forEach rather than for...of: the loop index IS the partIndex that
+  // segment.partIndex refers to. Thought parts are skipped but still counted -
+  // partIndex counts over ALL parts of the candidate.
   (candidate?.content?.parts ?? []).forEach((part, partIndex) => {
-    // Denk-Parts gehoeren nicht in die Ausgabe - ihr Umfang steht bereits als
-    // Thinking-Tokens im Footer.
+    // Thought parts do not belong in the output - their volume is already in the
+    // footer as thinking tokens.
     if (part.thought) return;
 
     if (part.text) {
-      // partIndex fehlt im JSON, wenn er 0 ist (Protobuf-Default), daher ?? 0.
+      // partIndex is absent from the JSON when it is 0 (protobuf default).
       const result = insertCitations({
         text: part.text,
         supports: supports.filter((s) => (s.segment?.partIndex ?? 0) === partIndex),
@@ -279,16 +264,16 @@ function buildText(candidate, { supports, chunkNumbers }) {
       textBlocks.push(result.text);
       dropped += result.dropped;
     } else if (part.executableCode?.code) {
-      // language ist das Language-Enum ("PYTHON"); LANGUAGE_UNSPECIFIED ergibt
-      // keine sinnvolle Sprachangabe fuer den Codeblock.
+      // language is the Language enum ("PYTHON"); LANGUAGE_UNSPECIFIED yields no
+      // usable language tag for the code block.
       const language = (part.executableCode.language ?? "").toLowerCase();
       const fence = language.includes("unspecified") ? "" : language;
-      // trimEnd, weil Code und Ausgabe mit einem Zeilenumbruch enden - sonst
-      // steht eine Leerzeile vor dem schliessenden Codeblock.
+      // trimEnd, because code and output end with a newline - otherwise a blank
+      // line sits before the closing fence.
       codeBlocks.push(`\`\`\`${fence}\n${part.executableCode.code.trimEnd()}\n\`\`\``);
     } else if (part.codeExecutionResult) {
-      // outcome ist "OUTCOME_OK", "OUTCOME_FAILED", ... - das Praefix traegt
-      // keine Information.
+      // outcome is "OUTCOME_OK", "OUTCOME_FAILED", ... - the prefix carries no
+      // information.
       const outcome =
         (part.codeExecutionResult.outcome ?? "").replace(/^OUTCOME_/, "") || "UNKNOWN";
       const output = (part.codeExecutionResult.output ?? "").trimEnd();
@@ -296,18 +281,17 @@ function buildText(candidate, { supports, chunkNumbers }) {
     }
   });
 
-  // Ueberschrift wie bei der Quellenliste, damit der nachgestellte Rechenweg
-  // nicht als Fortsetzung des Antworttextes gelesen wird.
+  // A heading as with the source list, so the appended computation is not read
+  // as a continuation of the answer text.
   if (codeBlocks.length > 0) codeBlocks.unshift("Code execution:");
 
   return { text: [...textBlocks, ...codeBlocks].join("\n\n"), dropped };
 }
 
 /**
- * Weist auf eine Antwort hin, die nicht regulaer zu Ende gelaufen ist. Ohne
- * diesen Hinweis saehe eine blockierte oder abgeschnittene Antwort wie ein
- * Erfolg aus: der Text fehlt oder bricht mitten im Satz ab, Quellenliste und
- * Footer stehen trotzdem unveraendert darunter.
+ * Flags a response that did not finish normally. Without this note a blocked or
+ * truncated response would look like a success: the text is missing or breaks
+ * off mid-sentence, and the source list and footer sit unchanged underneath.
  */
 function formatNotice({ text, candidate, promptFeedback }) {
   const blockReason = promptFeedback?.blockReason;
@@ -319,79 +303,78 @@ function formatNotice({ text, candidate, promptFeedback }) {
   if (text === "") {
     return `\n\n⚠️ The response contained no text - finishReason: ${finishReason ?? "unknown"}`;
   }
-  // STOP ist der regulaere Abschluss. Alles andere - vor allem MAX_TOKENS -
-  // bedeutet eine abgeschnittene Antwort, die sonst vollstaendig wirkt.
+  // STOP is the regular completion. Everything else - above all MAX_TOKENS -
+  // means a truncated response that would otherwise look complete.
   if (finishReason && finishReason !== "STOP") {
     return `\n\n⚠️ The response is incomplete - finishReason: ${finishReason}`;
   }
   return "";
 }
 
-// Zeichenbudget fuer die Zeile mit den abgesetzten Suchanfragen. Gemessen:
-// ueblich 2 bis 6 Anfragen mit zusammen 73 bis 270 Zeichen, die einzelne
-// Anfrage 29 bis 84 Zeichen - bei einer bewusst ueberbreiten Anfrage aber 11
-// Anfragen mit ueber 500 Zeichen. Eine Obergrenze nennt die API nicht, deshalb
-// die Kappung: 300 laesst den Normalfall unangetastet durch und faengt den
-// Ausreisser ab, der den Footer sonst ueber mehrere Zeilen zieht.
+// Character budget for the line with the search queries sent. Measured: usually
+// 2 to 6 queries totalling 73 to 270 characters, a single query 29 to 84 - but
+// 11 queries with over 500 characters for a deliberately overbroad question. The
+// API documents no upper bound, hence the cap: 300 lets the normal case through
+// untouched and catches the outlier that would otherwise pull the footer over
+// several lines.
 const SEARCH_QUERY_BUDGET = 300;
 
 /**
- * Baut die Footer-Zeile mit den Suchanfragen, die Gemini tatsaechlich an die
- * Google-Suche geschickt hat (groundingMetadata.webSearchQueries).
+ * Builds the footer line with the queries Gemini actually sent to the Google
+ * search (groundingMetadata.webSearchQueries).
  *
- * Sie steht im Footer, weil sie eine Luecke sichtbar macht, die weder
- * Quellenliste noch Belegmarker zeigen: OB die Suche die Frage ueberhaupt
- * abgedeckt hat. Gemessen an einer Anfrage nach sechs Web-Frameworks suchte
- * Gemini sechsmal nur nach "<Framework> current version" - Bundle-Groesse und
- * Rendering-Strategie, ebenfalls gefragt, kamen unrecherchiert aus dem
- * Modellwissen. Der Antwort sah man das nicht an.
+ * It sits in the footer because it exposes a gap that neither the source list
+ * nor the citation markers show: WHETHER the search covered the question at all.
+ * Measured on a request about six web frameworks, Gemini searched six times for
+ * "<framework> current version" only - bundle size and rendering strategy, also
+ * asked for, came unresearched from model knowledge, and the answer did not show
+ * it.
  *
- * Eigene Zeile statt Anhang an die Kennzahlen: zusammen waeren es im
- * gemessenen Extremfall 385 Zeichen, die im Terminal auf vier Zeilen
- * umbrechen - ausgerechnet bei den langen Antworten, wo der Footer die
- * Orientierung geben soll.
+ * Its own line rather than appended to the metrics: together they would run to
+ * 385 characters in the measured extreme case and wrap over four terminal lines
+ * - in exactly the long answers where the footer is supposed to give
+ * orientation.
  *
- * Leeres Array ergibt einen leeren String und damit keine Zeile. Gleiche
- * Regel wie beim Hinweis auf verworfene Marker: Der Normalfall soll den Footer
- * nicht verlaengern.
+ * An empty array yields an empty string and therefore no line. That is the rule
+ * for every optional part of the footer: the normal case must not lengthen it.
+ * Full derivation: docs/specs.md, "The search queries line".
  */
 export function formatSearchQueries(queries = []) {
   if (queries.length === 0) return "";
 
-  // Die Anfrage, die das Budget reisst, wird noch VOLLSTAENDIG geschrieben -
-  // eine mitten im Wort abgeschnittene Suchanfrage ist wertlos. Der Ueberhang
-  // ist dabei durch die Laenge einer einzelnen Anfrage begrenzt.
+  // The query that breaks the budget is still written IN FULL - a search query
+  // truncated mid-word is worthless. The overshoot is bounded by the length of a
+  // single query.
   const shown = [];
   let length = 0;
   for (const query of queries) {
     shown.push(query);
-    // Das Trennzeichen zaehlt ab dem zweiten Eintrag mit, damit das Budget die
-    // tatsaechliche Zeilenlaenge meint und nicht die Summe der Anfragen.
+    // The separator counts from the second entry onwards, so the budget means
+    // the actual line length rather than the sum of the queries.
     length += query.length + (shown.length > 1 ? 3 : 0);
     if (length >= SEARCH_QUERY_BUDGET) break;
   }
 
   const rest = queries.length - shown.length;
-  // " · " statt ", ": Die Suchanfragen enthalten selbst Anfuehrungszeichen und
-  // Ziffernfolgen, zwischen denen ein Komma als Trenner untergeht.
+  // " · " rather than ", ": the queries contain quotation marks and digit
+  // sequences of their own, between which a comma disappears as a separator.
   return `\n🔎 Searched: ${shown.join(" · ")}${rest > 0 ? ` (+${rest} more)` : ""}`;
 }
 
 /**
- * Die Zeile ueber einen geglueckten Fallback auf das Backup-Modell. Ohne
- * Fallback ein leerer String und damit keine Zeile - gleiche Regel wie bei den
- * Suchanfragen: Der Normalfall verlaengert den Footer nicht.
+ * The line about a successful fallback to the backup model. Without a fallback
+ * an empty string and therefore no line.
  *
- * 🔁 und nicht ⚠️: Ein geglueckter Fallback ist keine beeintraechtigte Antwort.
- * Das Warnzeichen bleibt den Faellen vorbehalten, in denen mit der Antwort
- * selbst etwas nicht stimmt (verworfene Marker, uebersprungene Quellen,
- * finishReason, blockReason).
+ * 🔁 and not ⚠️: a successful fallback is not a degraded answer. The warning
+ * sign stays reserved for the cases where something is wrong with the answer
+ * itself (dropped markers, omitted sources, finishReason, blockReason).
  *
- * Drei Codes bekommen einen Zusatz, weil bei ihnen etwas ZU TUN ist; bei allen
- * uebrigen - 503, 500, 502, 408 und allem Kuenftigen - ist die Stoerung
- * voruebergehend und der blosse Code sagt genug. Der 400 ist dabei der einzige,
- * bei dem die Zeile echte Diagnose leistet: Dass das Backup dieselbe Anfrage
- * annimmt, beweist, dass nicht die Anfrage das Problem war, sondern das Modell.
+ * Three codes get a suffix, because with them there is something TO DO; for all
+ * the others - 503, 500, 502, 408 and anything future - the disturbance is
+ * transient and the bare code says enough. The 400 is the only one where the
+ * line performs real diagnosis: that the backup accepts the same request proves
+ * the request was not the problem, the model was.
+ * Full derivation: docs/specs.md, "What the footer says".
  */
 export function formatFallbackNote(fallback) {
   if (!fallback) return "";
@@ -428,16 +411,14 @@ export function formatFooter({
   const outputTokens = usageMetadata?.candidatesTokenCount ?? 0;
   const thinkingTokens = usageMetadata?.thoughtsTokenCount ?? 0;
 
-  // Verworfene Marker gehoeren in den Footer, weil sie die Aussagekraft der
-  // Antwort veraendern: Fehlt ein Marker, kann die Stelle ungegroundet sein -
-  // oder die Pruefung hat ihn verworfen. Nur sichtbar, wenn es welche gab,
-  // damit der Normalfall den Footer nicht verlaengert.
+  // Dropped markers belong in the footer because they change how much the
+  // response can be relied on: if a marker is missing, the passage may be
+  // ungrounded - or the verification discarded it.
   const droppedNote = dropped > 0 ? ` | ⚠️ ${dropped} markers dropped` : "";
 
-  // Uebersprungene Chunks nach derselben Regel: nur sichtbar, wenn es welche
-  // gab. Anders als verworfene Marker betrifft das nicht die Aussagekraft der
-  // Antwort, sondern die Vollstaendigkeit der Quellenliste - ein Verlust, der
-  // ohne diese Zeile niemandem auffiele (I1, siehe buildSourceList).
+  // Omitted chunks likewise. Unlike dropped markers this affects not the
+  // reliability of the answer but the completeness of the source list - a loss
+  // nobody would notice without this line (I1, see buildSourceList).
   const skippedNote =
     skipped > 0 ? ` | ⚠️ ${skipped} sources omitted (unknown chunk type)` : "";
 
@@ -450,13 +431,13 @@ export function formatFooter({
 }
 
 /**
- * Der Fehlerkoerper der API als Objekt: status ("UNAVAILABLE", "NOT_FOUND",
- * ...) und, falls vorhanden, der maschinenlesbare Grund aus error.details.
+ * The API's error body as an object: status ("UNAVAILABLE", "NOT_FOUND", ...)
+ * and, where present, the machine-readable reason from error.details.
  *
- * Die message eines ApiError IST der JSON-Koerper der Fehlerantwort, auch bei
- * einer Antwort ohne JSON - das SDK baut dann selbst eine. Trotzdem in einem
- * try: Beides ist Beiwerk, und daran darf kein Aufruf scheitern, der sonst
- * durchgelaufen waere.
+ * The message of an ApiError IS the JSON body of the error response, even for a
+ * response without JSON - the SDK then builds one itself. In a try all the same:
+ * both are incidental, and no call that would otherwise have gone through may
+ * fail on them.
  */
 function readErrorBody(error) {
   try {
@@ -471,31 +452,30 @@ function readErrorBody(error) {
 }
 
 /**
- * Warum bei EINGERICHTETEM Backup trotzdem nicht ausgewichen wird - oder
- * undefined, wenn der Fallback stattfindet.
+ * Why no fallback happens although a backup IS configured - or undefined when
+ * the fallback does take place.
  *
- * Jeder dieser Gruende geht als Text an den Nutzer, weil er sonst die
- * unbeantwortbare Frage "warum hat mein Backup nicht gegriffen?" zuruecklaesst.
- * Ein nicht eingerichtetes Backup kommt hier gar nicht an: Dann gibt es nichts
- * zu erklaeren.
+ * Each of these reasons goes to the user as text, because it would otherwise
+ * leave the unanswerable question "why did my backup not kick in?". A backup
+ * that is not configured never gets here: then there is nothing to explain.
  */
 function fallbackRefusal({ error, model, backupModel, reason }) {
   if (backupModel === model) {
     return "backup not tried: it is the same model as the default";
   }
-  // Gemessen: Ein unbrauchbarer Schluessel kommt NICHT als 401 oder 403,
-  // sondern als 400 INVALID_ARGUMENT mit "API key not valid" - der Statuscode
-  // allein reicht hier also nicht. Ein 400 loest sonst durchaus einen Fallback
-  // aus, weil dahinter ein Modell stehen kann, das das Thinking-Level nicht
-  // kennt. Der Schluessel dagegen gilt fuer beide Modelle: aussichtslos.
+  // Measured: an unusable key does NOT arrive as 401 or 403 but as a
+  // 400 INVALID_ARGUMENT with "API key not valid", so the status code alone is
+  // not enough here. A 400 otherwise does justify a fallback, because behind it
+  // can be a model that does not know the thinking level. The key, however,
+  // applies to both models: hopeless.
   if (reason === "API_KEY_INVALID") {
     return "backup not tried: the API key is not valid, and the backup would use the same one";
   }
   const status = error?.status;
   if (typeof status !== "number") {
-    // Kein HTTP-Status heisst: Die Anfrage hat die API nie erreicht oder die
-    // Verbindung brach ab. Beim zweiten Modell liefe sie ueber dieselbe
-    // Leitung zu demselben Host.
+    // No HTTP status means the request never reached the API or the connection
+    // broke. With the second model it would run over the same line to the same
+    // host.
     return "backup not tried: the request never reached the API";
   }
   if (NO_FALLBACK_STATUS.includes(status)) {
@@ -507,35 +487,35 @@ function fallbackRefusal({ error, model, backupModel, reason }) {
 }
 
 /**
- * Ein Fehler, der zusaetzlich sagt, warum kein Backup versucht wurde. Als
- * schlichter Error ohne cause, damit describeError() ihn unveraendert
- * durchreicht - die Ursache eines Netzwerkfehlers steckt bereits im Text.
+ * An error that additionally says why no backup was tried. A plain Error without
+ * a cause, so describeError() passes it through unchanged - the cause of a
+ * network error is already in the text.
  */
 function withRefusal(error, refusal) {
   return new Error(`${describeError(error)} (${refusal})`);
 }
 
-/** Ein Aufruf an die API. Alles, was pro Versuch gleich bleibt, steht hier. */
+/** One call to the API. Everything that stays the same per attempt lives here. */
 function generate(ai, { query, model, thinkingLevel }) {
   return ai.models.generateContent({
     model,
     contents: query,
     config: {
-      // Das aktuelle Datum, sonst nichts. Ohne es legt das Modell "die neueste
-      // Version" an seinem eigenen Trainingsstand aus statt an heute - gemessen
-      // suchte es in vier von sechs Faellen nach "2025 2026", weil es das Jahr
-      // nur ungefaehr kennt. Bei einem Server, dessen Zweck das Umgehen von
-      // Trainingswissen ist, ist das die falsche Unschaerfe.
+      // The current date, nothing else. Without it the model reads "the latest
+      // version" against its own training cutoff rather than against today -
+      // measured, it searched for "2025 2026" in four out of six cases, because
+      // it knows the year only approximately. For a server whose purpose is to
+      // bypass training knowledge, that is the wrong kind of vagueness.
       //
-      // Bewusst KEINE inhaltlichen Vorgaben wie "bevorzuge offizielle
-      // Dokumentation": Die faerben jede Antwort ein und verengen Recherchen zu
-      // Betriebssystem-Eigenheiten oder aktuellen Ereignissen. Ein Datum ist
-      // ein Fakt, eine Quellenpraeferenz eine Meinung.
+      // Deliberately NO content-level instructions such as "prefer official
+      // documentation": they tint every answer and narrow research into OS
+      // behaviour or recent events. A date is a fact, a source preference an
+      // opinion.
       //
-      // toLocaleDateString("en-CA") ergibt YYYY-MM-DD in LOKALER Zeit.
-      // toISOString() waere UTC und meldete in Mitteleuropa zwischen 00:00 und
-      // 02:00 Uhr den Vortag - ausgerechnet in der Funktion, die das richtige
-      // Datum sicherstellen soll.
+      // toLocaleDateString("en-CA") yields YYYY-MM-DD in LOCAL time.
+      // toISOString() would be UTC and would report the previous day in Central
+      // Europe between 00:00 and 02:00 - in the very function meant to guarantee
+      // the correct date.
       systemInstruction: `Today's date is ${new Date().toLocaleDateString("en-CA")}.`,
       tools: [{ googleSearch: {} }, { urlContext: {} }, { codeExecution: {} }],
       thinkingConfig: { thinkingLevel },
@@ -544,17 +524,17 @@ function generate(ai, { query, model, thinkingLevel }) {
 }
 
 /**
- * Fuehrt eine Gemini-Recherche mit allen drei Built-in-Tools durch
- * (Google Search, URL Context, Code Execution), setzt die Belegmarker in den
- * Antworttext und haengt Quellenliste sowie Token-Footer an.
+ * Runs a Gemini research call with all three built-in tools (Google Search, URL
+ * Context, Code Execution), places the citation markers in the answer text and
+ * appends the source list and token footer.
  *
- * Scheitert das Modell und ist ein Backup uebergeben, laeuft dieselbe Anfrage
- * ein zweites Mal - mit demselben Retry, weil der am Client haengt und nicht am
- * Aufruf. Ob ein Backup uebergeben WIRD, entscheidet resolveCallConfig() in
- * config.js: Ein namentlich genanntes Modell bekommt keines.
+ * If the model fails and a backup was passed, the same request runs a second
+ * time - with the same retry, because that hangs on the client rather than on
+ * the call. Whether a backup IS passed is decided by resolveCallConfig() in
+ * config.js: a model named explicitly gets none.
  *
- * Die gesamte Auswertung danach laeuft auf der Antwort, die gewonnen hat, und
- * weiss vom Fallback nichts - bis auf den Footer, der ihn nennen muss.
+ * Everything evaluated afterwards runs on the response that won and knows
+ * nothing of the fallback - except the footer, which has to name it.
  */
 export async function runSearch({
   query,
@@ -566,15 +546,15 @@ export async function runSearch({
   const ai = getClient();
 
   let response;
-  // Bleibt undefined, wenn der Erstversuch durchlaeuft, und laesst dann die
-  // Footer-Zeile ganz entfallen.
+  // Stays undefined when the first attempt goes through, which drops the footer
+  // line entirely.
   let fallback;
 
   try {
     response = await generate(ai, { query, model, thinkingLevel });
   } catch (error) {
-    // Ohne eingerichtetes Backup aendert sich nichts: Der Fehler geht
-    // unveraendert hinaus, wie vor diesem Feature.
+    // Without a configured backup nothing changes: the error goes out unaltered,
+    // as it did before this feature.
     if (!backupModel) throw error;
 
     const { statusName, reason } = readErrorBody(error);
@@ -583,17 +563,17 @@ export async function runSearch({
 
     fallback = { model, status: error.status, statusName };
     model = backupModel;
-    // Ohne eigenes Level erbt das Backup das fuer DIESEN Aufruf tatsaechlich
-    // genutzte, nicht den gespeicherten Standard: Wer thinkingLevel "high"
-    // uebergeben hat, will es auch beim Ausweichmodell.
+    // Without a level of its own the backup inherits the one actually used for
+    // THIS call, not the stored default: whoever passed thinkingLevel "high"
+    // wants it on the evasive model too.
     thinkingLevel = backupThinkingLevel ?? thinkingLevel;
 
     try {
       response = await generate(ai, { query, model, thinkingLevel });
     } catch (backupError) {
-      // Beide Fehler mit ihrem Modell davor. Stuende hier nur der zweite,
-      // suchte man am falschen Modell; describeError() auf beiden, damit die
-      // cause eines Netzwerkfehlers nicht verlorengeht.
+      // Both errors, each with its model in front of it. With only the second
+      // one here, you would go looking at the wrong model; describeError() on
+      // both, so the cause of a network error is not lost.
       throw new Error(
         `${fallback.model}: ${describeError(error)} | ` +
           `backup ${backupModel}: ${describeError(backupError)}`,
@@ -604,8 +584,8 @@ export async function runSearch({
   const candidate = response.candidates?.[0];
   const { sources, chunkNumbers, skipped } = buildSourceList(candidate);
 
-  // Das ?? [] ist die Absicherung gegen eine Antwort ohne groundingMetadata -
-  // dann laeuft alles unveraendert durch, nur ohne Marker.
+  // The ?? [] guards against a response without groundingMetadata - everything
+  // then runs through unchanged, only without markers.
   const { text, dropped } = buildText(candidate, {
     supports: candidate?.groundingMetadata?.groundingSupports ?? [],
     chunkNumbers,
@@ -624,25 +604,24 @@ export async function runSearch({
     sourceCount: sources.length,
     dropped,
     skipped,
-    // Gleiche Absicherung wie bei den Supports: Ohne Suchtreffer fehlt das
-    // Feld, dann entfaellt die Zeile.
+    // Same guard as for the supports: without search hits the field is absent,
+    // and the line disappears.
     searchQueries: candidate?.groundingMetadata?.webSearchQueries ?? [],
-    // model und thinkingLevel oben zeigen nach einem Fallback bereits das
-    // Backup - der Footer nennt damit von selbst, was tatsaechlich geantwortet
-    // hat. Diese Zeile sagt zusaetzlich, warum.
+    // After a fallback, model and thinkingLevel above already hold the backup,
+    // so the footer names what actually answered by itself. This line adds why.
     fallback,
   });
 
-  // Der Footer bleibt in jedem Fall der letzte Bestandteil der Antwort.
+  // The footer stays the last component of the response in every case.
   //
-  // Die Reihenfolge Text - Hinweis - Quellen - Footer hat einen zweiten Grund:
-  // Zwischen der Antwort und den zugehoerigen Links steht damit nichts, was
-  // der Server hinzugefuegt haette. Die Terms untersagen es, fremde Inhalte
-  // zwischen die Grounded Results zu mischen; hier ist nichts dazwischen.
+  // The order text - notice - sources - footer has a second reason: nothing the
+  // server added sits between the answer and its links. The terms forbid
+  // interspersing foreign content with the Grounded Results; here there is
+  // nothing in between. See CLAUDE.md and docs/specs.md, "Terms compliance".
   return text + notice + sourcesBlock + footer;
 }
 
-/** Kuerzt eine Tokenzahl lesbar ab: 1048576 -> 1M, 65536 -> 64k. */
+/** Abbreviates a token count readably: 1048576 -> 1M, 65536 -> 64k. */
 function formatTokenLimit(limit) {
   if (typeof limit !== "number") return "?";
   if (limit >= 1024 * 1024) return `${Math.round(limit / (1024 * 1024))}M`;
@@ -651,21 +630,21 @@ function formatTokenLimit(limit) {
 }
 
 /**
- * Ob ein Modell mit DIESEM Server funktioniert. Zwei Bedingungen, beide aus
- * den Angaben der API selbst statt aus dem Modellnamen - ein Namensmuster
- * wuerde bei jeder neuen Modellfamilie brechen (Codenamen wie
- * "nano-banana-pro-preview" verraten nichts ueber die Faehigkeiten):
- * - generateContent: erzeugt ueberhaupt Text (schliesst Embeddings, Imagen,
- *   Veo und die Live-/Audio-Modelle aus)
- * - thinking: akzeptiert ein Thinking-Level. runSearch schickt immer eines
- *   mit, andernfalls antwortet die API mit
- *   400 "Thinking level is not supported for this model."
+ * Whether a model works with THIS server. Two conditions, both taken from what
+ * the API reports itself rather than from the model name - a name pattern would
+ * break with every new model family (code names such as "nano-banana-pro-preview"
+ * say nothing about capabilities):
+ * - generateContent: produces text at all (excludes embeddings, Imagen, Veo and
+ *   the Live/Audio models)
+ * - thinking: accepts a thinking level. runSearch always sends one, otherwise
+ *   the API answers 400 "Thinking level is not supported for this model."
+ * Full derivation: docs/specs.md, "gemini-list-models".
  */
 function isUsableModel(model) {
   return (model.supportedActions ?? []).includes("generateContent") && model.thinking === true;
 }
 
-/** Warum ein Modell nicht in der Standardliste steht - nur fuer die --all-Ansicht. */
+/** Why a model is not in the default list - for the --all view only. */
 function modelStatus(model) {
   const actions = model.supportedActions ?? [];
   if (!actions.includes("generateContent")) return actions[0] ?? "no generateContent";
@@ -673,12 +652,12 @@ function modelStatus(model) {
 }
 
 /**
- * Listet die fuer den aktuellen API-Key verfuegbaren Modelle mit Token-Limits.
- * Standardmaessig nur die, die mit diesem Server nutzbar sind; mit all=true
- * die vollstaendige Liste inkl. Statusspalte.
+ * Lists the models available to the current API key, with token limits. By
+ * default only those usable with this server; with all=true the complete list
+ * including a status column.
  *
- * Die Liste sagt nichts ueber die Verfuegbarkeit aus: abgekuendigte Modelle
- * erscheinen weiterhin, antworten aber mit 404. Ein Feld dafuer gibt es nicht.
+ * Being listed says nothing about availability: deprecated models stay in the
+ * response and answer with 404. A field indicating that does not exist.
  */
 export async function listModels({ all = false } = {}) {
   const ai = getClient();
@@ -690,9 +669,8 @@ export async function listModels({ all = false } = {}) {
 
   const usable = models.filter(isUsableModel);
 
-  // Sicherung gegen ein leeres Ergebnis, falls die API die ausgewerteten
-  // Felder einmal nicht mehr liefert: dann lieber die volle Liste zeigen als
-  // gar keine.
+  // Guard against an empty result should the API stop supplying the evaluated
+  // fields: better the full list than none at all.
   const filterFailed = usable.length === 0;
   const showAll = all || filterFailed;
   const shown = [...(showAll ? models : usable)];

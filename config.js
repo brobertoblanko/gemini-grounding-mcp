@@ -2,19 +2,20 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-// Plattformueblicher Ort fuer Nutzer-State, NICHT "./config.json" - das
-// Arbeitsverzeichnis eines per stdio gestarteten MCP-Servers ist nicht
-// garantiert der Projektordner. Auch nicht scriptrelativ: bei "npm install -g"
-// liegt das Script in einem Verzeichnis, das der Paketmanager verwaltet und
-// beim Update neu schreibt, bei "npx" in einem Cache, dessen Hash sich mit
-// jeder Version aendert - die Einstellung waere dort praktisch fluechtig.
+// The platform's conventional location for user state, NOT "./config.json" -
+// the working directory of an MCP server started over stdio is not guaranteed
+// to be the project folder. Script-relative was rejected as well: with "npm
+// install -g" the script sits in a directory the package manager rewrites on
+// update, with "npx" in a cache whose hash changes with every version - the
+// setting would be effectively ephemeral there.
 //
-// Reihenfolge: XDG_CONFIG_HOME gewinnt, wenn gesetzt (Linux-Konvention und
-// zugleich das Ventil fuer alle, die den Standardort nicht wollen). Sonst
-// unter Windows %APPDATA%, wo Nutzer-State hingehoert - nicht ~/.config.
-// macOS wird bewusst wie Linux behandelt: Der Apple-Standard waere
-// ~/Library/Application Support/, aber dies ist ein Terminal-Werkzeug, und im
-// Terminal sucht niemand in einem im Finder ausgeblendeten Ordner.
+// Order: XDG_CONFIG_HOME wins when set - the Linux convention and at the same
+// time the escape hatch for anyone who does not want the default location.
+// Otherwise %APPDATA% on Windows, where user state belongs, not ~/.config.
+// macOS is deliberately treated like Linux although the Apple standard would be
+// ~/Library/Application Support/: this is a terminal tool, and in the terminal
+// nobody goes looking in a folder that Finder hides.
+// Full derivation: docs/specs.md, "Configuration file location".
 const CONFIG_DIR = path.join(
   process.env.XDG_CONFIG_HOME ??
     (process.platform === "win32"
@@ -24,49 +25,47 @@ const CONFIG_DIR = path.join(
 );
 
 /**
- * Vollstaendiger Pfad der Konfigurationsdatei. Exportiert, weil
- * Auffindbarkeit ueber die Ausgabe entsteht und nicht ueber den Ort: MCP-Server
- * und CLI nennen den Pfad, damit niemand raten muss, wo die Einstellung liegt.
+ * Full path of the configuration file. Exported because discoverability comes
+ * from the output rather than from the location: MCP server and CLI name the
+ * path so nobody has to guess where the setting lives.
  */
 export const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 
 const FALLBACK_MODEL = "gemini-flash-latest";
-// Bewusst "medium" und nicht "high": der Fallback greift bei jedem neuen
-// Nutzer ohne config.json, und ein hoeheres Level kostet ungefragt mehr
-// Thinking-Tokens. Wer mehr will, setzt es per gemini-set-model dauerhaft
-// oder pro Aufruf.
+// Deliberately "medium" and not "high": this fallback applies to every new user
+// without a config.json, and a higher level spends more thinking tokens
+// unasked. Whoever wants more sets it per call or permanently via
+// gemini-set-model.
 const FALLBACK_THINKING_LEVEL = "medium";
 
 /**
- * Die von der Gemini-API akzeptierten Thinking-Level - einzige Quelle fuer
- * MCP-Server und CLI, damit beide dieselben Werte zulassen. index.js macht
- * daraus die Zod-Schemas (z.enum nimmt dieses Array direkt), cli.js prueft
- * damit seine Kommandozeilenargumente.
+ * The thinking levels the Gemini API accepts - single source for MCP server and
+ * CLI so both allow the same values. index.js turns them into the Zod schemas
+ * (z.enum takes this array directly), cli.js validates its command line
+ * arguments against them.
  */
 export const THINKING_LEVELS = ["minimal", "low", "medium", "high"];
 
-// readConfig() laeuft pro Aufruf mehrfach - aus getSavedModel(), aus
-// getSavedThinkingLevel() und aus getSavedBackup(). Ohne dieses Flag stuende
-// dieselbe Warnung dreimal da und saehe nach drei Fehlern aus.
+// readConfig() runs three times per call - from getSavedModel(), from
+// getSavedThinkingLevel() and from getSavedBackup(). Without this flag the same
+// warning would stand there three times over and look like three separate
+// faults.
 let warned = false;
 
 function readConfig() {
   try {
     return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
   } catch (error) {
-    // Die fehlende Datei ist der Normalfall und kein Fehler: Vor dem ersten
-    // gespeicherten Wert existiert sie nicht, und die Defaults sind dann genau
-    // das Gewollte.
+    // The missing file is the normal case and no error: before the first stored
+    // value it does not exist, and the defaults are exactly what is wanted then.
+    // Everything else - broken JSON after an interrupted write, missing read
+    // permissions - renders a stored setting ineffective, and without a word the
+    // server would simply keep running on the defaults.
     //
-    // Alles andere - kaputtes JSON nach einem abgebrochenen Schreibvorgang,
-    // fehlende Leserechte - macht eine gespeicherte Einstellung wirkungslos.
-    // Ohne Hinweis liefe der Server einfach mit den Defaults weiter, und die
-    // Einstellung waere verschwunden, ohne dass es jemandem auffiele.
-    //
-    // console.error und nicht console.log: Ueber stdout laeuft beim
-    // MCP-Server das JSON-RPC-Protokoll: eine Zeile dort zerstoert die
-    // Verbindung zum Client. stderr landet im Log des Clients und auf der
-    // Kommandozeile direkt vor dem Nutzer.
+    // console.error and not console.log: the MCP server speaks JSON-RPC over
+    // stdout, where a single line breaks the connection to the client. stderr
+    // lands in the client's log and, on the command line, straight in front of
+    // the user.
     if (error.code !== "ENOENT" && !warned) {
       warned = true;
       console.error(
@@ -78,39 +77,39 @@ function readConfig() {
 }
 
 /**
- * Liest das dauerhaft gespeicherte Standardmodell.
- * Liefert FALLBACK_MODEL, falls keine oder eine kaputte config.json existiert.
+ * Reads the persistently stored default model.
+ * Returns FALLBACK_MODEL when no or a broken config.json exists.
  */
 export function getSavedModel() {
   return readConfig().model ?? FALLBACK_MODEL;
 }
 
 /**
- * Liest das dauerhaft gespeicherte Standard-Thinking-Level.
- * Liefert FALLBACK_THINKING_LEVEL, falls keine oder eine kaputte config.json existiert.
+ * Reads the persistently stored default thinking level.
+ * Returns FALLBACK_THINKING_LEVEL when no or a broken config.json exists.
  */
 export function getSavedThinkingLevel() {
   return readConfig().thinkingLevel ?? FALLBACK_THINKING_LEVEL;
 }
 
 /**
- * Liest das gespeicherte Backup-Modell als Einheit: Modell und das ihm
- * zugeordnete Thinking-Level gehoeren zusammen und werden deshalb zusammen
- * gelesen, statt ueber zwei Getter wie die Standardwerte.
+ * Reads the stored backup model as a unit: a model and the thinking level
+ * assigned to it belong together and are therefore read together, rather than
+ * through two getters like the default values.
  *
- * Drei Zustaende, die auseinandergehalten werden muessen:
- * - `model` gesetzt: ein Fallback findet statt
- * - `disabled`: ausdruecklich per false abgeschaltet
- * - beides leer: nie eingestellt
+ * Three states that have to be kept apart:
+ * - `model` set: a fallback takes place
+ * - `disabled`: explicitly switched off via false
+ * - both empty: never configured
  *
- * Der Unterschied zwischen den letzten beiden aendert am Verhalten nichts und
- * existiert allein fuer die Ausgabe von "gemini-grounding config": "not set"
- * und "disabled" sind fuer den Nutzer zwei verschiedene Auskuenfte.
+ * The difference between the last two changes nothing about the behaviour and
+ * exists solely for the output of "gemini-grounding config": "not set" and
+ * "disabled" are two different statements to the user.
  *
- * Geprueft wird beides, weil die Datei von Hand bearbeitet werden kann. Ein
- * Modell muss ein nicht-leerer String sein, ein Level eines der bekannten -
- * andernfalls ginge ein unbrauchbarer Wert erst an die API und kaeme als 400
- * zurueck, ausgerechnet auf dem Pfad, der einen Fehler auffangen soll.
+ * Both are validated because the file can be edited by hand. A model has to be
+ * a non-empty string, a level one of the known ones - otherwise an unusable
+ * value would go to the API first and come back as a 400, on the very path that
+ * is meant to catch an error.
  */
 export function getSavedBackup() {
   const { backupModel, backupThinkingLevel } = readConfig();
@@ -124,24 +123,24 @@ export function getSavedBackup() {
 }
 
 /**
- * Loest auf, mit welchem Modell und Thinking-Level ein einzelner Aufruf
- * tatsaechlich laeuft - und ob er ein Backup bekommt. Gemeinsame Grundlage fuer
- * den MCP-Handler und die CLI, damit beide dieselbe Antwort geben.
+ * Resolves which model and thinking level a single call actually runs with -
+ * and whether it gets a backup. Shared ground for the MCP handler and the CLI
+ * so both give the same answer.
  *
- * Die Aufloesung geschieht bei JEDEM Aufruf neu. Ein einmal ermittelter Wert
- * waere ab dem naechsten gemini-set-model falsch, ohne dass es jemandem
- * auffiele.
+ * Resolution happens anew on EVERY call. A value resolved once would be wrong
+ * from the next gemini-set-model on, without anyone noticing.
+ *
+ * Full derivation: docs/specs.md, "Resolving the defaults per call".
  */
 export function resolveCallConfig({ model, thinkingLevel } = {}) {
-  // Ein namentlich genanntes Modell bekommt KEIN Backup. Wer eines nennt, will
-  // dieses eine - haeufig gerade, um zu pruefen, ob es erreichbar ist. Eine
-  // Antwort von einem anderen Modell beantwortet diese Frage nicht, sie
-  // verdeckt sie.
+  // A model named on the call gets NO backup. Whoever names one wants that one -
+  // frequently in order to check whether it is reachable at all. An answer from
+  // a different model does not answer that question, it hides it.
   //
-  // Die Regel ist syntaktisch und greift auch dann, wenn das genannte Modell
-  // zufaellig dem gespeicherten Standard entspricht: Was zaehlt, ist die
-  // ausdrueckliche Nennung, nicht der Wert. Ein ausdrueckliches thinkingLevel
-  // beruehrt den Fallback dagegen nicht - das Modell bleibt dabei der Standard.
+  // The rule is syntactic and applies even when the named model happens to equal
+  // the stored default: what counts is the explicit naming, not the value. An
+  // explicit thinkingLevel does not affect the fallback - the model then still
+  // is the stored default.
   const backup = model === undefined ? getSavedBackup() : {};
 
   return {
@@ -153,35 +152,33 @@ export function resolveCallConfig({ model, thinkingLevel } = {}) {
 }
 
 /**
- * Ob ein Schreibvorgang Standard und Backup auf dasselbe Modell legen wuerde -
- * als Begruendung im Klartext, oder undefined, wenn alles in Ordnung ist.
+ * Whether a write would put default and backup on the same model - as a plain
+ * text reason, or undefined when everything is in order.
  *
- * Waeren beide gleich, faende kein Ausweichen mehr statt: runSearch lehnt den
- * Fallback dann mit "it is the same model as the default" ab. Das ist ein
- * Fangnetz und kein Ersatz fuer diese Pruefung - es greift erst beim naechsten
- * fehlgeschlagenen Aufruf, und bis dahin ist das Backup lautlos tot.
+ * Were both equal, no fallback would take place at all: runSearch then refuses
+ * it with "it is the same model as the default". That is a safety net and no
+ * substitute for this check - it only fires on the next failing call, and until
+ * then the backup is silently dead.
  *
- * Geprueft wird der ZUSTAND NACH dem Schreiben, nicht der Aufruf: Nur so faellt
- * auch der Fall auf, in dem ein einziger Aufruf beide Werte zugleich setzt.
- * Ein Aufruf ohne jedes Modell wird durchgelassen, auch wenn die gespeicherten
- * Werte bereits kollidieren - "set-thinking low" hat die Lage nicht
- * verursacht und soll nicht an ihr scheitern.
+ * Checked is the STATE AFTER the write, not the call: only that way does the
+ * case show up in which a single call sets both values at once. A call without
+ * any model is let through even when the stored values already collide -
+ * "set-thinking low" did not cause that state and should not fail on it.
  *
- * Hier und nicht in cli.js, weil es sonst wieder nur fuer die CLI gaelte:
- * gemini-set-model schreibt dieselbe Datei und kann beide Werte auf einmal
- * setzen.
+ * Here and not in cli.js, because it would otherwise apply to the CLI alone:
+ * gemini-set-model writes the same file and can set both values in one go.
  */
 export function findModelCollision({ model, backupModel } = {}) {
   if (model === undefined && backupModel === undefined) return undefined;
 
   const resultingModel = model ?? getSavedModel();
-  // false (abgeschaltet) und undefined (nie eingestellt) sind beide unschaedlich
-  // und fallen ueber die Wahrheitspruefung unten heraus.
+  // false (switched off) and undefined (never configured) are both harmless and
+  // drop out through the truthiness check below.
   const resultingBackup = backupModel === undefined ? getSavedBackup().model : backupModel;
   if (!resultingBackup || resultingModel !== resultingBackup) return undefined;
 
-  // Welche Seite der Aufruf anfasst, entscheidet ueber den Rat: Wer das
-  // Standardmodell setzt, muss am Backup etwas aendern, und umgekehrt.
+  // Which side the call touches decides the advice: whoever sets the default
+  // model has to change something about the backup, and the other way round.
   if (model !== undefined && backupModel !== undefined) {
     return `"${resultingModel}" cannot be both the default and the backup model - a backup only helps if it is a different one.`;
   }
@@ -192,74 +189,60 @@ export function findModelCollision({ model, backupModel } = {}) {
 }
 
 /**
- * Ob ein Schreibvorgang ein Backup-Thinking-Level ohne zugehoeriges Modell
- * hinterlassen wuerde - als Begruendung im Klartext, oder undefined.
+ * Whether a write would leave behind a backup thinking level without its model
+ * - as a plain text reason, or undefined.
  *
- * Ein Level gehoert zu genau einem Modell (siehe die Einheits-Regel in
- * setSavedConfig). Ohne dieses Modell hat es keinen Bezug: Es steht in der
- * Datei, wirkt nirgends, und die Bestaetigung meldet einen Wert, den der
- * Zustandsblock zwei Zeilen weiter unten als "not set" oder "disabled" wieder
- * einkassiert.
+ * A level belongs to exactly one model (see the unit rule in setSavedConfig).
+ * Without that model it has nothing to refer to: it sits in the file, takes
+ * effect nowhere, and the confirmation reports a value that the state block two
+ * lines below revokes as "not set" or "disabled".
  *
- * Wie bei findModelCollision geprueft am ZUSTAND NACH DEM SCHREIBEN und nicht
- * am einzelnen Argument, denn nur gemini-set-model kann Modell und Level in
- * EINEM Aufruf setzen - dort ist zum Zeitpunkt der Pruefung noch keiner von
- * beiden gespeichert.
- *
- * Hier und nicht in cli.js, aus demselben Grund: Die CLI hatte diese Pruefung
- * zuerst, der MCP-Handler nicht, und ein Modell auf Zuruf nimmt genau den
- * ungeschuetzten Weg.
+ * As in findModelCollision, checked on the STATE AFTER THE WRITE and not on the
+ * single argument, because only gemini-set-model can set model and level in ONE
+ * call - at the time of the check neither of them is stored yet.
  */
 export function findBackupLevelProblem({ backupModel, backupThinkingLevel } = {}) {
-  // null loescht das Level und braucht kein Modell: Der Weg zurueck auf "erbt
-  // vom Aufruf" muss auch dann offenstehen, wenn gar kein Backup mehr da ist.
+  // null deletes the level and needs no model: the way back to "inherits from
+  // the call" must stay open even when no backup is left at all.
   if (backupThinkingLevel === undefined || backupThinkingLevel === null) return undefined;
 
   const saved = getSavedBackup();
-  // Modell-ID, false (abgeschaltet) oder undefined (nie eingestellt). ?? und
-  // nicht ||, damit ein uebergebenes false erhalten bleibt.
+  // Model ID, false (switched off) or undefined (never configured). ?? and not
+  // ||, so that a false passed in is preserved.
   const resulting = backupModel ?? (saved.disabled ? false : saved.model);
   if (resulting) return undefined;
 
-  // Kein CLI-Befehlsname in der Meldung: Dieselbe Funktion beantwortet beide
-  // Schnittstellen, und "set-backup ..." waere in einer MCP-Antwort ein
-  // Ratschlag ins Leere.
+  // No CLI command name in the message: the same function answers both
+  // interfaces, and "set-backup ..." would be advice into the void inside an MCP
+  // response.
   //
-  // Die erste Meldung benennt die Regel und nicht den Zustand ("a backup that
-  // is switched off" statt "the backup is switched off"): Sie erscheint auch
-  // dort, wo der Aufruf das Abschalten erst herbeifuehrt und ein Backup gerade
-  // noch laeuft.
+  // The first message names the rule and not the state ("a backup that is
+  // switched off" instead of "the backup is switched off"): it also appears
+  // where the call brings the switching off about in the first place and a
+  // backup is still running.
   return resulting === false
     ? "a backup that is switched off has no thinking level - switch a backup model on first, or leave the level out."
     : "no backup model is set - a thinking level on its own has nothing to belong to. Name the backup model together with the level.";
 }
 
 /**
- * Speichert Modell, Thinking-Level und Backup dauerhaft, ohne die jeweils
- * anderen gespeicherten Werte zu ueberschreiben (undefined-Felder bleiben
- * unangetastet). Enthaelt ausschliesslich diese Werte, niemals den API-Key oder
- * andere sensible Daten.
+ * Stores model, thinking level and backup persistently without overwriting the
+ * respective other stored values (undefined fields stay untouched). Contains
+ * these values only, never the API key or other sensitive data.
  *
- * null loescht den Schluessel. Das braucht heute nur backupThinkingLevel, um
- * wieder auf "erbt vom Primaeraufruf" zurueckzufallen - die Regel gilt trotzdem
- * fuer alle vier, weil eine Sonderregel fuer genau ein Feld spaeter niemand
- * mehr erklaeren kann.
+ * null deletes the key. Today only backupThinkingLevel needs that, to fall back
+ * to "inherits from the primary call" - the rule applies to all four all the
+ * same, because a special rule for exactly one field is not explainable later.
  *
- * DIE EINE AUSNAHME VON DER MERGE-REGEL: Das Backup wird als EINHEIT
- * geschrieben. Kommt ein backupModel ohne eigenes backupThinkingLevel, verfaellt
- * ein zuvor gespeichertes Level, statt liegen zu bleiben. Das Level gehoert zu
- * diesem einen Modell - ueber einen Wechsel des Backups hinweg gaelte es
- * stillschweigend fuer ein Modell, fuer das es nie gewaehlt wurde.
+ * THE ONE EXCEPTION TO THE MERGE RULE: the backup is written as a UNIT. A
+ * backupModel arriving without a backupThinkingLevel of its own expires a
+ * previously stored level instead of leaving it in place. The level belongs to
+ * that one model - carried across a change of backup, it would silently apply to
+ * a model it was never chosen for.
  *
- * Diese Regel steht HIER und nicht in cli.js, weil sie sonst nur fuer die CLI
- * gilt: Der MCP-Handler schreibt dieselbe Datei, und ein Modell, das dort ein
- * neues Backup setzt, hat keinen Anlass, ausdruecklich null mitzuschicken.
- * Zwei Schnittstellen mit gegenlaeufiger Semantik auf einer Datei kann
- * spaeter niemand mehr erklaeren.
- *
- * Liefert zurueck, was tatsaechlich geschrieben wurde - einschliesslich des
- * hier abgeleiteten null. Nur so kann die Bestaetigung beim Aufrufer den
- * Wegfall des Levels nennen, statt ihn zu verschweigen.
+ * Returns what was actually written - including the null derived here. Only then
+ * can the confirmation at the caller name the level that fell away instead of
+ * concealing it.
  */
 export function setSavedConfig({ model, thinkingLevel, backupModel, backupThinkingLevel }) {
   if (backupModel !== undefined && backupThinkingLevel === undefined) {
@@ -276,9 +259,9 @@ export function setSavedConfig({ model, thinkingLevel, backupModel, backupThinki
   apply("thinkingLevel", thinkingLevel);
   apply("backupModel", backupModel);
   apply("backupThinkingLevel", backupThinkingLevel);
-  // Nur hier im Schreibpfad angelegt, damit das Paket nichts ungefragt
-  // erzeugt: Solange niemand das Modell setzt, entsteht weder Verzeichnis noch
-  // Datei - readConfig() faengt die fehlende Datei bereits ab.
+  // Created on the write path only, so the package creates nothing unasked: as
+  // long as nobody sets the model, neither directory nor file comes into
+  // existence - readConfig() already handles the missing file.
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 
@@ -286,17 +269,17 @@ export function setSavedConfig({ model, thinkingLevel, backupModel, backupThinki
 }
 
 /**
- * Bestaetigt jeden geschriebenen Wert einzeln. Gedacht fuer das Ergebnis von
- * setSavedConfig(), damit dort auch das abgeleitete null erscheint.
+ * Confirms every written value individually. Intended for the result of
+ * setSavedConfig(), so that the derived null appears there as well.
  *
- * Was gespeichert wurde, ohne dass es dasteht, ist von einem verworfenen
- * Parameter nicht zu unterscheiden - deshalb steht jeder Wert einzeln da und
- * nicht bloss ein "gespeichert".
+ * What was stored without standing there is indistinguishable from a discarded
+ * parameter - hence every value stands there on its own rather than a bare
+ * "saved".
  *
- * Gemeinsam genutzt von CLI und MCP-Handler, die nur ihr Praefix
- * unterscheiden. Zwei getrennte Fassungen liefen frueher oder spaeter
- * auseinander, und dann sagte dieselbe Aenderung je nach Schnittstelle etwas
- * anderes.
+ * Shared by the CLI and the MCP handler, which differ only in their prefix. Two
+ * separate copies would drift apart sooner or later.
+ *
+ * Full derivation: docs/specs.md, "Reporting what was saved".
  */
 export function formatSavedValues({ model, thinkingLevel, backupModel, backupThinkingLevel }) {
   const parts = [];
@@ -305,9 +288,9 @@ export function formatSavedValues({ model, thinkingLevel, backupModel, backupThi
   if (backupModel !== undefined) {
     parts.push(backupModel === false ? "Backup: off" : `Backup: ${backupModel}`);
   }
-  // null heisst "geloescht" und damit: erbt wieder vom Aufruf. Das gehoert
-  // genannt, weil ein zuvor gesetztes Level dabei verschwindet - ausser bei
-  // einem abgeschalteten Backup, wo ein Level nichts mehr bedeutet.
+  // null means "deleted" and with it: inherits from the call again. That belongs
+  // in the output because a previously set level disappears in the process -
+  // except on a switched-off backup, where a level means nothing any more.
   if (backupThinkingLevel !== undefined && backupModel !== false) {
     parts.push(
       backupThinkingLevel === null
@@ -319,23 +302,22 @@ export function formatSavedValues({ model, thinkingLevel, backupModel, backupThi
 }
 
 /**
- * Der vollstaendige gespeicherte Zustand in zwei Zeilen - was ab jetzt gilt,
- * nicht was gerade geschrieben wurde.
+ * The complete stored state in two lines - what applies from now on, not what
+ * was just written.
  *
- * Steht nach JEDEM Schreibvorgang und in "config", in CLI wie MCP-Handler.
- * Die Bestaetigung darueber sagt, was sich geaendert hat; erst diese beiden
- * Zeilen sagen, womit die naechste Recherche laeuft. Wer nur eines von beidem
- * sieht, muss den Rest aus dem Gedaechtnis ergaenzen - und das ist genau der
- * Punkt, an dem jemand mit einem Modell arbeitet, das er nicht gemeint hat.
+ * Printed after EVERY write and in "config", in the CLI as in the MCP handler.
+ * The confirmation above says what changed; only these two lines say what the
+ * next query runs with - and that gap is exactly where somebody ends up working
+ * with a model they did not mean.
  *
- * Beim geerbten Level steht der Wert und nicht bloss "inherited": Was das
- * Backup bekaeme, wenn es jetzt einspraenge, ist die Auskunft, um die es geht.
- * Der Zusatz sagt dazu, dass der Wert nicht ihm gehoert, sondern mitwandert -
- * uebergibt ein Aufruf ein eigenes thinkingLevel, erbt das Backup dieses.
+ * On the inherited level the value is printed rather than a bare "inherited":
+ * what the backup would run with if it stepped in right now is the information
+ * being asked for. The suffix says the value is not its own but travels along -
+ * a call passing its own thinkingLevel is what the backup inherits then.
  *
- * Der Mittelpunkt trennt wie in formatSearchQueries (gemini.js): Modellnamen
- * enthalten selbst Bindestriche und Ziffern, zwischen denen ein weiterer
- * Bindestrich untergeht.
+ * The middle dot separates as in formatSearchQueries (gemini.js): model names
+ * contain hyphens and digits of their own, between which another hyphen would
+ * disappear.
  */
 export function formatConfigState() {
   const thinkingLevel = getSavedThinkingLevel();

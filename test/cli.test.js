@@ -1,6 +1,5 @@
-// Behandlung der Optionen auf der Kommandozeile. Geprueft wird die Regel, dass
-// eine Option entweder eine Wirkung hat oder einen Fehler ausloest - nie aber
-// stillschweigend verfaellt.
+// Handling of the command-line options, against the rule that an option either
+// has an effect or raises an error, but never lapses silently.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -8,25 +7,25 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { configFile, freshConfigHome, runCli } from "./helpers.js";
 
-test("speichert Modell und Thinking-Level in einem Aufruf", () => {
+test("saves model and thinking level in one call", () => {
   const result = runCli(["set-model", "gemini-x", "--thinking", "low"]);
 
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.savedConfig(), { model: "gemini-x", thinkingLevel: "low" });
-  // Die Bestaetigung muss beides nennen: Was gespeichert wurde, ohne dass es
-  // dasteht, ist von einer verworfenen Option nicht zu unterscheiden.
+  // The confirmation must name both: what was saved without saying so is
+  // indistinguishable from a discarded option.
   assert.match(result.stdout, /Model: gemini-x/);
   assert.match(result.stdout, /Thinking level: low/);
 });
 
-test("speichert aus set-thinking heraus spiegelbildlich beides", () => {
+test("saves both the mirrored way from set-thinking", () => {
   const result = runCli(["set-thinking", "high", "--model", "gemini-y"]);
 
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.savedConfig(), { model: "gemini-y", thinkingLevel: "high" });
 });
 
-test("nennt nur den Wert, der auch wirklich gespeichert wurde", () => {
+test("names only the value that was actually saved", () => {
   const result = runCli(["set-model", "gemini-z"]);
 
   assert.equal(result.status, 0, result.stderr);
@@ -34,24 +33,24 @@ test("nennt nur den Wert, der auch wirklich gespeichert wurde", () => {
   assert.doesNotMatch(result.stdout, /Thinking level/);
 });
 
-test("bricht ab, wenn set-model zwei Modelle nennt", () => {
+test("aborts when set-model names two models", () => {
   const result = runCli(["set-model", "gemini-a", "--model", "gemini-b"]);
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /--model/);
-  assert.deepEqual(result.savedConfig(), {}, "nichts wird bei einem Fehler geschrieben");
+  assert.deepEqual(result.savedConfig(), {}, "nothing is written on an error");
 });
 
-test("bricht ab, wenn eine Option beim Befehl nichts bewirkt", () => {
+test("aborts when an option has no effect for the command", () => {
   const result = runCli(["config", "--thinking", "low"]);
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /--thinking/);
 });
 
-test("prueft die Optionen, bevor ein API-Aufruf entsteht", () => {
-  // "models" ist der einzige Befehl, der ohne die Pruefung an die API ginge.
-  // Die Meldung muss die Option nennen und darf kein API-Fehler sein.
+test("checks the options before an API call comes about", () => {
+  // "models" is the only command that would go to the API without the check. The
+  // message has to name the option and must not be an API error.
   const result = runCli(["models", "--model", "gemini-x"]);
 
   assert.equal(result.status, 1);
@@ -59,14 +58,14 @@ test("prueft die Optionen, bevor ein API-Aufruf entsteht", () => {
   assert.doesNotMatch(result.stderr, /ApiError/);
 });
 
-test("laesst --all nicht als Suchanfrage durchgehen", () => {
-  const result = runCli(["was ist ein mcp server", "--all"]);
+test("does not let --all pass as a search query", () => {
+  const result = runCli(["what is an mcp server", "--all"]);
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /--all/);
 });
 
-test("speichert das Backup mit eigenem Thinking-Level", () => {
+test("saves the backup with its own thinking level", () => {
   const result = runCli(["set-backup", "gemini-x", "--thinking", "low"]);
 
   assert.equal(result.status, 0, result.stderr);
@@ -76,11 +75,9 @@ test("speichert das Backup mit eigenem Thinking-Level", () => {
   });
 });
 
-test("entfernt das Level, wenn set-backup ohne --thinking laeuft", () => {
-  // Das Backup wird als EINHEIT geschrieben, anders als bei set-model und
-  // set-thinking: Bliebe das Level beim Wechsel des Backup-Modells liegen,
-  // gaelte es stillschweigend fuer ein anderes Modell als das, fuer das es
-  // gesetzt wurde.
+test("removes the level when set-backup runs without --thinking", () => {
+  // The backup is written as a UNIT, unlike set-model and set-thinking, see
+  // setSavedConfig in config.js.
   const { configHome } = runCli(["set-backup", "gemini-x", "--thinking", "high"]);
   const result = runCli(["set-backup", "gemini-y"], { configHome });
 
@@ -89,9 +86,9 @@ test("entfernt das Level, wenn set-backup ohne --thinking laeuft", () => {
   assert.match(result.stdout, /inherited/);
 });
 
-test("schaltet das Backup mit off ab, statt es zu vergessen", () => {
-  // false und nicht geloescht: Der Unterschied zwischen "nie eingestellt" und
-  // "bewusst abgeschaltet" bleibt damit in der Datei stehen.
+test("switches the backup off with off instead of forgetting it", () => {
+  // false and not deleted, so the difference between "never set" and
+  // "deliberately switched off" stays in the file.
   const { configHome } = runCli(["set-backup", "gemini-x"]);
   const result = runCli(["set-backup", "off"], { configHome });
 
@@ -99,7 +96,7 @@ test("schaltet das Backup mit off ab, statt es zu vergessen", () => {
   assert.deepEqual(result.savedConfig(), { backupModel: false });
 });
 
-test("nimmt bei einem abgeschalteten Backup kein Thinking-Level entgegen", () => {
+test("accepts no thinking level for a switched-off backup", () => {
   const result = runCli(["set-backup", "off", "--thinking", "low"]);
 
   assert.equal(result.status, 1);
@@ -107,8 +104,8 @@ test("nimmt bei einem abgeschalteten Backup kein Thinking-Level entgegen", () =>
   assert.deepEqual(result.savedConfig(), {});
 });
 
-test("verhindert, dass Standard und Backup dasselbe Modell werden", () => {
-  // Von beiden Seiten, denn lautlos gaebe es danach kein Ausweichen mehr.
+test("prevents default and backup from becoming the same model", () => {
+  // From both sides, because silently there would be no fallback left afterwards.
   const { configHome } = runCli(["set-model", "gemini-x"]);
 
   const asBackup = runCli(["set-backup", "gemini-x"], { configHome });
@@ -121,10 +118,10 @@ test("verhindert, dass Standard und Backup dasselbe Modell werden", () => {
   assert.match(asDefault.stderr, /currently the backup model/);
 });
 
-test("prueft die Kollision auch auf dem Umweg ueber set-thinking", () => {
-  // Der dritte Schreibpfad, und der einzige, der die Pruefung frueher nicht
-  // hatte: "set-thinking low --model <backup>" speichert genauso ein Modell wie
-  // "set-model". Deshalb sitzt sie jetzt an der gemeinsamen Schreibstelle.
+test("checks the collision on the detour via set-thinking as well", () => {
+  // The third write path, and the only one that lacked the check before:
+  // "set-thinking low --model <backup>" saves a model just like "set-model". That
+  // is why the check now sits at the shared write site.
   const { configHome } = runCli(["set-model", "gemini-x"]);
   runCli(["set-backup", "gemini-y"], { configHome });
 
@@ -135,14 +132,13 @@ test("prueft die Kollision auch auf dem Umweg ueber set-thinking", () => {
   assert.deepEqual(
     result.savedConfig(),
     { model: "gemini-x", backupModel: "gemini-y" },
-    "bei einem Fehler wird nichts geschrieben, auch nicht das Level",
+    "on an error nothing is written, not even the level",
   );
 });
 
-test("laesst einen Befehl ohne Modell auch bei kollidierender Datei durch", () => {
-  // Eine von Hand gleichgesetzte Datei ist ein Zustand, den "set-thinking low"
-  // nicht verursacht hat - er soll nicht an ihr scheitern und damit die
-  // Reparatur des Levels blockieren.
+test("lets a command without a model through, even with a colliding file", () => {
+  // A hand-edited file is a state "set-thinking low" did not cause; it must not
+  // fail on it and thereby block repairing the level.
   const configHome = freshConfigHome();
   const file = configFile(configHome);
   mkdirSync(path.dirname(file), { recursive: true });
@@ -154,41 +150,41 @@ test("laesst einen Befehl ohne Modell auch bei kollidierender Datei durch", () =
   assert.equal(result.savedConfig().thinkingLevel, "high");
 });
 
-test("zeigt in config alle drei Zustaende des Backups", () => {
+test("shows all three backup states in config", () => {
   const nothing = runCli(["config"]);
   assert.match(nothing.stdout, /Backup:\s+not set/);
 
   const { configHome } = runCli(["set-backup", "gemini-x"]);
   const inherited = runCli(["config"], { configHome });
-  // Beim geerbten Level steht der Wert und nicht bloss "inherited": Womit das
-  // Backup einspraenge, ist die Auskunft, um die es geht.
+  // For an inherited level the value is shown and not just "inherited": what the
+  // backup would step in with is the information that matters.
   assert.match(inherited.stdout, /Backup:\s+gemini-x · medium \(inherited\)/);
 
   runCli(["set-backup", "gemini-x", "--thinking", "minimal"], { configHome });
   const own = runCli(["config"], { configHome });
-  assert.match(own.stdout, /Backup:\s+gemini-x · minimal$/m, "ein eigenes Level erbt nichts");
+  assert.match(own.stdout, /Backup:\s+gemini-x · minimal$/m, "an own level inherits nothing");
 
   runCli(["set-backup", "off"], { configHome });
   const disabled = runCli(["config"], { configHome });
   assert.match(disabled.stdout, /Backup:\s+disabled/);
 });
 
-test("nennt nach jedem Speichern den vollstaendigen Zustand", () => {
-  // Die Bestaetigungszeile sagt, was sich geaendert hat; erst diese beiden
-  // Zeilen sagen, womit die naechste Recherche laeuft. Ohne sie muesste man
-  // nach jedem set-Befehl "config" hinterherschicken.
+test("names the complete state after every save", () => {
+  // The confirmation line says what changed; only these two lines say what the
+  // next search runs with. Without them every set command needs a "config" sent
+  // after it.
   const { configHome } = runCli(["set-model", "gemini-x", "--thinking", "high"]);
   const result = runCli(["set-backup", "gemini-y"], { configHome });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /^Saved - /m, "was geschrieben wurde");
-  assert.match(result.stdout, /^Primary: gemini-x · high$/m, "und womit es ab jetzt laeuft");
+  assert.match(result.stdout, /^Saved - /m, "what was written");
+  assert.match(result.stdout, /^Primary: gemini-x · high$/m, "and what it runs with from now on");
   assert.match(result.stdout, /^Backup:  gemini-y · high \(inherited\)$/m);
 });
 
-test("aendert das Level des gespeicherten Backups, ohne das Modell zu nennen", () => {
-  // Sonst muesste man das Modell erneut abtippen, um an seinem Level etwas zu
-  // drehen - und ein Vertipper dabei traefe stillschweigend ein anderes Modell.
+test("changes the saved backup's level without naming the model", () => {
+  // Otherwise the model has to be typed again to adjust its level, and a typo
+  // while doing so silently hits a different model.
   const { configHome } = runCli(["set-backup", "gemini-x", "--thinking", "high"]);
   const result = runCli(["set-backup", "--thinking", "minimal"], { configHome });
 
@@ -199,11 +195,10 @@ test("aendert das Level des gespeicherten Backups, ohne das Modell zu nennen", (
   });
 });
 
-test("verlangt ein Backup-Modell, bevor dessen Level gesetzt werden kann", () => {
-  // Ein Level ohne Modell haette keinen Bezug - und "off" hat keines mehr.
-  // Beide Meldungen kommen aus config.js und lauten ueber MCP genauso: Die
-  // Pruefung lag frueher hier in der CLI, und gemini-set-model liess dieselbe
-  // Eingabe durch.
+test("requires a backup model before its level can be set", () => {
+  // A level without a model has nothing to refer to, and "off" no longer has one.
+  // Both messages come from config.js and read the same over MCP; the check used
+  // to sit here in the CLI, and gemini-set-model let the same input through.
   const bare = runCli(["set-backup", "--thinking", "low"]);
   assert.equal(bare.status, 1);
   assert.match(bare.stderr, /no backup model is set/);
@@ -212,6 +207,6 @@ test("verlangt ein Backup-Modell, bevor dessen Level gesetzt werden kann", () =>
   const { configHome } = runCli(["set-backup", "off"]);
   const disabled = runCli(["set-backup", "--thinking", "low"], { configHome });
   assert.equal(disabled.status, 1);
-  assert.match(disabled.stderr, /switched off/, "abgeschaltet ist etwas anderes als nie gesetzt");
+  assert.match(disabled.stderr, /switched off/, "switched off differs from never set");
   assert.deepEqual(disabled.savedConfig(), { backupModel: false });
 });
