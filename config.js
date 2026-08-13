@@ -31,12 +31,15 @@ const CONFIG_DIR = path.join(
  */
 export const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 
-const FALLBACK_MODEL = "gemini-flash-latest";
-// Deliberately "medium" and not "high": this fallback applies to every new user
+// DEFAULT_ and not FALLBACK_: in gemini.js "fallback" means the switch to the
+// backup model after a failed request. These two are the built-in values for a
+// missing config.json and have nothing to do with it.
+const DEFAULT_MODEL = "gemini-flash-latest";
+// Deliberately "medium" and not "high": this default applies to every new user
 // without a config.json, and a higher level spends more thinking tokens
 // unasked. Whoever wants more sets it per call or permanently via
 // gemini-set-model.
-const FALLBACK_THINKING_LEVEL = "medium";
+const DEFAULT_THINKING_LEVEL = "medium";
 
 /**
  * The thinking levels the Gemini API accepts - single source for MCP server and
@@ -78,18 +81,18 @@ function readConfig() {
 
 /**
  * Reads the persistently stored default model.
- * Returns FALLBACK_MODEL when no or a broken config.json exists.
+ * Returns DEFAULT_MODEL when no or a broken config.json exists.
  */
 export function getSavedModel() {
-  return readConfig().model ?? FALLBACK_MODEL;
+  return readConfig().model ?? DEFAULT_MODEL;
 }
 
 /**
  * Reads the persistently stored default thinking level.
- * Returns FALLBACK_THINKING_LEVEL when no or a broken config.json exists.
+ * Returns DEFAULT_THINKING_LEVEL when no or a broken config.json exists.
  */
 export function getSavedThinkingLevel() {
-  return readConfig().thinkingLevel ?? FALLBACK_THINKING_LEVEL;
+  return readConfig().thinkingLevel ?? DEFAULT_THINKING_LEVEL;
 }
 
 /**
