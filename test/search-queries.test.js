@@ -2,36 +2,36 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatSearchQueries } from "../gemini.js";
 
-// gemini.js laesst sich ohne API-Key importieren: getClient() wird erst in den
-// Funktionen aufgerufen, nicht beim Laden des Moduls.
+// gemini.js can be imported without an API key: getClient() is called inside the
+// functions, not while the module loads.
 
-/** Erzeugt eine Suchanfrage genau der gewuenschten Zeichenlaenge. */
+/** Builds a search query of exactly the requested character length. */
 const query = (length, filler = "x") => filler.repeat(length);
 
-test("erzeugt keine Zeile, wenn nicht gesucht wurde", () => {
+test("produces no line when nothing was searched", () => {
   assert.equal(formatSearchQueries([]), "");
-  // Fehlt das Feld ganz, kommt der Default zum Tragen.
+  // When the field is missing entirely, the default takes effect.
   assert.equal(formatSearchQueries(), "");
 });
 
-test("schreibt eine einzelne Anfrage vollstaendig aus", () => {
+test("writes out a single query in full", () => {
   assert.equal(
     formatSearchQueries(["Node js releases LTS current version"]),
     "\n🔎 Searched: Node js releases LTS current version",
   );
 });
 
-test("verbindet mehrere Anfragen mit dem Mittelpunkt", () => {
+test("joins several queries with the middle dot", () => {
   const result = formatSearchQueries(["erste Anfrage", "zweite Anfrage"]);
   assert.equal(result, "\n🔎 Searched: erste Anfrage · zweite Anfrage");
 });
 
-test("laesst eine breite, aber uebliche Anfrage vollstaendig durch", () => {
-  // Wortlaut aus einem echten Aufruf: sechs Suchanfragen mit 260 Zeichen Text.
-  // Das ist die obere Kante des Normalfalls und die Begruendung fuer das Budget
-  // von 300 - sie muss ungekuerzt bleiben, sonst ist es zu klein gewaehlt.
-  // (Der echte Extremfall liegt hoeher: gemessen 11 Anfragen bei einer bewusst
-  // ueberbreiten Frage. Genau den soll die Kappung abfangen.)
+test("lets a broad but ordinary request pass in full", () => {
+  // Wording from a real call: six search queries with 260 characters of text.
+  // That is the upper edge of the normal case and the reason for the budget of
+  // 300 - it must stay uncut, otherwise the budget is chosen too small. The real
+  // extreme lies higher: 11 queries measured on a deliberately overbroad
+  // question, which is what the capping is there for.
   const measured = [
     '"Bun" production ready 2025 2026 status',
     "Node js permission model status stable",
@@ -43,38 +43,38 @@ test("laesst eine breite, aber uebliche Anfrage vollstaendig durch", () => {
 
   const result = formatSearchQueries(measured);
 
-  assert.ok(!result.includes("more"), "nichts darf gekappt werden");
+  assert.ok(!result.includes("more"), "nothing may be capped");
   for (const entry of measured) {
-    assert.ok(result.includes(entry), `"${entry}" fehlt in der Zeile`);
+    assert.ok(result.includes(entry), `"${entry}" is missing from the line`);
   }
 });
 
-test("kappt oberhalb des Budgets und zaehlt den Rest", () => {
-  // 10 Anfragen a 50 Zeichen. Kumuliert mit den Trennern: 50, 103, 156, 209,
-  // 262, 315 - die sechste reisst das Budget.
+test("caps above the budget and counts the remainder", () => {
+  // 10 queries of 50 characters each. Cumulative with the separators: 50, 103,
+  // 156, 209, 262, 315 - the sixth breaks the budget.
   const many = Array.from({ length: 10 }, (_, i) => query(49, String(i)) + String(i));
 
   const result = formatSearchQueries(many);
 
-  assert.ok(result.endsWith("(+4 more)"), `unerwartetes Ende: ${result}`);
-  assert.equal(result.split(" · ").length, 6, "sechs Anfragen sollten sichtbar sein");
+  assert.ok(result.endsWith("(+4 more)"), `unexpected ending: ${result}`);
+  assert.equal(result.split(" · ").length, 6, "six queries should be visible");
 });
 
-test("schreibt die grenzueberschreitende Anfrage noch vollstaendig aus", () => {
-  // Die zweite Anfrage reisst das Budget deutlich. Sie darf trotzdem nicht
-  // mitten im Wort enden - eine halbe Suchanfrage ist wertlos.
+test("still writes out the query that crosses the limit in full", () => {
+  // The second query breaks the budget by a wide margin. It must not end
+  // mid-word all the same, because half a search query is worthless.
   const long = query(280, "b");
   const result = formatSearchQueries([query(100, "a"), long, query(30, "c")]);
 
-  assert.ok(result.includes(long), "die letzte sichtbare Anfrage ist abgeschnitten");
+  assert.ok(result.includes(long), "the last visible query is truncated");
   assert.ok(result.endsWith("(+1 more)"));
 });
 
-test("meldet keinen Rest, wenn das Budget exakt aufgeht", () => {
-  // 98 + 3 + 98 + 3 + 98 = 300: Die dritte Anfrage erreicht das Budget genau,
-  // danach ist die Liste zu Ende. "(+0 more)" waere hier falsch.
+test("reports no remainder when the budget works out exactly", () => {
+  // 98 + 3 + 98 + 3 + 98 = 300: the third query hits the budget exactly, and
+  // after it the list ends. "(+0 more)" would be wrong here.
   const result = formatSearchQueries([query(98, "a"), query(98, "b"), query(98, "c")]);
 
-  assert.ok(!result.includes("more"), `unerwarteter Rest-Hinweis: ${result.slice(-20)}`);
+  assert.ok(!result.includes("more"), `unexpected remainder note: ${result.slice(-20)}`);
   assert.equal(result.split(" · ").length, 3);
 });

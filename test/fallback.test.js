@@ -1,14 +1,13 @@
-// Das Ausweichen auf ein Backup-Modell. Geprueft wird durchgehend am
-// Verhalten: Wie viele Anfragen hat das SDK abgesetzt, an welches Modell ging
-// die zweite, und was steht danach im Footer.
+// Falling back to a backup model, checked throughout against behavior: how many
+// requests the SDK issued, which model the second one went to, and what the
+// footer says afterwards.
 //
-// Dieselbe Grundlage wie retry.test.js - das globale fetch wird ersetzt, sodass
-// die Zahl der Aufrufe die Zahl der Versuche IST. Der Schluessel ist ein
-// Platzhalter, keine Anfrage verlaesst den Prozess.
+// Same basis as retry.test.js - the global fetch is replaced, so the number of
+// calls IS the number of attempts.
 //
-// Die meisten Faelle nutzen 404: Er steht nicht in RETRY_OPTIONS, wird also
-// nicht wiederholt und kommt sofort zurueck. Ein Fall nutzt 503 - der kostet
-// echte Sekunden und ist genau deshalb noetig, siehe dort.
+// Most cases use 404: it is absent from RETRY_OPTIONS, so it is not retried and
+// comes back immediately. One case uses 503, which costs real seconds and is
+// needed for exactly that reason, see there.
 
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -20,7 +19,7 @@ process.env.GEMINI_API_KEY = "test-key-never-sent";
 const PRIMARY = "gemini-primary";
 const BACKUP = "gemini-backup";
 
-/** Ein Aufruf mit eingerichtetem Backup - der Normalfall dieser Datei. */
+/** A call with a configured backup - the normal case of this file. */
 const withBackup = (overrides = {}) => ({
   query: "irrelevant",
   model: PRIMARY,
@@ -29,10 +28,10 @@ const withBackup = (overrides = {}) => ({
   ...overrides,
 });
 
-/** Das Modell, an das eine abgefangene Anfrage ging - es steht in der URL. */
+/** The model an intercepted request went to - it is part of the URL. */
 const modelOf = (call) => String(call.url).match(/models\/([^:]+):/)?.[1];
 
-/** Das Thinking-Level aus dem Koerper einer abgefangenen Anfrage. */
+/** The thinking level from the body of an intercepted request. */
 const thinkingOf = (call) => JSON.parse(call.init.body).generationConfig?.thinkingConfig?.thinkingLevel;
 
 const realFetch = globalThis.fetch;
@@ -41,33 +40,33 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-test("weicht auf das Backup aus und liefert dessen Antwort", async () => {
+test("falls back to the backup and returns its response", async () => {
   const calls = mockFetch(() => errorResponse(404, "NOT_FOUND"), okResponse);
 
   const result = await runSearch(withBackup());
 
-  assert.equal(calls.length, 2, "nach dem Fehler haette das Backup drankommen muessen");
+  assert.equal(calls.length, 2, "the backup should have taken over after the error");
   assert.equal(modelOf(calls[0]), PRIMARY);
-  assert.equal(modelOf(calls[1]), BACKUP, "der zweite Versuch muss an das Backup gehen");
+  assert.equal(modelOf(calls[1]), BACKUP, "the second attempt must go to the backup");
   assert.match(result, /^answer/);
 });
 
-test("nennt den Fallback im Footer, samt Grund", async () => {
-  // Ohne diese Zeile saehe die Antwort aus wie jede andere - der Nutzer haette
-  // ein anderes Modell bekommt, ohne es zu erfahren. Das 🤖-Feld allein reicht
-  // nicht: Es zeigt nur, WAS geantwortet hat, nicht dass etwas schiefging.
+test("names the fallback in the footer, with the reason", async () => {
+  // Without this line the response looks like any other and the user gets a
+  // different model without learning about it. The 🤖 field alone is not enough:
+  // it shows WHAT answered, not that something went wrong.
   mockFetch(() => errorResponse(404, "NOT_FOUND"), okResponse);
 
   const result = await runSearch(withBackup());
 
   assert.match(result, /🔁 gemini-primary does not exist \(404\)/);
   assert.match(result, /Update your default\./);
-  assert.match(result, /🤖 gemini-backup/, "der Footer muss das Modell nennen, das geantwortet hat");
+  assert.match(result, /🤖 gemini-backup/, "the footer must name the model that answered");
 });
 
-test("laesst den Footer unveraendert, wenn kein Fallback noetig war", async () => {
-  // Der Normalfall darf den Footer nicht verlaengern - gleiche Regel wie bei
-  // den verworfenen Markern und der Zeile mit den Suchanfragen.
+test("leaves the footer unchanged when no fallback was needed", async () => {
+  // The normal case must not lengthen the footer, see formatSearchQueries in
+  // gemini.js.
   mockFetch(okResponse);
 
   const result = await runSearch(withBackup());
@@ -75,15 +74,14 @@ test("laesst den Footer unveraendert, wenn kein Fallback noetig war", async () =
   assert.doesNotMatch(result, /🔁/);
 });
 
-test("weicht erst aus, wenn alle Wiederholungen verbraucht sind", async () => {
-  // Der Fall, um den es bei diesem Feature eigentlich geht: 503 ist der einzige
-  // Fehler, der hier je beobachtet wurde. Er steht in RETRY_OPTIONS, also
-  // muessen erst alle vier Versuche scheitern, bevor das Backup drankommt -
-  // sonst uebersprungen der Fallback eine Wiederholung, die geholfen haette.
+test("falls back only once all retries are used up", async () => {
+  // 503 is the only error ever observed here, and it is in RETRY_OPTIONS, so all
+  // four attempts must fail before the backup takes over; otherwise the fallback
+  // skips a retry that would have helped.
   //
-  // Dieser Fall wartet echte 7 bis 14 Sekunden (die drei SDK-Backoffs). Das ist
-  // der Preis dafuer, die Reihenfolge am Verhalten zu pruefen statt an einer
-  // Konstante; alle anderen Faelle hier nutzen deshalb 404.
+  // This case waits a real 7 to 14 seconds (the three SDK backoffs). That is the
+  // price of checking the order against behavior instead of against a constant,
+  // which is why every other case here uses 404.
   const calls = mockFetch(
     () => errorResponse(503, "UNAVAILABLE"),
     () => errorResponse(503, "UNAVAILABLE"),
@@ -94,21 +92,21 @@ test("weicht erst aus, wenn alle Wiederholungen verbraucht sind", async () => {
 
   const result = await runSearch(withBackup());
 
-  assert.equal(calls.length, 5, "vier Versuche am Primaermodell, dann das Backup");
-  assert.equal(modelOf(calls[3]), PRIMARY, "der vierte Versuch gehoert noch dem Primaermodell");
+  assert.equal(calls.length, 5, "four attempts on the primary model, then the backup");
+  assert.equal(modelOf(calls[3]), PRIMARY, "the fourth attempt still belongs to the primary model");
   assert.equal(modelOf(calls[4]), BACKUP);
   assert.match(result, /🔁 gemini-primary failed \(503 UNAVAILABLE\)/);
 });
 
-test("weicht ohne eingerichtetes Backup nicht aus", async () => {
-  // Das Feature ist Opt-in. Ohne backupModel muss sich gegenueber dem Zustand
-  // davor nichts aendern - auch nicht die Fehlermeldung.
+test("does not fall back when no backup is configured", async () => {
+  // The feature is opt-in. Without backupModel nothing changes compared to the
+  // state before it existed, not even the error message.
   const calls = mockFetch(() => errorResponse(404, "NOT_FOUND"));
 
   await assert.rejects(
     () => runSearch(withBackup({ backupModel: undefined })),
     (error) => {
-      assert.doesNotMatch(error.message, /backup/i, "ohne Backup gibt es dazu nichts zu sagen");
+      assert.doesNotMatch(error.message, /backup/i, "without a backup there is nothing to say about one");
       return true;
     },
   );
@@ -116,14 +114,14 @@ test("weicht ohne eingerichtetes Backup nicht aus", async () => {
   assert.equal(calls.length, 1);
 });
 
-test("weicht bei 401, 403 und 504 nicht aus und sagt warum", async () => {
-  // Die drei Ausnahmen aus NO_FALLBACK_STATUS, aus zwei verschiedenen Gruenden:
-  // 401 und 403 haengen am Schluessel, den auch das Backup nutzt - aussichtslos.
-  // 504 ist die eigene Frist, also eine abgerechnete Generierung, die ein
-  // zweiter Versuch verdoppeln wuerde.
+test("does not fall back on 401, 403 and 504 and says why", async () => {
+  // The three exceptions from NO_FALLBACK_STATUS, for two different reasons: 401
+  // and 403 hang on the key, which the backup uses as well, so a second attempt
+  // is hopeless; 504 is the server's own deadline, a billed generation that a
+  // second attempt would double.
   //
-  // Der Grund muss beim Nutzer ankommen, sonst bleibt die Frage "warum hat mein
-  // Backup nicht gegriffen?" unbeantwortbar.
+  // The reason has to reach the user, otherwise "why did my backup not kick in?"
+  // cannot be answered.
   for (const [code, status] of [
     [401, "UNAUTHENTICATED"],
     [403, "PERMISSION_DENIED"],
@@ -134,39 +132,38 @@ test("weicht bei 401, 403 und 504 nicht aus und sagt warum", async () => {
     await assert.rejects(
       () => runSearch(withBackup()),
       (error) => {
-        assert.match(error.message, /backup not tried/, `${code} muss den Grund nennen`);
+        assert.match(error.message, /backup not tried/, `${code} must name the reason`);
         return true;
       },
     );
 
-    assert.equal(calls.length, 1, `${code} darf kein Backup ausloesen`);
+    assert.equal(calls.length, 1, `${code} must not trigger a backup`);
   }
 });
 
-test("haelt die Ausnahmen von der Retry-Liste getrennt", async () => {
-  // Die beiden Listen sehen aehnlich aus und beantworten doch verschiedene
-  // Fragen: der Retry "hilft Warten?", der Fallback "kann ein anderes Modell
-  // der Unterschied sein?". Bei 429 gehen sie auseinander - nicht wiederholen,
-  // aber ausweichen. Wer die Listen spaeter angleicht, verliert genau das.
-  assert.ok(!NO_FALLBACK_STATUS.includes(429), "429 muss ausweichen duerfen");
+test("keeps the exceptions separate from the retry list", async () => {
+  // The two lists look similar and answer different questions: the retry list
+  // "does waiting help?", the fallback list "can another model make the
+  // difference?". On 429 they diverge - no retry, but a fallback. Aligning the
+  // lists later loses exactly that.
+  assert.ok(!NO_FALLBACK_STATUS.includes(429), "429 must be allowed to fall back");
 
   const calls = mockFetch(() => errorResponse(429, "RESOURCE_EXHAUSTED"), okResponse);
 
   const result = await runSearch(withBackup());
 
-  assert.equal(calls.length, 2, "der 429 darf nicht wiederholt, aber ersetzt werden");
+  assert.equal(calls.length, 2, "the 429 must not be retried, but replaced");
   assert.match(result, /🔁 gemini-primary hit its quota \(429\)/);
 });
 
-test("weicht bei einem unbrauchbaren API-Schluessel nicht aus", async () => {
-  // Gemessen an der echten API: Ein ungueltiger Schluessel kommt als 400
-  // INVALID_ARGUMENT zurueck, nicht als 401 oder 403 - der Statuscode allein
-  // erkennt diesen Fall also nicht, und ein 400 loest sonst zu Recht einen
-  // Fallback aus. Erkannt wird er am reason in error.details.
+test("does not fall back on an unusable API key", async () => {
+  // Measured against the real API: an invalid key comes back as 400
+  // INVALID_ARGUMENT, not as 401 or 403, so the status code alone does not
+  // identify this case, and a 400 otherwise rightly triggers a fallback. It is
+  // recognized by the reason in error.details.
   //
-  // Ohne diese Ausnahme schickt ausgerechnet der haeufigste Einrichtungsfehler
-  // eine zweite, garantiert aussichtslose Anfrage und antwortet mit derselben
-  // Meldung zweimal.
+  // Without this exception the most common setup mistake of all sends a second,
+  // guaranteed hopeless request and answers with the same message twice.
   const body = JSON.stringify({
     error: {
       code: 400,
@@ -190,7 +187,7 @@ test("weicht bei einem unbrauchbaren API-Schluessel nicht aus", async () => {
   assert.equal(calls.length, 1);
 });
 
-test("weicht nicht auf dasselbe Modell aus", async () => {
+test("does not fall back to the same model", async () => {
   const calls = mockFetch(() => errorResponse(404, "NOT_FOUND"));
 
   await assert.rejects(
@@ -204,8 +201,8 @@ test("weicht nicht auf dasselbe Modell aus", async () => {
   assert.equal(calls.length, 1);
 });
 
-test("nennt beide Fehler, wenn auch das Backup scheitert", async () => {
-  // Stuende hier nur der zweite Fehler, suchte man am falschen Modell.
+test("names both errors when the backup fails as well", async () => {
+  // With only the second error, troubleshooting starts at the wrong model.
   const calls = mockFetch(
     () => errorResponse(404, "NOT_FOUND"),
     () => errorResponse(400, "INVALID_ARGUMENT"),
@@ -223,9 +220,9 @@ test("nennt beide Fehler, wenn auch das Backup scheitert", async () => {
   assert.equal(calls.length, 2);
 });
 
-test("erbt das Thinking-Level des Aufrufs, wenn das Backup keines hat", async () => {
-  // Geerbt wird das fuer DIESEN Aufruf genutzte Level, nicht der gespeicherte
-  // Standard: Wer "high" uebergeben hat, will es auch beim Ausweichmodell.
+test("inherits the call's thinking level when the backup has none", async () => {
+  // What is inherited is the level used for THIS call, not the saved default:
+  // whoever passed "high" wants it on the fallback model too.
   const calls = mockFetch(() => errorResponse(404, "NOT_FOUND"), okResponse);
 
   await runSearch(withBackup({ thinkingLevel: "high" }));
@@ -233,31 +230,31 @@ test("erbt das Thinking-Level des Aufrufs, wenn das Backup keines hat", async ()
   assert.equal(thinkingOf(calls[1]), "high");
 });
 
-test("nutzt das eigene Thinking-Level des Backups, wenn eines gesetzt ist", async () => {
+test("uses the backup's own thinking level when one is set", async () => {
   const calls = mockFetch(() => errorResponse(404, "NOT_FOUND"), okResponse);
 
   const result = await runSearch(
     withBackup({ thinkingLevel: "high", backupThinkingLevel: "minimal" }),
   );
 
-  assert.equal(thinkingOf(calls[0]), "high", "das Primaermodell behaelt seines");
+  assert.equal(thinkingOf(calls[0]), "high", "the primary model keeps its own");
   assert.equal(thinkingOf(calls[1]), "minimal");
-  // Der Footer muss das tatsaechlich genutzte Level zeigen, nicht das des
-  // ersten Versuchs - sonst stuende dort eine Angabe, die nie gegolten hat.
+  // The footer must show the level actually used, not the first attempt's, or it
+  // states a value that never applied.
   assert.match(result, /🤖 gemini-backup \(thinking: minimal\)/);
 });
 
-test("formatiert die Fallback-Zeile pro Fehlerklasse verschieden", () => {
-  // Ein Zusatz nur dort, wo etwas ZU TUN ist. Ohne diese Unterscheidung liest
-  // sich ein dauerhafter 404 wie eine voruebergehende Stoerung, und niemand
-  // korrigiert je das kaputte Standardmodell.
+test("formats the fallback line differently per error class", () => {
+  // An addition only where there is something TO DO. Without that distinction a
+  // permanent 404 reads like a transient outage and nobody ever corrects the
+  // broken default model.
   const note = (status, statusName) => formatFallbackNote({ model: "m", status, statusName });
 
   assert.match(note(404), /does not exist.*Update your default/);
   assert.match(note(429), /hit its quota/);
   assert.match(note(400), /Check the thinking level/);
   assert.match(note(503, "UNAVAILABLE"), /failed \(503 UNAVAILABLE\)/);
-  // Ohne Statusnamen bleibt die blosse Zahl - keine leere Klammer.
+  // Without a status name the bare number remains - no empty parentheses.
   assert.match(note(502), /failed \(502\)/);
-  assert.equal(formatFallbackNote(undefined), "", "ohne Fallback keine Zeile");
+  assert.equal(formatFallbackNote(undefined), "", "no line without a fallback");
 });
