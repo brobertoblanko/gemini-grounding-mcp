@@ -28,6 +28,74 @@ test("places the marker at the byte position, not the character position", () =>
   assert.equal(result.dropped, 0);
 });
 
+test("places the marker after a segment containing a 4-byte character", () => {
+  // 🔎 is 4 bytes in UTF-8 but two UTF-16 code units, so an implementation
+  // counting code units instead of bytes would be off by one here already.
+  const text = "Die Suche 🔎 lief. Der Rest folgt.";
+  const end = Buffer.byteLength("Die Suche 🔎 lief.", "utf8");
+
+  const result = insertCitations({
+    text,
+    supports: [support(0, end, "Die Suche 🔎 lief.", [0])],
+    chunkNumbers: new Map([[0, 1]]),
+  });
+
+  assert.equal(result.text, "Die Suche 🔎 lief.[1] Der Rest folgt.");
+  assert.equal(result.dropped, 0);
+});
+
+test("places a marker between two 4-byte characters without breaking the surrogate pair", () => {
+  const text = "🔎🔬 folgt.";
+  const end = Buffer.byteLength("🔎", "utf8");
+
+  const result = insertCitations({
+    text,
+    supports: [support(0, end, "🔎", [0])],
+    chunkNumbers: new Map([[0, 1]]),
+  });
+
+  assert.equal(result.text, "🔎[1]🔬 folgt.");
+  assert.equal(result.dropped, 0);
+  assert.ok(
+    !result.text.includes("�"),
+    "an off-by-one in surrogate handling would cut mid-pair and produce a replacement character",
+  );
+});
+
+test("drops a marker whose offset falls inside a surrogate pair", () => {
+  // endIndex 3 lands one byte short of the end of 🔎 (4 bytes). The
+  // segment.text check must catch this rather than emit invalid UTF-8.
+  const text = "🔎🔬 folgt.";
+
+  const result = insertCitations({
+    text,
+    supports: [support(0, 3, "🔎", [0])],
+    chunkNumbers: new Map([[0, 1]]),
+  });
+
+  assert.equal(result.text, text);
+  assert.equal(result.dropped, 1);
+});
+
+test("does not normalise a combining sequence, so later offsets stay valid", () => {
+  // "e" + U+0301 (combining acute accent), not the precomposed "é". Any
+  // normalisation would collapse the two code points into one and shift
+  // every subsequent byte offset silently.
+  const text = "Café ist offen. Mehr nicht.";
+  const end = Buffer.byteLength("Café ist offen.", "utf8");
+
+  const result = insertCitations({
+    text,
+    supports: [support(0, end, "Café ist offen.", [0])],
+    chunkNumbers: new Map([[0, 1]]),
+  });
+
+  assert.equal(result.text, "Café ist offen.[1] Mehr nicht.");
+  assert.equal(result.dropped, 0);
+  assert.ok(result.text.includes("́"), "combining mark must survive unmerged");
+  assert.notEqual(result.text, result.text.normalize("NFC"), "text must stay unnormalised");
+});
+
 test("drops a marker when the slice does not match segment.text", () => {
   const text = "A statement. Another one.";
   const result = insertCitations({
