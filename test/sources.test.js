@@ -3,17 +3,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildSourceList, formatSourcesBlock, formatFooter } from "../gemini.js";
 
-// Diese Datei haelt die Invarianten fest, unter denen dieser Server Googles
-// Bedingungen fuer "Grounding with Google Search" einhaelt (siehe CLAUDE.md und
-// docs/specs.md, "Terms compliance"). Sie pruefen kein Verhalten, das jemand
-// verbessern koennte, sondern eines, das niemand aendern darf: Jede einzelne
-// dieser Eigenschaften sieht im Code wie ein Optimierungskandidat aus.
+// This file pins the invariants under which this server keeps to Google's terms
+// for "Grounding with Google Search" - see CLAUDE.md and docs/specs.md, "Terms compliance".
+// They cover no behaviour anyone could improve, but behaviour nobody may
+// change: every single one of these properties looks like a candidate for
+// optimization in the code.
 //
-// I3 (kein Redirect wird aufgeloest) und I4 (nichts wird zwischengespeichert)
-// sind Abwesenheitsaussagen und stehen deshalb nur als Regel in CLAUDE.md.
+// I3 (no redirect is resolved) and I4 (nothing is cached) are statements of
+// absence and therefore stand only as a rule in CLAUDE.md.
 //
-// gemini.js laesst sich ohne API-Key importieren: getClient() wird erst in den
-// Funktionen aufgerufen, nicht beim Laden des Moduls.
+// gemini.js imports without an API key: getClient() runs inside the functions,
+// not when the module loads.
 
 const candidate = JSON.parse(
   readFileSync(new URL("./fixtures/grounding-chunks.json", import.meta.url), "utf-8"),
@@ -23,13 +23,13 @@ const chunks = candidate.groundingMetadata.groundingChunks;
 const supports = candidate.groundingMetadata.groundingSupports;
 const urlContextEntries = candidate.urlContextMetadata.urlMetadata;
 
-/** Die Chunk-Indizes, auf die ueberhaupt ein Belegmarker zeigen wuerde. */
+/** The chunk indices that any citation marker points at. */
 const referencedIndices = new Set(supports.flatMap((s) => s.groundingChunkIndices));
 
 /**
- * Die URIs, die in der Liste erscheinen muessen - jede genau einmal, in dieser
- * Reihenfolge: erst die Suchtreffer, dann die per URL Context gelesenen Seiten.
- * Beide Herkuenfte sind Links im Sinne der Terms, I1 gilt fuer beide.
+ * The URIs that must appear in the list - each exactly once, in this order:
+ * search hits first, then the pages read via URL Context. Both origins are
+ * links under the terms, I1 applies to both.
  */
 const expectedUris = [
   ...new Set([
@@ -38,14 +38,14 @@ const expectedUris = [
   ]),
 ];
 
-test("nimmt jede Quelle auf, auch die unbelegten (I1)", () => {
-  // Vorbedingung an die Fixture: Ohne unbelegte Chunks pruefte dieser Test die
-  // interessante Haelfte von I1 nicht - dass auch die Links erscheinen, auf die
-  // kein Marker zeigt. Genau die sind der naheliegende Kuerzungskandidat.
+test("includes every source, the unsupported ones too (I1)", () => {
+  // Precondition on the fixture: without unsupported chunks this test would
+  // miss the interesting half of I1 - that the links no marker points at appear
+  // as well. Those are the obvious candidates for trimming.
   const unreferenced = chunks.filter(
     (chunk, index) => chunk.web?.uri && !referencedIndices.has(index),
   );
-  assert.ok(unreferenced.length > 0, "die Fixture braucht Chunks ohne Support");
+  assert.ok(unreferenced.length > 0, "the fixture needs chunks without a support");
 
   const { sources } = buildSourceList(candidate);
 
@@ -53,18 +53,18 @@ test("nimmt jede Quelle auf, auch die unbelegten (I1)", () => {
   for (const chunk of unreferenced) {
     assert.ok(
       sources.some((source) => source.uri === chunk.web.uri),
-      `unbelegte Quelle fehlt in der Liste: ${chunk.web.title}`,
+      `unsupported source missing from the list: ${chunk.web.title}`,
     );
   }
 });
 
-test("gibt Titel und URI byteidentisch aus (I2)", () => {
+test("emits title and URI byte for byte (I2)", () => {
   const { sources } = buildSourceList(candidate);
   const block = formatSourcesBlock(sources);
 
-  // Verglichen wird die ganze Zeile, nicht per includes: Eine am Ende gekuerzte
-  // URI - der naheliegendste Eingriff ueberhaupt - kaeme durch ein includes auf
-  // den Anfang der URI ungehindert durch.
+  // The whole line is compared, not via includes: a URI truncated at the end -
+  // the most obvious intervention of all - would pass an includes on the start
+  // of the URI unhindered.
   const lines = block.split("\n").slice(3);
   assert.equal(lines.length, sources.length);
 
@@ -73,24 +73,24 @@ test("gibt Titel und URI byteidentisch aus (I2)", () => {
     assert.equal(line, `[${index + 1}] ${source.title} - ${source.uri}`);
   });
 
-  // Und dieselbe Pruefung gegen die Fixture statt gegen das Zwischenergebnis:
-  // Sonst blieben Kuerzungen unbemerkt, die schon in buildSourceList passieren.
+  // And the same check against the fixture instead of the intermediate result:
+  // otherwise truncations already happening in buildSourceList go unnoticed.
   expectedUris.forEach((uri, index) => {
     assert.equal(lines[index], `[${index + 1}] ${titleOf(uri)} - ${uri}`);
   });
 });
 
 /**
- * Der Titel, den die API zu dieser URI mitgeliefert hat. Zu URL-Context-Seiten
- * liefert sie keinen, dort ist die URL zugleich die Beschriftung.
+ * The title the API supplied for this URI. For URL Context pages it supplies
+ * none, and there the URL is the label as well.
  */
 function titleOf(uri) {
   return chunks.find((chunk) => chunk.web?.uri === uri)?.web.title ?? uri;
 }
 
-test("meldet uebersprungene Chunks im Footer, statt sie zu verschweigen", () => {
+test("reports skipped chunks in the footer instead of hiding them", () => {
   const withoutUri = chunks.filter((chunk) => !chunk.web?.uri);
-  assert.ok(withoutUri.length > 0, "die Fixture braucht Chunks ohne web.uri");
+  assert.ok(withoutUri.length > 0, "the fixture needs chunks without web.uri");
 
   const { skipped } = buildSourceList(candidate);
   assert.equal(skipped, withoutUri.length);
@@ -106,8 +106,7 @@ test("meldet uebersprungene Chunks im Footer, statt sie zu verschweigen", () => 
   });
   assert.match(footer, new RegExp(`⚠️ ${skipped} sources omitted`));
 
-  // Der Normalfall darf den Footer nicht verlaengern - gleiche Regel wie bei
-  // den verworfenen Markern und der Zeile mit den Suchanfragen.
+  // The normal case must not lengthen the footer, see formatSearchQueries.
   const clean = formatFooter({
     usageMetadata: {},
     model: "gemini-flash-latest",
@@ -117,47 +116,46 @@ test("meldet uebersprungene Chunks im Footer, statt sie zu verschweigen", () => 
     skipped: 0,
     searchQueries: [],
   });
-  assert.ok(!clean.includes("omitted"), `unerwarteter Hinweis: ${clean}`);
+  assert.ok(!clean.includes("omitted"), `unexpected notice: ${clean}`);
 });
 
-test("nimmt auch die per URL Context gelesenen Seiten auf (I1)", () => {
-  // Der zweite Zweig von buildSourceList. Er faellt nicht auf, weil zu diesen
-  // Eintraegen keine Supports gehoeren und damit auch kein Marker ins Leere
-  // zeigt, wenn sie fehlen - sie verschwaenden lautlos.
+test("includes the pages read via URL Context too (I1)", () => {
+  // The second branch of buildSourceList. It draws no attention because these
+  // entries have no supports, so no marker points nowhere when they are missing
+  // - they disappear silently.
   const { sources, chunkNumbers } = buildSourceList(candidate);
   const listed = sources.map((source) => source.uri);
 
   for (const entry of urlContextEntries) {
-    assert.ok(listed.includes(entry.retrievedUrl), `gelesene Seite fehlt: ${entry.retrievedUrl}`);
+    assert.ok(listed.includes(entry.retrievedUrl), `page read is missing: ${entry.retrievedUrl}`);
   }
 
-  // Der gemessene Fall: Die gelesene Seite kam zusaetzlich als groundingChunk
-  // an, mit direkter URL statt Weiterleitung. Sie darf dadurch nicht doppelt
-  // in der Liste stehen.
+  // The measured case: the page read also arrived as a groundingChunk, with a
+  // direct URL instead of a redirect. That must not put it in the list twice.
   const alsoAChunk = urlContextEntries.find((entry) =>
     chunks.some((chunk) => chunk.web?.uri === entry.retrievedUrl),
   );
-  assert.ok(alsoAChunk, "die Fixture braucht eine Seite, die zugleich Chunk ist");
+  assert.ok(alsoAChunk, "the fixture needs a page that is a chunk as well");
   assert.equal(listed.filter((uri) => uri === alsoAChunk.retrievedUrl).length, 1);
 
-  // URL-Context-Seiten stehen hinter den Suchtreffern, damit sie die
-  // Nummerierung der Marker nicht verschieben.
+  // URL Context pages come after the search hits so that they do not shift the
+  // numbering of the markers.
   const highestChunkNumber = Math.max(...chunkNumbers.values());
   const onlyUrlContext = urlContextEntries
     .map((entry) => entry.retrievedUrl)
     .filter((uri) => !chunks.some((chunk) => chunk.web?.uri === uri));
   for (const uri of onlyUrlContext) {
-    assert.ok(listed.indexOf(uri) + 1 > highestChunkNumber, `${uri} verschiebt die Marker`);
+    assert.ok(listed.indexOf(uri) + 1 > highestChunkNumber, `${uri} shifts the markers`);
   }
 });
 
-test("fasst identische URIs zu einem Eintrag zusammen", () => {
-  // Nach identischer URI zu deduplizieren ist erlaubt, weil dabei kein Ziel
-  // verlorengeht. Nach Domain zu deduplizieren waere ein Verstoss gegen I1.
+test("merges identical URIs into a single entry", () => {
+  // Deduplicating by identical URI is allowed, because no destination is lost
+  // in the process. Deduplicating by domain would break I1.
   const duplicated = expectedUris.find(
     (uri) => chunks.filter((chunk) => chunk.web?.uri === uri).length > 1,
   );
-  assert.ok(duplicated, "die Fixture braucht eine doppelt gelieferte URI");
+  assert.ok(duplicated, "the fixture needs a URI delivered twice");
 
   const { sources, chunkNumbers } = buildSourceList(candidate);
 
@@ -167,6 +165,6 @@ test("fasst identische URIs zu einem Eintrag zusammen", () => {
     chunk.web?.uri === duplicated ? [index] : [],
   );
   const numbers = new Set(indices.map((index) => chunkNumbers.get(index)));
-  assert.equal(numbers.size, 1, "beide Indizes muessen auf dieselbe Nummer zeigen");
-  assert.ok(!numbers.has(undefined), "kein Index darf ohne Nummer bleiben");
+  assert.equal(numbers.size, 1, "both indices must point at the same number");
+  assert.ok(!numbers.has(undefined), "no index may be left without a number");
 });
