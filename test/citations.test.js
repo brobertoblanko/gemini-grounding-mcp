@@ -29,10 +29,10 @@ test("places the marker at the byte position, not the character position", () =>
 });
 
 test("drops a marker when the slice does not match segment.text", () => {
-  const text = "Eine Aussage. Noch eine.";
+  const text = "A statement. Another one.";
   const result = insertCitations({
     text,
-    supports: [support(0, 13, "Etwas ganz anderes.", [0])],
+    supports: [support(0, 12, "Something else entirely.", [0])],
     chunkNumbers: new Map([[0, 1]]),
   });
 
@@ -41,12 +41,12 @@ test("drops a marker when the slice does not match segment.text", () => {
 });
 
 test("drops a marker whose position falls inside a code span", () => {
-  const text = "Nutze `copy.replace(obj, x=1)` dafuer.";
-  const end = Buffer.byteLength("Nutze `copy.replace(obj", "utf8");
+  const text = "Use `copy.replace(obj, x=1)` for that.";
+  const end = Buffer.byteLength("Use `copy.replace(obj", "utf8");
 
   const result = insertCitations({
     text,
-    supports: [support(0, end, "Nutze `copy.replace(obj", [0])],
+    supports: [support(0, end, "Use `copy.replace(obj", [0])],
     chunkNumbers: new Map([[0, 1]]),
   });
 
@@ -57,12 +57,12 @@ test("drops a marker whose position falls inside a code span", () => {
 test("drops a marker inside a fenced block", () => {
   // The single backtick in the block must not tip the detection: the fence is
   // matched first and swallows everything inside it.
-  const text = "Beispiel:\n```python\nx = ` + 1\n```\nFertig.";
-  const end = Buffer.byteLength("Beispiel:\n```python\nx =", "utf8");
+  const text = "Example:\n```python\nx = ` + 1\n```\nDone.";
+  const end = Buffer.byteLength("Example:\n```python\nx =", "utf8");
 
   const result = insertCitations({
     text,
-    supports: [support(0, end, "Beispiel:\n```python\nx =", [0])],
+    supports: [support(0, end, "Example:\n```python\nx =", [0])],
     chunkNumbers: new Map([[0, 1]]),
   });
 
@@ -73,16 +73,16 @@ test("drops a marker inside a fenced block", () => {
 test("places a marker directly after a code span", () => {
   // The most frequent position, measured: the segment ends at the closing
   // backtick. That position is harmless and must not be dropped along.
-  const text = "Nutze `pathlib` dafuer. Sonst nichts.";
-  const end = Buffer.byteLength("Nutze `pathlib` dafuer.", "utf8");
+  const text = "Use `pathlib` for that. Nothing else.";
+  const end = Buffer.byteLength("Use `pathlib` for that.", "utf8");
 
   const result = insertCitations({
     text,
-    supports: [support(0, end, "Nutze `pathlib` dafuer.", [0])],
+    supports: [support(0, end, "Use `pathlib` for that.", [0])],
     chunkNumbers: new Map([[0, 1]]),
   });
 
-  assert.equal(result.text, "Nutze `pathlib` dafuer.[1] Sonst nichts.");
+  assert.equal(result.text, "Use `pathlib` for that.[1] Nothing else.");
   assert.equal(result.dropped, 0);
 });
 
@@ -90,8 +90,8 @@ test("maps chunk indices onto the numbers of the deduplicated list", () => {
   // groundingChunks [A, B, A, C] yields the list [1] A, [2] B, [3] C. A support
   // on chunk 3 (C) must write [3], not [4].
   const result = insertCitations({
-    text: "Eine Aussage.",
-    supports: [support(0, 13, "Eine Aussage.", [3])],
+    text: "A statement.",
+    supports: [support(0, 12, "A statement.", [3])],
     chunkNumbers: new Map([
       [0, 1],
       [1, 2],
@@ -100,14 +100,14 @@ test("maps chunk indices onto the numbers of the deduplicated list", () => {
     ]),
   });
 
-  assert.equal(result.text, "Eine Aussage.[3]");
+  assert.equal(result.text, "A statement.[3]");
 });
 
 test("joins several sources as [1][3] and deduplicates while doing so", () => {
   // Chunks 0 and 2 point at the same source - it may appear only once.
   const result = insertCitations({
-    text: "Eine Aussage.",
-    supports: [support(0, 13, "Eine Aussage.", [0, 2, 1])],
+    text: "A statement.",
+    supports: [support(0, 12, "A statement.", [0, 2, 1])],
     chunkNumbers: new Map([
       [0, 1],
       [1, 3],
@@ -115,7 +115,7 @@ test("joins several sources as [1][3] and deduplicates while doing so", () => {
     ]),
   });
 
-  assert.equal(result.text, "Eine Aussage.[1][3]");
+  assert.equal(result.text, "A statement.[1][3]");
 });
 
 test("merges two supports at the same position into one marker", () => {
@@ -123,15 +123,15 @@ test("merges two supports at the same position into one marker", () => {
   // end at the same byte position. Deduplication runs per position rather than
   // per support; otherwise this would read [1][1][2].
   const result = insertCitations({
-    text: "Eine Aussage.",
-    supports: [support(0, 13, "Eine Aussage.", [0]), support(0, 13, "Eine Aussage.", [1, 0])],
+    text: "A statement.",
+    supports: [support(0, 12, "A statement.", [0]), support(0, 12, "A statement.", [1, 0])],
     chunkNumbers: new Map([
       [0, 1],
       [1, 2],
     ]),
   });
 
-  assert.equal(result.text, "Eine Aussage.[1][2]");
+  assert.equal(result.text, "A statement.[1][2]");
   assert.equal(result.dropped, 0);
 });
 
@@ -139,15 +139,19 @@ test("produces no marker for a chunk without a number", () => {
   // A chunk without a uri never reaches the source list. It must produce no
   // marker and does not count as dropped either - there was nothing.
   const result = insertCitations({
-    text: "Eine Aussage.",
-    supports: [support(0, 13, "Eine Aussage.", [7])],
+    text: "A statement.",
+    supports: [support(0, 12, "A statement.", [7])],
     chunkNumbers: new Map([[0, 1]]),
   });
 
-  assert.deepEqual(result, { text: "Eine Aussage.", dropped: 0 });
+  assert.deepEqual(result, { text: "A statement.", dropped: 0 });
 });
 
 test("places several markers without shifting the following positions", () => {
+  // Multi-byte characters here for the same reason as in the first test: they
+  // are what makes the second marker's position tell a byte-based
+  // implementation from a character-based one. Pure ASCII would still catch a
+  // missing shift compensation, but no longer the unit the shift is counted in.
   const text = "Ein Satz über X. Ein Satz über Y.";
   const first = Buffer.byteLength("Ein Satz über X.", "utf8");
   const second = Buffer.byteLength(text, "utf8");
@@ -170,7 +174,7 @@ test("places several markers without shifting the following positions", () => {
 });
 
 test("leaves the text unchanged when there are no supports", () => {
-  const text = "Eine Antwort ohne groundingMetadata.";
+  const text = "A response without groundingMetadata.";
   assert.deepEqual(insertCitations({ text, supports: [], chunkNumbers: new Map() }), {
     text,
     dropped: 0,
