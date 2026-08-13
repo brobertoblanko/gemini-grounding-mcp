@@ -59,7 +59,7 @@ test("checks the options before an API call comes about", () => {
 });
 
 test("does not let --all pass as a search query", () => {
-  const result = runCli(["was ist ein mcp server", "--all"]);
+  const result = runCli(["what is an mcp server", "--all"]);
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /--all/);

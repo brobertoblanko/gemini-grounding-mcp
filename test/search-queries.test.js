@@ -22,8 +22,8 @@ test("writes out a single query in full", () => {
 });
 
 test("joins several queries with the middle dot", () => {
-  const result = formatSearchQueries(["erste Anfrage", "zweite Anfrage"]);
-  assert.equal(result, "\n🔎 Searched: erste Anfrage · zweite Anfrage");
+  const result = formatSearchQueries(["first query", "second query"]);
+  assert.equal(result, "\n🔎 Searched: first query · second query");
 });
 
 test("lets a broad but ordinary request pass in full", () => {

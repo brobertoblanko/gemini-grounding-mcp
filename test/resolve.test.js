@@ -99,7 +99,7 @@ test("returns no backup when it is explicitly switched off", () => {
 test("ignores unusable values in a hand-written file", () => {
   // A level the API does not know would otherwise go out on the very path meant
   // to catch an error, and come back as a 400.
-  writeConfig({ ...SAVED, backupModel: "", backupThinkingLevel: "sehr hoch" });
+  writeConfig({ ...SAVED, backupModel: "", backupThinkingLevel: "very high" });
 
   const resolved = resolveCallConfig({});
 
@@ -109,13 +109,13 @@ test("ignores unusable values in a hand-written file", () => {
 
 test("drops the level when the backup model changes", () => {
   // The backup is written as a UNIT, see setSavedConfig in config.js. Without
-  // that rule "gemini-neu" here carries a level somebody chose for "gemini-alt",
+  // that rule "gemini-new" here carries a level somebody chose for "gemini-old",
   // and resolveCallConfig passes it on to a fallback.
   writeConfig({});
-  setSavedConfig({ backupModel: "gemini-alt", backupThinkingLevel: "high" });
+  setSavedConfig({ backupModel: "gemini-old", backupThinkingLevel: "high" });
   assert.equal(resolveCallConfig({}).backupThinkingLevel, "high");
 
-  const saved = setSavedConfig({ backupModel: "gemini-neu" });
+  const saved = setSavedConfig({ backupModel: "gemini-new" });
 
   assert.equal(resolveCallConfig({}).backupThinkingLevel, undefined);
   // The derived value comes back so that the caller's confirmation can name the
@@ -127,11 +127,11 @@ test("changes only the level when no backup model comes along", () => {
   // The counterpart: without backupModel the unit rule does not apply, otherwise
   // the level of a configured backup could never be changed again.
   writeConfig({});
-  setSavedConfig({ backupModel: "gemini-alt", backupThinkingLevel: "high" });
+  setSavedConfig({ backupModel: "gemini-old", backupThinkingLevel: "high" });
   setSavedConfig({ backupThinkingLevel: "minimal" });
 
   assert.deepEqual(getSavedBackup(), {
-    model: "gemini-alt",
+    model: "gemini-old",
     thinkingLevel: "minimal",
     disabled: false,
   });
@@ -144,7 +144,7 @@ test("detects the collision even when one call sets both values", () => {
   writeConfig(SAVED);
 
   assert.match(
-    findModelCollision({ model: "gemini-neu", backupModel: "gemini-neu" }),
+    findModelCollision({ model: "gemini-new", backupModel: "gemini-new" }),
     /cannot be both/,
   );
   // Setting both to DIFFERENT models at once must not fail on the old saved
@@ -155,10 +155,10 @@ test("detects the collision even when one call sets both values", () => {
 test("lets a call without a model through, even with a colliding file", () => {
   // "set-thinking low" did not cause the situation and must not fail on it,
   // otherwise a hand-edited file blocks the very commands unrelated to it.
-  writeConfig({ model: "gemini-gleich", backupModel: "gemini-gleich" });
+  writeConfig({ model: "gemini-same", backupModel: "gemini-same" });
 
   assert.equal(findModelCollision({ thinkingLevel: "low" }), undefined);
-  assert.match(findModelCollision({ model: "gemini-gleich" }), /currently the backup model/);
+  assert.match(findModelCollision({ model: "gemini-same" }), /currently the backup model/);
 });
 
 test("never lets a switched-off backup collide", () => {
@@ -203,7 +203,7 @@ test("lets the backup as a complete unit and the deletion through", () => {
   writeConfig({});
 
   assert.equal(
-    findBackupLevelProblem({ backupModel: "gemini-neu", backupThinkingLevel: "high" }),
+    findBackupLevelProblem({ backupModel: "gemini-new", backupThinkingLevel: "high" }),
     undefined,
   );
   assert.equal(findBackupLevelProblem({ backupThinkingLevel: null }), undefined);
