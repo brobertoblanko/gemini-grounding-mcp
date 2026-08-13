@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Der Shebang macht die Datei als bin-Eintrag direkt ausfuehrbar - noetig,
-// damit "npx @brobertoblanko/gemini-grounding-mcp" den Server startet.
+// The shebang makes the file directly executable as a bin entry - needed so
+// that "npx @brobertoblanko/gemini-grounding-mcp" starts the server.
 
 import { createRequire } from "node:module";
 
@@ -20,16 +20,16 @@ import {
   THINKING_LEVELS,
 } from "./config.js";
 
-// Die Version kommt aus der package.json, damit sie nur an einer Stelle
-// gepflegt wird - eine zweite, von Hand nachgezogene Zahl meldet dem Client
-// frueher oder spaeter eine Fassung, die nicht der ausgelieferten entspricht.
-// createRequire statt import ... with { type: "json" }: Beides laeuft ab der
-// unterstuetzten Node-Version, aber Import Attributes waeren bei einem Aufruf
-// unter einer aelteren Fassung ein Syntaxfehler - und ein Syntaxfehler bricht
-// die Datei beim Parsen ab, bevor irgendeine Versionspruefung greifen koennte.
-// createRequire laeuft seit jeher. Die package.json liegt neben dieser Datei,
-// im Klon wie im installierten Paket: npm packt sie immer mit, unabhaengig
-// von files.
+// The version comes from package.json so it is maintained in one place only - a
+// second number kept in step by hand sooner or later reports a release to the
+// client that is not the one shipped.
+//
+// createRequire instead of import ... with { type: "json" }: both run from the
+// supported Node version on, but Import Attributes would be a syntax error when
+// invoked under an older one - and a syntax error aborts the file while parsing,
+// before any version check could take effect. createRequire has always run. The
+// package.json sits next to this file, in the clone as in the installed package:
+// npm always packs it along, regardless of files.
 const { version } = createRequire(import.meta.url)("./package.json");
 
 const server = new McpServer(
@@ -89,14 +89,15 @@ server.registerTool(
         ),
     },
   },
-  // Die Defaults werden hier im Handler aufgeloest, NICHT als Zod-.default() im
-  // Schema: ein Schema-Default wird einmal beim Registrieren ausgewertet und
-  // eingefroren, sodass gemini-set-model erst nach einem Serverneustart wirken
-  // wuerde. Der Footer zeigt dadurch immer die tatsaechlich genutzten Werte.
+  // The defaults are resolved here in the handler, NOT as a Zod .default() in
+  // the schema: a schema default is evaluated once when the tool is registered
+  // and then frozen, so gemini-set-model would only take effect after a server
+  // restart.
   //
-  // resolveCallConfig statt zweier ?? an dieser Stelle, weil die CLI dieselbe
-  // Frage beantworten muss und dabei zu derselben Antwort kommen soll - inkl.
-  // der Regel, dass ein genanntes Modell kein Backup bekommt.
+  // resolveCallConfig instead of two ?? in this place, because the CLI has to
+  // answer the same question and is to arrive at the same answer - including the
+  // rule that a named model gets no backup.
+  // Full derivation: docs/specs.md, "Resolving the defaults per call".
   async ({ query, model, thinkingLevel }) => {
     try {
       const text = await runSearch({ query, ...resolveCallConfig({ model, thinkingLevel }) });
@@ -199,15 +200,9 @@ server.registerTool(
         isError: true,
       };
     }
-    // Dieselben beiden Pruefungen wie in der CLI, und hier zusaetzlich noetig,
-    // weil nur dieser Handler mehrere Werte in EINEM Aufruf setzen kann.
-    //
-    // Waeren Standard und Backup dasselbe Modell, faende kein Ausweichen mehr
-    // statt - und auffallen wuerde das erst beim naechsten fehlgeschlagenen
-    // gemini-search. Ein Backup-Level ohne sein Modell wiederum schriebe einen
-    // Wert, den der Zustandsblock unter der Bestaetigung sofort wieder
-    // einkassiert; ein Modell auf Zuruf hat keinen Anlass, den gespeicherten
-    // Zustand vorher zu lesen.
+    // The same two checks as in the CLI, and needed here on top of that because
+    // only this handler can set several values in ONE call. A model prompted for
+    // it has no reason to read the stored state beforehand.
     const problem =
       findModelCollision({ model, backupModel }) ??
       findBackupLevelProblem({ backupModel, backupThinkingLevel });
@@ -218,16 +213,15 @@ server.registerTool(
       };
     }
 
-    // Schreibfehler sind hier real moeglich - das Zielverzeichnis wird beim
-    // Speichern erst angelegt und kann je nach Rechten oder verschobenem
-    // %APPDATA% unbeschreibbar sein. Ohne catch liefe der Fehler ungefangen aus
-    // dem Handler; mit catch kommt er als saubere isError-Antwort samt Pfad an.
+    // Write errors are a real possibility here - the target directory is created
+    // on saving and can be unwritable depending on permissions or a relocated
+    // %APPDATA%. Without catch the error would run out of the handler uncaught;
+    // with it, it arrives as a clean isError response naming the path.
     let saved;
     try {
-      // setSavedConfig liefert zurueck, was tatsaechlich geschrieben wurde -
-      // wichtig beim Backup, das es als Einheit schreibt: Ein backupModel ohne
-      // eigenes Level laesst ein zuvor gespeichertes verfallen, und die
-      // Bestaetigung unten nennt das, statt es zu verschweigen.
+      // setSavedConfig returns what was actually written, which matters for the
+      // backup it writes as a unit: the confirmation below names a level that
+      // expired instead of concealing it.
       saved = setSavedConfig({ model, thinkingLevel, backupModel, backupThinkingLevel });
     } catch (error) {
       return {
@@ -240,15 +234,14 @@ server.registerTool(
         isError: true,
       };
     }
-    // Zwei Auskuenfte, und beide werden gebraucht: Die erste Zeile nennt jeden
-    // geschriebenen Wert einzeln, weil ein gespeicherter Wert sonst von einem
-    // verworfenen Parameter nicht zu unterscheiden waere. Die beiden darunter
-    // nennen den vollstaendigen Zustand, damit nach der Aenderung ohne
-    // Rueckfrage feststeht, womit die naechste Recherche laeuft - genau die
-    // Bestaetigung, die CLAUDE.md nach einer Modellaenderung verlangt.
-    //
-    // Dieselben Funktionen wie in der CLI, damit beide Schnittstellen nicht
-    // auseinanderlaufen.
+    // Two pieces of information, and both are needed: the first line names every
+    // written value on its own, because a stored value would otherwise be
+    // indistinguishable from a discarded parameter. The two below it name the
+    // complete state, so that after the change it is settled without asking what
+    // the next query runs with - exactly the confirmation CLAUDE.md requires
+    // after a model change. Same functions as in the CLI, so the two interfaces
+    // cannot drift apart.
+    // Full derivation: docs/specs.md, "Reporting what was saved".
     return {
       content: [
         {
