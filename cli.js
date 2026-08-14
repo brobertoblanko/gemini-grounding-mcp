@@ -5,6 +5,8 @@
 // works from any folder.
 // Full derivation: docs/specs.md, "Implementation".
 
+import { createRequire } from "node:module";
+
 import { runSearch, listModels, API_KEY_MISSING_MESSAGE } from "./gemini.js";
 import {
   CONFIG_PATH,
@@ -16,6 +18,10 @@ import {
   setSavedConfig,
   THINKING_LEVELS,
 } from "./config.js";
+
+// Read the same way index.js does; the reasoning for createRequire over
+// Import Attributes sits there.
+const { version } = createRequire(import.meta.url)("./package.json");
 
 const HELP = `gemini-grounding - CLI for the Gemini grounding MCP server
 
@@ -39,6 +45,7 @@ Commands:
   set-backup
     --thinking <level>   Change only the level of the backup already saved
   help                   Show this help
+  version                Show the installed version
 
 Options:
   --model <id>           On a search: use for this call only, nothing is saved.
@@ -135,9 +142,12 @@ async function main() {
   // Whatever still looks like an option is unknown to the CLI. Without this
   // check a typo would go unnoticed: "models --al" would silently have shown the
   // filtered list that one takes for the complete one. Deliberately only "--",
-  // so a query like "-5 degrees in Fahrenheit" still gets through; "--help" is
-  // exempt because it is handled as a subcommand below.
-  const unknownOption = args.find((arg) => arg.startsWith("--") && arg !== "--help");
+  // so a query like "-5 degrees in Fahrenheit" still gets through; "--help" and
+  // "--version" are exempt because both are handled as subcommands below - a
+  // case for either in the switch would otherwise never be reached.
+  const unknownOption = args.find(
+    (arg) => arg.startsWith("--") && arg !== "--help" && arg !== "--version",
+  );
   if (unknownOption) fail(`Unknown option "${unknownOption}".`);
 
   const [command, ...rest] = args;
@@ -179,6 +189,14 @@ async function main() {
       console.log(HELP);
       break;
 
+    case "version":
+    case "--version":
+    case "-v":
+      allowFlags();
+      requireNoArgs();
+      console.log(version);
+      break;
+
     case "config": {
       allowFlags();
       requireNoArgs();
@@ -198,6 +216,7 @@ async function main() {
       // then states where it will appear on the first set-model, and the values
       // above are the built-in defaults.
       console.log(`Config:  ${CONFIG_PATH}`);
+      console.log(`Version: ${version}`);
       break;
     }
 

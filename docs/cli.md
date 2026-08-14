@@ -68,7 +68,7 @@ An option that has no meaning for the given command aborts with exit code 1 - it
 | `set-backup off --thinking <level>` | Error - a disabled backup has no thinking level |
 | `set-model <id> --model <id2>` | Error - two models, and only you know which one is meant |
 | `models --all` | Lists every model with a status column, past the shortlist the default view shows |
-| `config`, `help`, `models` with `--model` / `--thinking` | Error |
+| `config`, `help`, `version`, `models` with `--model` / `--thinking` | Error |
 
 Every save answers twice - what changed, and what applies from now on:
 
@@ -155,10 +155,11 @@ Primary: gemini-flash-latest · medium
 Backup:  gemini-3.5-flash · medium (inherited)
 API key: set (39 chars)
 Config:  /home/you/.config/gemini-grounding-mcp/config.json
+Version: 1.3.0
 ```
 
 The first two lines are the same ones every save prints, so there is only one rendering of "which models am I using" to learn.
-`config` adds the two things that are only of interest here.
+`config` adds the three things that are only of interest here - key status, config path, and the installed version, so a bug report needs no second command.
 
 The key check only establishes whether a key arrives in the environment at all and prints its length - **never the value itself**, not even shortened.
 Whether the key is actually valid is something only a real request can tell you, so a successful `config` is a necessary but not a sufficient condition.

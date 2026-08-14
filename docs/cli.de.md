@@ -68,7 +68,7 @@ Eine Option ohne Bedeutung für den gewählten Befehl bricht mit Exit-Code 1 ab 
 | `set-backup off --thinking <level>` | Fehler - ein abgeschaltetes Backup hat kein Thinking-Level |
 | `set-model <id> --model <id2>` | Fehler - zwei Modelle, und welches gemeint ist, wissen nur Sie |
 | `models --all` | Listet alle Modelle mit Statusspalte, an der Vorauswahl der Standardansicht vorbei |
-| `config`, `help`, `models` mit `--model` / `--thinking` | Fehler |
+| `config`, `help`, `version`, `models` mit `--model` / `--thinking` | Fehler |
 
 Jedes Speichern antwortet zweimal - was sich geändert hat, und was ab jetzt gilt:
 
@@ -155,10 +155,11 @@ Primary: gemini-flash-latest · medium
 Backup:  gemini-3.5-flash · medium (inherited)
 API key: set (39 chars)
 Config:  /home/sie/.config/gemini-grounding-mcp/config.json
+Version: 1.3.0
 ```
 
 Die ersten beiden Zeilen sind dieselben, die jedes Speichern ausgibt - es gibt damit nur eine Darstellung von „womit arbeite ich gerade", die man kennen muss.
-`config` ergänzt die beiden Angaben, die nur hier interessieren.
+`config` ergänzt die drei Angaben, die nur hier interessieren - Key-Status, Konfigurationspfad und die installierte Version, sodass ein Bugreport ohne zweiten Befehl auskommt.
 
 Beim Key wird nur geprüft, ob überhaupt einer in der Umgebung ankommt; ausgegeben wird seine Länge - **niemals der Wert selbst**, auch nicht gekürzt.
 Ob der Key tatsächlich gültig ist, kann nur eine echte Anfrage zeigen; ein erfolgreiches `config` ist also eine notwendige, keine hinreichende Bedingung.

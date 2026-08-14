@@ -4,8 +4,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { configFile, freshConfigHome, runCli } from "./helpers.js";
+
+const { version } = createRequire(import.meta.url)("../package.json");
 
 test("saves model and thinking level in one call", () => {
   const result = runCli(["set-model", "gemini-x", "--thinking", "low"]);
@@ -212,6 +215,25 @@ test("names the same missing key in config", () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /API key: NOT SET/);
+});
+
+test("reports the version under all three spellings", () => {
+  // "--version" needs its own exemption in the unknown-option filter, which
+  // runs before the switch and would otherwise reject it before "-v" or
+  // "version" ever reach a case.
+  for (const arg of ["version", "--version", "-v"]) {
+    const result = runCli([arg]);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, `${version}\n`);
+  }
+});
+
+test("names the version in config", () => {
+  const result = runCli(["config"]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`Version: ${version}$`, "m"));
 });
 
 test("requires a backup model before its level can be set", () => {

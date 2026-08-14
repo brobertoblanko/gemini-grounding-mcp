@@ -94,7 +94,10 @@ Implemented as flat modules without a `src/` layout and without a build step
   as well, rather than spending tokens on an empty query. Anything that still
   starts with `--` after parsing is an unknown option and aborts - `models
   --al` would otherwise have silently shown the filtered list that one takes
-  for the complete one. Every subcommand rejects surplus arguments.
+  for the complete one. `--help` and `--version` are the only exceptions,
+  because both are handled as subcommands further down; a `case` for either in
+  the `switch` would otherwise never be reached. Every subcommand rejects
+  surplus arguments.
 
   A **known** option in the wrong place is rejected the same way. Options are
   cut from the argument list before the subcommand is known, so without a check

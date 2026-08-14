@@ -106,7 +106,10 @@ Umgesetzt in flachen Modulen ohne `src/`-Layout und ohne Build-Step
   statt Tokens für eine leere Anfrage auszugeben. Was nach der Auswertung noch
   mit `--` beginnt, ist eine unbekannte Option und bricht ab - `models --al`
   hätte sonst kommentarlos die gefilterte Liste gezeigt, die man für die
-  vollständige hält. Überzählige Argumente lehnt jeder Unterbefehl ab.
+  vollständige hält. `--help` und `--version` sind die einzigen Ausnahmen, weil
+  beide weiter unten als Unterbefehle behandelt werden; ein `case` für eines
+  von beiden im `switch` würde sonst nie erreicht. Überzählige Argumente lehnt
+  jeder Unterbefehl ab.
 
   Eine **bekannte** Option am falschen Ort wird genauso abgelehnt. Optionen
   werden aus der Argumentliste geschnitten, bevor der Unterbefehl feststeht,

@@ -284,15 +284,16 @@ npx -p @brobertoblanko/gemini-grounding-mcp gemini-grounding config
 `npx @brobertoblanko/gemini-grounding-mcp` starts the MCP server rather than the
 CLI - it then waits silently on stdio, which looks like a hang.
 
-| Command                                 | Effect                                                                                                                              |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `gemini-grounding "<query>"`            | Search using the saved defaults; `--model <id>` and `--thinking <level>` apply to this call only                                    |
-| `gemini-grounding config`               | Shows the saved default and backup model with their thinking levels, whether an API key is present, and where the config file lives |
-| `gemini-grounding models [--all]`       | Lists the models suggested for use here with their token limits; `--all` lists every one with a status column                       |
-| `gemini-grounding set-model <id>`       | Persists the default model; add `--thinking <level>` to save both in one call                                                       |
-| `gemini-grounding set-thinking <level>` | Persists the default thinking level (`minimal`, `low`, `medium`, `high`); `--model <id>` saves both                                 |
-| `gemini-grounding set-backup <id\|off>` | Persists a model to retry a failed request with; `--thinking <level>` gives it its own level, on its own it changes only that level |
-| `gemini-grounding help`                 | Short help                                                                                                                          |
+| Command                                 | Effect                                                                                                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gemini-grounding "<query>"`            | Search using the saved defaults; `--model <id>` and `--thinking <level>` apply to this call only                                                           |
+| `gemini-grounding config`               | Shows the saved default and backup model with their thinking levels, whether an API key is present, where the config file lives, and the installed version |
+| `gemini-grounding models [--all]`       | Lists the models suggested for use here with their token limits; `--all` lists every one with a status column                                              |
+| `gemini-grounding set-model <id>`       | Persists the default model; add `--thinking <level>` to save both in one call                                                                              |
+| `gemini-grounding set-thinking <level>` | Persists the default thinking level (`minimal`, `low`, `medium`, `high`); `--model <id>` saves both                                                        |
+| `gemini-grounding set-backup <id\|off>` | Persists a model to retry a failed request with; `--thinking <level>` gives it its own level, on its own it changes only that level                        |
+| `gemini-grounding help`                 | Short help                                                                                                                                                 |
+| `gemini-grounding version`              | Prints the installed version                                                                                                                               |
 
 Which model and thinking level a call actually used is shown in the footer under
 every answer. Every save prints the resulting configuration, so a change never
