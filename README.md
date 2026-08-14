@@ -202,6 +202,7 @@ its name. The second is `models-excluded.js`, a hand-maintained list of models
 that pass the first and still make no sense here: image generation,
 text-to-speech, robotics, the Deep Research pipeline, models that answer without
 a single source, and retired ones that reply `404 ... is no longer available`.
+Not one of them would answer a research question better than what is left.
 
 Nothing is lost, only moved. `all: true` shows every model with a status column
 naming why it is off the list, and any model id can still be set - the shortlist
