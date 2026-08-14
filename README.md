@@ -147,7 +147,10 @@ Google, which is a different problem from a broken installation. That one is
 worth simply retrying: 503 is temporary overload on Google's side, and the
 server already tries such a request up to four times on its own before reporting
 it - which is also why an answer can take some ten seconds longer than usual
-when the service is busy.
+when the service is busy. A call that is still running after 290 seconds is
+ended on purpose: the server gives Google that deadline, so an overlong run
+comes back as a `504` naming a reason instead of a connection that drops without
+one.
 
 </details>
 
