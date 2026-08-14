@@ -187,13 +187,30 @@ individual call visible.
 - **`gemini-list-models`** - lists the models available for your API key with
   their token limits. By default a hand-picked shortlist of those suited to
   research here; `all: true` shows every model with a status column saying why
-  it is off the list. The shortlist decides what is shown, not what is allowed:
-  any model can be set with `gemini-set-model`, and the list itself is a plain
-  file, `models-excluded.js`.
+  it is off the list.
 - **`gemini-set-model`** - persists the default model, the default thinking
   level and/or the backup model (only those values, never the API key). The
   answer names what was written and the resulting configuration in full, so
   which models are in force is never something to be guessed at.
+
+<details>
+<summary>Why the model list is shorter than your key allows</summary>
+
+Two filters narrow it. The first keeps what generates text and accepts a
+thinking level, going by what the API reports about each model rather than by
+its name. The second is `models-excluded.js`, a hand-maintained list of models
+that pass the first and still make no sense here: image generation,
+text-to-speech, robotics, the Deep Research pipeline, models that answer without
+a single source, and retired ones that reply `404 ... is no longer available`.
+
+Nothing is lost, only moved. `all: true` shows every model with a status column
+naming why it is off the list, and any model id can still be set - the shortlist
+decides what is shown, not what is allowed.
+
+How the list is maintained and what keeps it honest:
+[specs.md](https://github.com/brobertoblanko/gemini-grounding-mcp/blob/main/docs/specs.md#gemini-list-models).
+
+</details>
 
 ## Citations and searches
 
@@ -432,26 +449,6 @@ first time. Delete the file to return to the built-in defaults
 (`gemini-flash-latest`, thinking level `medium`, no backup model). It holds
 nothing but model names and thinking levels - **never the API key**. Run
 `gemini-grounding config` to see the exact path on your machine.
-
-## Which models are offered
-
-Your API key exposes considerably more models than will work here. Two filters
-narrow the default view, and both are visible: the first keeps what produces
-text and accepts a thinking level, judged by what the API reports about each
-model rather than by its name. The second is `models-excluded.js`, a
-hand-maintained list of models that pass the first one and still do not belong
-in a research shortlist - image generation, text-to-speech, robotics, the Deep
-Research pipeline, models that answer without a single source, and retired ones
-that stay in the list and reply `404 ... is no longer available`.
-
-The shortlist decides what is shown, not what is allowed: `set-model` and a
-per-call `--model` accept any model id, an excluded one included. `--all` /
-`all: true` bypasses the exclusion entirely and shows every model with a status
-column naming why it is off the shortlist, so nothing is lost, only moved.
-
-Why the filter goes by capabilities rather than name patterns, how the exclusion
-list is maintained and what keeps it honest:
-[specs.md](https://github.com/brobertoblanko/gemini-grounding-mcp/blob/main/docs/specs.md#gemini-list-models).
 
 ## Documentation
 
