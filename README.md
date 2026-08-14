@@ -182,8 +182,11 @@ individual call visible.
   evidence, so it belongs where the sources are. If the answer did not finish
   normally, a line marked ⚠️ says so along with the reason.
 - **`gemini-list-models`** - lists the models available for your API key with
-  their token limits. By default only those usable with this server; with
-  `all: true`, every one.
+  their token limits. By default a hand-picked shortlist of those suited to
+  research here; `all: true` shows every model with a status column saying why
+  it is off the list. The shortlist decides what is shown, not what is allowed:
+  any model can be set with `gemini-set-model`, and the list itself is a plain
+  file, `models-excluded.js`.
 - **`gemini-set-model`** - persists the default model, the default thinking
   level and/or the backup model (only those values, never the API key). The
   answer names what was written and the resulting configuration in full, so
@@ -264,7 +267,7 @@ CLI - it then waits silently on stdio, which looks like a hang.
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `gemini-grounding "<query>"`            | Search using the saved defaults; `--model <id>` and `--thinking <level>` apply to this call only                                    |
 | `gemini-grounding config`               | Shows the saved default and backup model with their thinking levels, whether an API key is present, and where the config file lives |
-| `gemini-grounding models [--all]`       | Lists the models usable with this server and their token limits; `--all` lists every one                                            |
+| `gemini-grounding models [--all]`       | Lists the models suggested for use here with their token limits; `--all` lists every one with a status column                       |
 | `gemini-grounding set-model <id>`       | Persists the default model; add `--thinking <level>` to save both in one call                                                       |
 | `gemini-grounding set-thinking <level>` | Persists the default thinking level (`minimal`, `low`, `medium`, `high`); `--model <id>` saves both                                 |
 | `gemini-grounding set-backup <id\|off>` | Persists a model to retry a failed request with; `--thinking <level>` gives it its own level, on its own it changes only that level |
@@ -427,21 +430,24 @@ first time. Delete the file to return to the built-in defaults
 nothing but model names and thinking levels - **never the API key**. Run
 `gemini-grounding config` to see the exact path on your machine.
 
-## Which models are usable
+## Which models are offered
 
-Your API key exposes considerably more models than will work here. The model
-list therefore shows, by default, only those that produce text and accept a
-thinking level - judged by what the API reports about each model, not by its
-name.
+Your API key exposes considerably more models than will work here. Two filters
+narrow the default view, and both are visible: the first keeps what produces
+text and accepts a thinking level, judged by what the API reports about each
+model rather than by its name. The second is `models-excluded.js`, a
+hand-maintained list of models that pass the first one and still do not belong
+in a research shortlist - image generation, text-to-speech, robotics, the Deep
+Research pipeline, models that answer without a single source, and retired ones
+that stay in the list and reply `404 ... is no longer available`.
 
-Two limits to that filter are worth knowing: it separates what runs technically
-from what does not, not what is sensible for research, and **listed does not
-mean available** - a retired model stays in the list and answers with
-`404 ... is no longer available`. That is why `--all` / `all: true` hides
-nothing but shows the complete list with a status column instead.
+The shortlist decides what is shown, not what is allowed: `set-model` and a
+per-call `--model` accept any model id, an excluded one included. `--all` /
+`all: true` bypasses the exclusion entirely and shows every model with a status
+column naming why it is off the shortlist, so nothing is lost, only moved.
 
-Why the filter goes by capabilities rather than name patterns, and what each
-condition prevents:
+Why the filter goes by capabilities rather than name patterns, how the exclusion
+list is maintained and what keeps it honest:
 [specs.md](https://github.com/brobertoblanko/gemini-grounding-mcp/blob/main/docs/specs.md#gemini-list-models).
 
 ## Documentation

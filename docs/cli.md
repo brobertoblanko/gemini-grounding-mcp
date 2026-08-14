@@ -67,7 +67,7 @@ An option that has no meaning for the given command aborts with exit code 1 - it
 | `set-backup --thinking <level>` | Changes only the level of the backup already saved |
 | `set-backup off --thinking <level>` | Error - a disabled backup has no thinking level |
 | `set-model <id> --model <id2>` | Error - two models, and only you know which one is meant |
-| `models --all` | Lists every model, including the unusable ones |
+| `models --all` | Lists every model with a status column, past the shortlist the default view shows |
 | `config`, `help`, `models` with `--model` / `--thinking` | Error |
 
 Every save answers twice - what changed, and what applies from now on:

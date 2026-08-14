@@ -786,8 +786,8 @@ holt weitere Seiten selbstständig nach; `pageSize` bestimmt nur die Größe der
 einzelnen Anfrage, nicht die Gesamtzahl.
 
 **Standardmäßig gefiltert.** Der Key gibt erheblich mehr Modelle frei, als
-hier funktionieren - beim Stand dieser Messung 58 insgesamt, davon 32
-nutzbar. Gefiltert wird über zwei Angaben, die jedes Modell selbst
+hier funktionieren - in der weiter unten genannten Messung 53 insgesamt, davon
+31 nutzbar. Gefiltert wird über zwei Angaben, die jedes Modell selbst
 mitliefert:
 
 | Feld | Bedingung | Andernfalls |
@@ -800,7 +800,8 @@ Beide Felder sind im `Model`-Interface des SDK dokumentiert. Bewusst **nicht**
 Fähigkeiten aussagen (`nano-banana-pro-preview` ist ein Bildmodell), sodass
 jede Musterliste bei der nächsten Modellfamilie veraltet.
 
-Grenzen, die der Filter nicht auflöst:
+Grenzen, die der Filter nicht auflöst - beide sind der Grund für die weiter
+unten beschriebene Ausschlussliste:
 
 - Er trennt technische Lauffähigkeit, nicht Eignung. Bild-, Sprach- und
   Robotikmodelle erfüllen die Bedingungen teilweise ebenfalls.
@@ -815,6 +816,122 @@ zeigt die vollständige Liste mit einer Statusspalte. Ergibt der Filter kein
 einziges Modell - etwa weil die API die ausgewerteten Felder nicht mehr
 liefert - fällt `listModels` selbsttätig auf die vollständige Liste zurück und
 weist im Hinweistext darauf hin, statt eine leere Ausgabe zu erzeugen.
+
+### Die Ausschlussliste
+
+`models-excluded.js` enthält die Modelle, die `isUsableModel` bestehen und
+trotzdem nicht in eine Liste gehören, aus der jemand ein Recherchemodell
+auswählt. Sie wird zusätzlich zu diesem Filter angewandt und nur in der
+Standardansicht; `all: true` umgeht sie vollständig und trägt bei jedem Eintrag
+die Sorte seines Ausschlusses als Status ein - `400 INVALID_ARGUMENT`,
+`404 NOT_FOUND`, `no sources` oder `unsuitable` -, der Ausschluss verlagert die
+Information also, statt sie zu verlieren. Sie steuert die Anzeige und sonst
+nichts: `gemini-set-model` und ein `model` pro Aufruf nehmen jede ID an, auch
+eine ausgeschlossene.
+
+Gemessen am 13.08.2026 mit `scripts/probe-models.js` gegen einen einzelnen
+API-Key: 53 Modelle insgesamt, 31 nach `isUsableModel`, 23 ausgeschlossen, 8
+angeboten.
+
+**Drei Sorten Eintrag, nach Belastbarkeit geordnet.** Jede Begründung nennt
+ihre Sorte, weil sie unterschiedlich altern:
+
+| Sorte | Grundlage | Anzahl |
+| --- | --- | --- |
+| `400`/`404` | die Zurückweisung der API im Wortlaut | 17 |
+| `no sources` | das Modell antwortet und liefert keinen Grounding-Chunk | 3 |
+| `unsuitable` | der Hersteller dokumentiert das Modell für einen anderen Zweck | 3 |
+
+Die erste Sorte ist die stärkste und kommt ohne Beurteilung aus:
+`Code execution is not enabled for this model` bei den Bildmodellen,
+`Thinking level is not supported for this model.` bei TTS und Gemma,
+`This model only supports Interactions API` bei den Deep-Research-Modellen und
+`gemini-omni-flash-preview`, sowie `no longer available to new users` bei
+`gemini-2.5-flash`, `-flash-lite` und `-pro`. Die letzte Sorte ist die
+schwächste und bei einer Überprüfung als Erstes nachzuschlagen: Ein Modell ist
+nur so lange ungeeignet, wie seine Dokumentation das sagt.
+
+**Exakte IDs, keine Wildcards.** Ein Muster wie `*-image` würde Nachfolger von
+selbst fangen, aber ein künftiges Modell, das Bilder *versteht* und `image` im
+Namen trägt, verschwände unbemerkt. Der Fehlermodus ist bewusst gewählt: Ein
+nicht eingetragenes neues Modell erscheint in der Liste - sichtbar, folgenlos,
+und es meldet sich selbst zur Pflege an. Nichts fällt je ungesehen heraus. Der
+Preis ist das Nachtragen von Hand.
+
+Ein Schwellwert auf `inputTokenLimit` wurde aus demselben Grund verworfen. Er
+trennte die Messung perfekt - die brauchbaren Textmodelle erreichen 1M, die
+Bild-, Robotik-, TTS- und Gemma-Modelle liegen bei 256k oder darunter -, würde
+aber ein gutes Textmodell mit kleinerem Kontextfenster wortlos verstecken. Die
+beiden Robotikmodelle zeigen, dass das nicht hypothetisch ist: Sie erreichen
+128k, grounden korrekt und sind hier aus einem dokumentierten Grund
+ausgeschlossen, nicht wegen ihrer Größe.
+
+**Im Code, nicht in `config.json`.** Die Liste ist eine Projektentscheidung,
+kein Nutzerzustand, und `config.json` ist auf Modellnamen und Thinking-Level
+festgelegt. Im Code ist sie versioniert, testbar und trägt ihre Begründung im
+Kommentar.
+
+**Was sie ehrlich hält.** Eine ID mit Tippfehler wirkt nie, und nichts weist
+darauf hin - derselbe stille Fehler, den die Liste vermeiden soll, nur
+versetzt. `test/models.test.js` prüft drei Dinge gegen die gespeicherte
+Antwort in `test/fixtures/models-list.json`: dass jeder Eintrag auf ein Modell
+passt, dass kein Eintrag bereits von `isUsableModel` entfernt wird und damit
+unerreichbar ist, und dass jede Begründung ihre Sorte nennt. Der Fixture ist
+der rohe HTTP-Body und nicht das Objekt des SDK, weil der Mock der Tests
+`fetch` ersetzt und das SDK ihn weiterhin parsen muss - auf der Leitung heißt
+das Feld `supportedGenerationMethods`, das SDK benennt es in
+`supportedActions` um.
+
+Diese Prüfungen sehen die gespeicherte Antwort und sonst nichts: Ein Modell,
+das Google später zurückzieht, kommt weiter durch, bis jemand das Fixture
+erneuert, und die Live-API darf ein Test dafür nicht aufrufen. Diese Richtung
+deckt `scripts/probe-models.js` ab: Bei einem vollständigen Lauf hält es die
+Liste gegen das, was der Schlüssel gerade anbietet, und nennt jeden Eintrag,
+auf den kein Modell mehr passt - ein Lauf meldet damit beides, was hinzukommt
+und was wegfällt. Ein auf `--model` verengter Lauf lässt die Prüfung aus,
+statt die Liste an IDs zu messen, die von der Kommandozeile stammen.
+
+Erzeugt werden die Einträge von `scripts/probe-models.js`. Das Skript schickt
+jedem Modell nach `isUsableModel` genau das, was `runSearch` schickt - alle
+`SEARCH_TOOLS` plus ein Thinking-Level - und wertet nur einen `400` oder `404`
+als Urteil; `429`, `503` und die übrigen transienten Codes werden wiederholt
+und andernfalls ohne Urteil gemeldet. Dass die Tools eine gemeinsame Konstante
+sind, ist keine Ordnungsliebe: Gemessen antworten die Bildmodelle auf eine
+Anfrage mit nur `googleSearch` anstandslos und scheitern allein an Code
+Execution, eine engere Prüfung meldet sie also als funktionierend. Das Skript
+ist über die `files`-Liste in `package.json` vom veröffentlichten Paket
+ausgenommen und hält nichts fest außer ID, Urteil, Status, Dauer und ob
+Grounding-Metadaten kamen - nie den Antworttext und nie die Quellen
+(Invariante I4, siehe "Terms-Konformität").
+
+**Der Hinweistext nennt die Liste.** Ein Ausschluss, den der Nutzer nicht
+sieht, ist so undurchsichtig wie die verkürzte Auswahl, aus der diese Liste
+entstanden ist. Die Standardansicht nennt deshalb, wie viele Modelle verborgen
+sind und dass eine vollständige Auflistung den Ausschluss umgeht.
+Er sagt das in einer Zeile: Den Hinweistext liest ein Mensch am Terminal bei
+jedem einzelnen Aufruf, und einen Absatz Begründung, der sich nie ändert, lernt
+das Auge zu überspringen. Die Begründung gehört hierher, wo sie einmal gelesen
+wird; die Zahlen im Hinweistext stammen aus der Antwort, sodass keine
+Formulierung nachzuziehen ist, wenn Modelle hinzukommen oder wegfallen.
+
+Die Darstellungsregel für Agenten - die gelisteten Modelle nennen, bevor eine
+engere Auswahl vorgeschlagen wird, diese Auswahl als Vorschlag kennzeichnen und
+dazusagen, dass sich ebenso jede andere Modell-ID eintragen lässt - steht
+stattdessen in der Tool-Beschreibung von `gemini-list-models`. Sie reiste
+früher im Hinweistext mit, wo sie den Agenten im Moment der Entscheidung
+erreichte, ohne Dauerkontext zu kosten, stellte damit aber jedem CLI-Nutzer eine
+an Agenten gerichtete Anweisung vor die Nase. Die Tool-Beschreibung kostet
+dauerhaft Kontext und ist der Preis für einen Hinweistext, der sich in einer
+Zeile liest.
+
+**Zu den Codenamen.** `models.list` liefert auch `displayName` und
+`description`, und bei Codenamen tragen diese Felder tatsächlich Information:
+`nano-banana-pro-preview` ist als "Gemini 3 Pro Image Preview" beschrieben.
+Keines der beiden wird als automatischer Filter genutzt - das wäre dasselbe
+Namensmuster ein Feld weiter rechts, mit demselben stillen Fehler, sobald ein
+künftiges Textmodell eines der Stichwörter trägt. Als Hinweis für den
+Menschen, der einen neuen Eintrag von Hand beurteilt, ist `description` bei
+einem Codenamen die einzige verwertbare Quelle.
 
 ### gemini-set-model
 

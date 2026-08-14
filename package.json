@@ -39,6 +39,7 @@
     "config.js",
     "gemini.js",
     "citations.js",
+    "models-excluded.js",
     "README.md",
     "LICENSE"
   ],

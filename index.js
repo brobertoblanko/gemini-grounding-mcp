@@ -117,17 +117,19 @@ server.registerTool(
     title: "List available Gemini models",
     description:
       "List the Gemini models available for the current API key with their token " +
-      "limits. By default only models usable with this server - they generate text " +
-      "and accept a thinking level, which gemini-search always sends. Being listed " +
-      "is no guarantee a model still answers: retired models remain in the list and " +
-      "return 404 on use.",
+      "limits. By default a hand-picked shortlist of those suited to research here; " +
+      "all: true shows every model with a status column. The shortlist decides what " +
+      "is shown, not what is allowed - gemini-set-model and gemini-search accept any " +
+      "model id. Before proposing a shorter selection to the user, name the models the " +
+      "call returned, mark the selection as a suggestion, and say that any other model " +
+      "id can be set too.",
     inputSchema: {
       all: z
         .boolean()
         .optional()
         .describe(
-          "List every model the API key exposes, including those that cannot be " +
-            "used here (embedding, image, video, audio models). Off by default.",
+          "List every model the API key exposes, with a status column saying why " +
+            "each one is off the shortlist. Off by default.",
         ),
     },
   },

@@ -638,7 +638,7 @@ Fetches the models available to the current API key, including token limits, via
 The SDK's pager fetches further pages on its own; `pageSize` only determines the size of the individual request, not the total count.
 
 **Filtered by default.**
-The key exposes considerably more models than work here - 58 in total at the time of this measurement, 32 of them usable.
+The key exposes considerably more models than work here - 53 in total in the measurement below, 31 of them usable.
 Filtering goes through two pieces of information that every model reports itself:
 
 | Field | Condition | Otherwise |
@@ -649,7 +649,7 @@ Filtering goes through two pieces of information that every model reports itself
 Both fields are documented in the SDK's `Model` interface.
 Deliberately **not** filtered by name patterns: Google assigns code names that say nothing about capabilities (`nano-banana-pro-preview` is an image model), so any list of patterns goes stale with the next model family.
 
-Limits the filter does not resolve:
+Limits the filter does not resolve - both are the reason for the exclusion list described below:
 
 - It separates technical usability, not suitability. Image, speech and robotics
   models partly satisfy the conditions as well.
@@ -660,6 +660,67 @@ Limits the filter does not resolve:
 `all` is therefore not merely a convenience switch: since the list gives no guarantee anyway, the filtered view must never be the only one.
 `all: true` shows the complete list with a status column.
 If the filter yields no model at all - because the API no longer provides the fields being evaluated, say - `listModels` falls back to the complete list on its own and says so in the notice text, rather than producing empty output.
+
+### The exclusion list
+
+`models-excluded.js` holds the models that pass `isUsableModel` and still do not belong in a list somebody picks a research model from.
+It is applied on top of that filter and only in the default view; `all: true` bypasses it entirely and gives each entry the kind of its exclusion as its status - `400 INVALID_ARGUMENT`, `404 NOT_FOUND`, `no sources` or `unsuitable` - so the exclusion moves the information rather than losing it.
+It shapes the display and nothing else: `gemini-set-model` and a per-call `model` accept any id, an excluded one included.
+
+Measured on 2026-08-13 with `scripts/probe-models.js` against a single API key: 53 models in total, 31 past `isUsableModel`, 23 excluded, 8 offered.
+
+**Three kinds of entry, ordered by how solid they are.**
+Every reason states its kind, because they age differently:
+
+| Kind | Basis | Count |
+| --- | --- | --- |
+| `400`/`404` | the API's own refusal, verbatim | 17 |
+| `no sources` | the model answers and returns no grounding chunk | 3 |
+| `unsuitable` | the vendor documents the model as built for something else | 3 |
+
+The first kind is the strongest and needs no judgement: `Code execution is not enabled for this model` from the image models, `Thinking level is not supported for this model.` from TTS and Gemma, `This model only supports Interactions API` from the Deep Research models and `gemini-omni-flash-preview`, and `no longer available to new users` from `gemini-2.5-flash`, `-flash-lite` and `-pro`.
+The last kind is the weakest and is the first thing to recheck on review: a model is unsuitable only for as long as its documentation says so.
+
+**Exact ids, no wildcards.**
+A pattern such as `*-image` would catch successors by itself, but a future model that *understands* images and carries `image` in its name would vanish unnoticed.
+The failure mode is chosen deliberately: an unlisted new model appears in the list, which is visible, harmless, and asks to be maintained.
+Nothing ever falls off the list unseen.
+The price is entering new ones by hand.
+
+A threshold on `inputTokenLimit` was considered and rejected for the same reason.
+It separated the measurement perfectly - the usable text models reach 1M, the image, robotics, TTS and Gemma models sit at 256k or below - but it would hide a good text model with a smaller context window without a word. The two robotics models show this is not hypothetical: they reach 128k, ground correctly, and are excluded here for a documented reason rather than for their size.
+
+**In code, not in `config.json`.**
+The list is a project decision, not user state, and `config.json` is fixed to model names and thinking levels.
+In code it is versioned, testable, and carries its reason in the comment.
+
+**What keeps it honest.**
+An id with a typo never takes effect, and nothing points at it - the same silent failure the list exists to avoid, one step removed.
+`test/models.test.js` checks three things against the stored response in `test/fixtures/models-list.json`: that every entry matches a model, that no entry is already removed by `isUsableModel` and therefore unreachable, and that every reason names its kind.
+The fixture is the raw HTTP body rather than the SDK's objects, because the test mock replaces `fetch` and the SDK still has to parse it - on the wire the field is `supportedGenerationMethods`, and the SDK renames it to `supportedActions`.
+
+Those checks see the stored response and nothing else, so a model Google retires later keeps passing until somebody renews the fixture, and a test may not call the live API for it.
+`scripts/probe-models.js` covers that direction: on a full run it holds the list against what the key currently offers and names every entry no model matches any more, which makes one run report both what to add and what to remove.
+A run narrowed to `--model` skips the check rather than judging the list by ids the command line supplied.
+
+`scripts/probe-models.js` produces the entries.
+It sends every model past `isUsableModel` exactly what `runSearch` sends - all of `SEARCH_TOOLS` plus a thinking level - and only a `400` or `404` counts as a verdict; `429`, `503` and the other transient codes are retried and otherwise reported without one.
+That the tools are a shared constant is not tidiness: measured, the image models answer a request carrying only `googleSearch` without complaint and fail solely on code execution, so a narrower probe reports them as working.
+The script is excluded from the published package by the `files` list in `package.json` and records nothing but id, verdict, status, duration and whether grounding metadata came back - never the answer text or the sources (invariant I4, see "Terms compliance").
+
+**The notice names the list.**
+An exclusion the user cannot see is as opaque as the shortened choice this list came from, so the default view states how many models are hidden and that a full listing bypasses the exclusion.
+It says that in one line: the notice is read by a human at the terminal on every single call, and a paragraph of reasoning that never changes is one the eye learns to skip.
+The reasoning belongs here, where it is read once; the numbers in the notice come from the response, so no wording has to be revised when models come and go.
+
+The display rule for agents - name the listed models before proposing a shorter selection, mark that selection as a suggestion, and say that any other model id can be set as well - sits in the tool description of `gemini-list-models` instead.
+It used to travel in the notice, which reached the agent at the moment of choosing at no cost in permanent context, but it also put an instruction aimed at agents in front of every CLI user.
+The tool description costs context permanently and is the price for a notice that reads as one line.
+
+**On code names.**
+`models.list` also returns `displayName` and `description`, and for code names those do carry information: `nano-banana-pro-preview` is described as "Gemini 3 Pro Image Preview".
+Neither field is used as an automatic filter - that would be the same name pattern one field further right, with the same silent failure once a future text model carries one of the keywords.
+As a hint for whoever assesses a new entry by hand, `description` is the only usable source for a code name.
 
 ### gemini-set-model
 

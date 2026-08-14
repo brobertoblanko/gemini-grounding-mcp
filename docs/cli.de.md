@@ -67,7 +67,7 @@ Eine Option ohne Bedeutung für den gewählten Befehl bricht mit Exit-Code 1 ab 
 | `set-backup --thinking <level>` | Ändert nur das Level des bereits gespeicherten Backups |
 | `set-backup off --thinking <level>` | Fehler - ein abgeschaltetes Backup hat kein Thinking-Level |
 | `set-model <id> --model <id2>` | Fehler - zwei Modelle, und welches gemeint ist, wissen nur Sie |
-| `models --all` | Listet alle Modelle, auch die unbrauchbaren |
+| `models --all` | Listet alle Modelle mit Statusspalte, an der Vorauswahl der Standardansicht vorbei |
 | `config`, `help`, `models` mit `--model` / `--thinking` | Fehler |
 
 Jedes Speichern antwortet zweimal - was sich geändert hat, und was ab jetzt gilt:

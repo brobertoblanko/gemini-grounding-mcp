@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { insertCitations } from "./citations.js";
+import { EXCLUDED_MODELS } from "./models-excluded.js";
 
 /**
  * Retries for transient errors. Without httpOptions.retryOptions the SDK repeats
@@ -439,7 +440,7 @@ export function formatFooter({
  * both are incidental, and no call that would otherwise have gone through may
  * fail on them.
  */
-function readErrorBody(error) {
+export function readErrorBody(error) {
   try {
     const body = JSON.parse(error.message)?.error;
     return {
@@ -495,6 +496,23 @@ function withRefusal(error, refusal) {
   return new Error(`${describeError(error)} (${refusal})`);
 }
 
+/**
+ * The three built-in tools every call sends. A constant rather than a literal
+ * inside generate(), because a model has to accept ALL THREE to be usable here,
+ * and anything measuring that must send the identical set: measured, the image
+ * models answer a search request without complaint and fail on
+ * "Code execution is not enabled for this model" - the narrower request would
+ * report them as working. See scripts/probe-models.js.
+ *
+ * Frozen because the same objects now go into every request: a write into them
+ * would leave the first call untouched and change every one after it.
+ */
+export const SEARCH_TOOLS = Object.freeze([
+  Object.freeze({ googleSearch: {} }),
+  Object.freeze({ urlContext: {} }),
+  Object.freeze({ codeExecution: {} }),
+]);
+
 /** One call to the API. Everything that stays the same per attempt lives here. */
 function generate(ai, { query, model, thinkingLevel }) {
   return ai.models.generateContent({
@@ -517,7 +535,7 @@ function generate(ai, { query, model, thinkingLevel }) {
       // Europe between 00:00 and 02:00 - in the very function meant to guarantee
       // the correct date.
       systemInstruction: `Today's date is ${new Date().toLocaleDateString("en-CA")}.`,
-      tools: [{ googleSearch: {} }, { urlContext: {} }, { codeExecution: {} }],
+      tools: SEARCH_TOOLS,
       thinkingConfig: { thinkingLevel },
     },
   });
@@ -630,31 +648,64 @@ function formatTokenLimit(limit) {
 }
 
 /**
- * Whether a model works with THIS server. Two conditions, both taken from what
- * the API reports itself rather than from the model name - a name pattern would
- * break with every new model family (code names such as "nano-banana-pro-preview"
- * say nothing about capabilities):
+ * Whether a model CAN run here at all. Two conditions, both taken from what the
+ * API reports itself rather than from the model name or from displayName and
+ * description, although those two do carry information: "nano-banana-pro-preview"
+ * is described as "Gemini 3 Pro Image Preview". Reading them would be the same
+ * name pattern one field further right, and it would go stale just as silently
+ * once a future text model carries one of the keywords.
  * - generateContent: produces text at all (excludes embeddings, Imagen, Veo and
  *   the Live/Audio models)
  * - thinking: accepts a thinking level. runSearch always sends one, otherwise
  *   the API answers 400 "Thinking level is not supported for this model."
+ *
+ * What the conditions cannot decide is whether a model SHOULD run here - a TTS
+ * model with 8k input passes both. That is what EXCLUDED_MODELS is for.
  * Full derivation: docs/specs.md, "gemini-list-models".
  */
-function isUsableModel(model) {
+export function isUsableModel(model) {
   return (model.supportedActions ?? []).includes("generateContent") && model.thinking === true;
 }
 
-/** Why a model is not in the default list - for the --all view only. */
+/** The bare model id: the API prefixes every name with "models/". */
+export function modelId(model) {
+  return (model.name ?? "?").replace(/^models\//, "");
+}
+
+/**
+ * Whether a model is on the maintained exclusion list. Separate from
+ * isUsableModel() because the two answer different questions: that one reads
+ * what the API reports, this one what trying it out showed.
+ * Full derivation: docs/specs.md, "The exclusion list".
+ */
+export function isExcludedModel(model) {
+  return Object.hasOwn(EXCLUDED_MODELS, modelId(model));
+}
+
+/**
+ * Why a model is not in the default list - for the --all view only. An excluded
+ * model shows the kind of its exclusion, everything before the first dash of its
+ * reason: the reason itself runs to three lines for the "unsuitable" entries,
+ * and the kind is what says how much the entry is worth.
+ */
 function modelStatus(model) {
   const actions = model.supportedActions ?? [];
   if (!actions.includes("generateContent")) return actions[0] ?? "no generateContent";
-  return model.thinking === true ? "thinking" : "no thinking";
+  if (model.thinking !== true) return "no thinking";
+  if (!isExcludedModel(model)) return "thinking";
+  return EXCLUDED_MODELS[modelId(model)].split(" - ")[0];
 }
 
 /**
  * Lists the models available to the current API key, with token limits. By
- * default only those usable with this server; with all=true the complete list
- * including a status column.
+ * default only those this server offers - usable and not excluded; with
+ * all=true the complete list including a status column.
+ *
+ * Two filters run in the default view, and the closing note counts both: leaving
+ * EXCLUDED_MODELS unmentioned would make it as invisible to the user as the
+ * shortened choice that issue #15 started from. The note stays one line and
+ * takes every number from the response, so no wording needs revising when models
+ * come and go. Full derivation: docs/specs.md, "The notice names the list".
  *
  * Being listed says nothing about availability: deprecated models stay in the
  * response and answer with 404. A field indicating that does not exist.
@@ -668,14 +719,17 @@ export async function listModels({ all = false } = {}) {
   if (models.length === 0) return "No models available for this API key.";
 
   const usable = models.filter(isUsableModel);
+  const offered = usable.filter((model) => !isExcludedModel(model));
 
-  // Guard against an empty result should the API stop supplying the evaluated
-  // fields: better the full list than none at all.
+  // Guard against an empty result, whichever filter empties it: the API might
+  // stop supplying the evaluated fields, or the exclusion list might one day
+  // cover everything the key still has. Better the wider list than none at all.
   const filterFailed = usable.length === 0;
+  const exclusionFailed = !filterFailed && offered.length === 0;
   const showAll = all || filterFailed;
-  const shown = [...(showAll ? models : usable)];
+  const shown = [...(showAll ? models : exclusionFailed ? usable : offered)];
 
-  const name = (model) => (model.name ?? "?").replace(/^models\//, "");
+  const name = modelId;
   shown.sort((a, b) => name(a).localeCompare(name(b)));
   const width = Math.max(...shown.map((model) => name(model).length));
 
@@ -687,20 +741,25 @@ export async function listModels({ all = false } = {}) {
     return `${name(model).padEnd(width)}  ${limits}${status}`;
   });
 
+  const hidden = usable.length - offered.length;
+
   let note;
   if (filterFailed) {
     note =
-      `All ${models.length} models - the usability filter matched nothing, so ` +
-      "nothing is hidden. Check whether the API still reports supportedActions and thinking.";
+      `All ${models.length} models - the usability filter matched nothing. Check whether the ` +
+      "API still reports supportedActions and thinking.";
+  } else if (exclusionFailed) {
+    note =
+      `All ${usable.length} usable models are on the exclusion list, so it is skipped here. ` +
+      "Check models-excluded.js against this API key.";
   } else if (all) {
     note =
-      `All ${models.length} models. Only the ${usable.length} marked "thinking" work with ` +
-      "this server, which always sends a thinking level. Being listed is no guarantee " +
-      "a model still answers - retired ones stay in this list and return 404.";
+      `All ${models.length} models; the ${offered.length} marked "thinking" are the default ` +
+      "list, the rest name the kind of their exclusion. Listed is no guarantee of an answer.";
   } else {
     note =
-      `${usable.length} of ${models.length} models usable with this server (text generation ` +
-      "plus thinking level support). Request all models to see the rest.";
+      `${offered.length} of ${models.length} models offered here, ${hidden} usable ones ` +
+      "excluded (models-excluded.js). List all models to see their status.";
   }
 
   return `${lines.join("\n")}\n\n${note}`;

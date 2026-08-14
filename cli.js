@@ -26,8 +26,9 @@ Usage:
 Commands:
   config                 Show saved model, thinking level, backup and API key
                          status
-  models [--all]         List models usable with this server; --all lists every
-                         model the API key exposes, including unusable ones
+  models [--all]         List the models suggested for use here; --all lists
+                         every model the API key exposes, with a status column.
+                         Either way set-model accepts any of them
   set-model <id>         Persist the default model; add --thinking <level> to
                          persist both in one call
   set-thinking <level>   Persist the default thinking level; add --model <id> to
@@ -35,8 +36,8 @@ Commands:
   set-backup <id|off>    Persist a model to retry a failed request with; add
                          --thinking <level> to give it its own level, leave it
                          out to inherit the level of the call. "off" disables it
-  set-backup --thinking <level>
-                         Change only the level of the backup already saved
+  set-backup
+    --thinking <level>   Change only the level of the backup already saved
   help                   Show this help
 
 Options:
@@ -46,11 +47,12 @@ Options:
 
 Thinking levels: ${THINKING_LEVELS.join(", ")}
 
-An option that has no meaning for the given command is an error, never silently
-ignored. Anything that is not a known command is treated as a search query. The
-query must be a single argument - put it in quotes if it contains spaces.
-The API key is read from the GEMINI_API_KEY environment variable.
-The saved defaults are shared with the MCP server; "config" prints their location.`;
+Anything that is not a known command is treated as a search query - one single
+argument, so quote it if it contains spaces. An option a command has no meaning
+for is an error, never silently ignored.
+
+The API key comes from GEMINI_API_KEY. The saved defaults are shared with the
+MCP server; "config" prints where they live.`;
 
 /**
  * Usage error - wrong arguments, unknown option, empty query. Handled
