@@ -123,13 +123,18 @@ export function describeError(error) {
   return `${error.message} (${code}${cause.message ?? cause})`;
 }
 
+/**
+ * Exported because cli.js checks the key itself before a search and needs the
+ * same wording. The throw below stays as the safety net for every other caller.
+ */
+export const API_KEY_MISSING_MESSAGE =
+  "GEMINI_API_KEY is not set. The API key must be provided via environment " +
+  "variable (never hardcoded).";
+
 function getClient() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error(
-      "GEMINI_API_KEY is not set. The API key must be provided via environment " +
-        "variable (never hardcoded).",
-    );
+    throw new Error(API_KEY_MISSING_MESSAGE);
   }
   return new GoogleGenAI({
     apiKey,
@@ -707,10 +712,15 @@ function modelStatus(model) {
  * takes every number from the response, so no wording needs revising when models
  * come and go. Full derivation: docs/specs.md, "The notice names the list".
  *
+ * allOption is how the caller's own frontend spells that switch, because the
+ * note names it and the two spell it differently: "--all" on the command line,
+ * "all: true" over MCP. Both pass it explicitly; the default only keeps the
+ * note readable for a caller that does not.
+ *
  * Being listed says nothing about availability: deprecated models stay in the
  * response and answer with 404. A field indicating that does not exist.
  */
-export async function listModels({ all = false } = {}) {
+export async function listModels({ all = false, allOption = "--all" } = {}) {
   const ai = getClient();
   const pager = await ai.models.list({ config: { pageSize: 50 } });
 
@@ -759,7 +769,7 @@ export async function listModels({ all = false } = {}) {
   } else {
     note =
       `${offered.length} of ${models.length} models offered here, ${hidden} usable ones ` +
-      "excluded (models-excluded.js). List all models to see their status.";
+      `excluded (models-excluded.js). ${allOption} lists them all with their status.`;
   }
 
   return `${lines.join("\n")}\n\n${note}`;

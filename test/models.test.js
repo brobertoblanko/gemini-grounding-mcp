@@ -77,6 +77,17 @@ test("the default list hides the excluded models and says so", async () => {
   assert.match(output, /8 of 53 models offered here, \d+ usable ones excluded/);
 });
 
+test("the note names the switch the way the caller's frontend spells it", async () => {
+  // The note is the only place the shortlist tells anyone how to get past it,
+  // and the two frontends spell that switch differently. A wording that fits
+  // both would name neither.
+  mockFetch(listResponse);
+  assert.match(await listModels({ allOption: "--all" }), /--all lists them all/);
+
+  mockFetch(listResponse);
+  assert.match(await listModels({ allOption: "all: true" }), /all: true lists them all/);
+});
+
 test("all=true bypasses the exclusion list and names the kind of each entry", async () => {
   mockFetch(listResponse);
   const output = await listModels({ all: true });

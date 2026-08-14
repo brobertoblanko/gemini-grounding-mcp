@@ -70,16 +70,21 @@ export function configFile(configHome) {
  *
  * XDG_CONFIG_HOME points at a temp directory; without that isolation every set
  * case would write into this machine's real configuration. The API key is
- * replaced by a placeholder so that no case can reach the API by accident.
+ * replaced by a placeholder so that no case can reach the API by accident;
+ * apiKey: null removes the variable instead, for the cases about a missing key.
  */
-export function runCli(args, { configHome = freshConfigHome() } = {}) {
+export function runCli(
+  args,
+  { configHome = freshConfigHome(), apiKey = "test-key-never-sent" } = {},
+) {
+  const env = { ...process.env, XDG_CONFIG_HOME: configHome, GEMINI_API_KEY: apiKey };
+  // Deleting and not setting to "": spawnSync turns every value into a string,
+  // so null would reach the CLI as the four characters "null" and pass the check.
+  if (apiKey === null) delete env.GEMINI_API_KEY;
+
   const result = spawnSync(process.execPath, [CLI, ...args], {
     encoding: "utf8",
-    env: {
-      ...process.env,
-      XDG_CONFIG_HOME: configHome,
-      GEMINI_API_KEY: "test-key-never-sent",
-    },
+    env,
   });
 
   return {

@@ -5,7 +5,7 @@
 // works from any folder.
 // Full derivation: docs/specs.md, "Implementation".
 
-import { runSearch, listModels } from "./gemini.js";
+import { runSearch, listModels, API_KEY_MISSING_MESSAGE } from "./gemini.js";
 import {
   CONFIG_PATH,
   findBackupLevelProblem,
@@ -205,7 +205,7 @@ async function main() {
       // Before listModels, so a typo costs no API call.
       allowFlags("all");
       requireNoArgs();
-      console.log(await listModels({ all: allFlag }));
+      console.log(await listModels({ all: allFlag, allOption: "--all" }));
       break;
 
     // With both set commands the respective other option is persisted too:
@@ -280,6 +280,12 @@ async function main() {
       // Without this check an empty argument - from an unset shell variable, say
       // - would go to the API as a query and cost tokens.
       if (query === "") fail("The query is empty.");
+
+      // An unset key is a usage error like a mistyped option, and "config"
+      // already reports it as one. Left to gemini.js it arrives at the catch
+      // below as a plain Error and prints a stack trace over the one line that
+      // says what to do - on the very first call of a fresh installation.
+      if (!process.env.GEMINI_API_KEY) fail(API_KEY_MISSING_MESSAGE);
 
       // Same pattern as in the MCP handler (index.js), and through the same
       // function: a flag applies to this call only, otherwise the stored default

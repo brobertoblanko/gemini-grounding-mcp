@@ -135,7 +135,7 @@ server.registerTool(
   },
   async ({ all }) => {
     try {
-      const text = await listModels({ all });
+      const text = await listModels({ all, allOption: "all: true" });
       return { content: [{ type: "text", text }] };
     } catch (error) {
       return {

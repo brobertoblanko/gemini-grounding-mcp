@@ -195,6 +195,25 @@ test("changes the saved backup's level without naming the model", () => {
   });
 });
 
+test("reports a missing API key without a stack trace", () => {
+  // The first call of a fresh installation, and the one error nobody caused by
+  // mistyping. The check sits in cli.js so it never reaches the catch there,
+  // which prints everything that is not a UsageError with its full stack.
+  const result = runCli(["what is an mcp server"], { apiKey: null });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /GEMINI_API_KEY is not set/);
+  assert.doesNotMatch(result.stderr, /^\s+at /m, "the message carries it, not a stack");
+});
+
+test("names the same missing key in config", () => {
+  // Same cause, same CLI - the two must not answer at different quality.
+  const result = runCli(["config"], { apiKey: null });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /API key: NOT SET/);
+});
+
 test("requires a backup model before its level can be set", () => {
   // A level without a model has nothing to refer to, and "off" no longer has one.
   // Both messages come from config.js and read the same over MCP; the check used

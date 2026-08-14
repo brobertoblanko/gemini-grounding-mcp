@@ -141,8 +141,11 @@ Unlike the MCP server, the CLI prints the full stack trace including the origina
 When testing, that is exactly what you want.
 A message like `ApiError: {"error":{"code":503, ...}}` tells you the request did not get through to Google, which is a different problem from a broken installation - and one you can do nothing about except try again later.
 
-A plain usage error (wrong argument, unknown option, empty query) prints only the one explanatory line, also with exit code 1.
+A plain usage error (wrong argument, unknown option, empty query, or an unset `GEMINI_API_KEY`) prints only the one explanatory line, also with exit code 1.
 Nobody needs a stack trace for a typo.
+
+The key is checked before the request rather than left to the API call, which is why it lands in this group and not among the errors above.
+Nothing has been sent at that point, the line already says what to do, and it is what a fresh installation runs into on its very first call.
 
 ## Checking the API key
 

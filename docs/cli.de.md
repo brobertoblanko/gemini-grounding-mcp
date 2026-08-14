@@ -141,8 +141,11 @@ Anders als der MCP-Server gibt die CLI den vollständigen Stacktrace samt Origin
 Beim Testen ist genau das erwünscht.
 Eine Meldung wie `ApiError: {"error":{"code":503, ...}}` sagt, dass die Anfrage nicht bei Google angekommen ist - ein anderes Problem als eine kaputte Installation, und eines, gegen das nichts hilft außer einem späteren Versuch.
 
-Ein reiner Bedienfehler (falsches Argument, unbekannte Option, leere Anfrage) gibt nur die eine erklärende Zeile aus, ebenfalls mit Exit-Code 1.
+Ein reiner Bedienfehler (falsches Argument, unbekannte Option, leere Anfrage oder ein nicht gesetztes `GEMINI_API_KEY`) gibt nur die eine erklärende Zeile aus, ebenfalls mit Exit-Code 1.
 Für einen Tippfehler braucht niemand einen Stacktrace.
+
+Der Key wird vor der Anfrage geprüft und nicht dem API-Aufruf überlassen; deshalb gehört er in diese Gruppe und nicht zu den Fehlern darüber.
+Zu diesem Zeitpunkt ist noch nichts abgeschickt, die Zeile sagt bereits, was zu tun ist, und es ist der Fehler, auf den eine frische Installation beim allerersten Aufruf trifft.
 
 ## Den API-Key prüfen
 
