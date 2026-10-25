@@ -1117,3 +1117,67 @@ Neither `ApiError` nor the successful `HttpResponse` carries an attempt count, a
 
 Counting them would mean wrapping the global `fetch` and propagating a per-call context through `AsyncLocalStorage`, because several `gemini-search` calls can run in parallel and a global counter would mix them up.
 That was judged out of proportion to a footnote, so the footer reports model, thinking level and token usage as before - and the possible extra seconds are documented here instead.
+
+## Weekly dependency update
+
+Dependabot only opens pull requests; nothing merges them on its own.
+Once a week, on Tuesday morning, `.github/workflows/weekly-update.yml` runs `scripts/weekly-update.js`, which tests the open ones against the live API and merges what passes.
+The workflow can also be started by hand, optionally as a dry run that tests and reports without merging and without a billed search.
+
+### Order and limit
+
+1. **GitHub Actions updates**, merged without a smoke test: they only change how CI runs and never reach the server.
+2. **All npm minor, patch and security updates together**, with one smoke test.
+3. **npm majors one at a time**, oldest first, with one smoke test each, so a broken major is attributable.
+
+A run uses at most three smoke tests (`MAX_SMOKE_TESTS`), and whatever is left waits for the following week.
+If nothing needed testing, main itself is tested once, which catches changes on Google's side such as a retired model or a moved alias.
+
+The grouping in `.github/dependabot.yml` is shaped for this order.
+Minor and patch updates form one group, majors deliberately none, so each major arrives as its own pull request.
+Security updates have a group of their own, because for npm they are the only path by which transitive dependencies are ever updated - version updates leave those alone.
+
+Majors are recognised the way `dependabot/fetch-metadata` does it: from the `update-type` lines of Dependabot's commit message, and where those are missing, as with security updates, from the versions in the `Bumps …` and `Updates …` lines.
+Below 1.0 a change of the second number counts as a major, as SemVer allows breaking changes there.
+A head commit without any of this was pushed by someone else and counts as a major, so it is tested on its own rather than slipped into the batch.
+
+### Test before merge
+
+Each candidate is merged locally onto the current main, and exactly that tree runs `npm ci`, `npm test` and the smoke test.
+GitHub's squash merge of a conflict-free pull request produces the same tree, so what was tested is what lands.
+A pull request that conflicts is skipped; Dependabot rebases it on its own and it comes up the following week.
+
+| Verdict | What happens |
+| --- | --- |
+| passed | merged |
+| broken | left open with the label `weekly-update-failed` and a comment linking the run; the run fails, so GitHub sends an e-mail |
+| unavailable | nothing is marked, the run stops and the following week tries again |
+
+"Unavailable" covers a smoke test that hit 408, 429, 5xx or a network error, and a failing `npm ci`: an overloaded Google or registry says nothing about the update.
+
+A failed pull request is skipped only while its head commit is unchanged - the comment records that commit.
+A new version or a rebase by Dependabot is therefore tried again without anyone having to remove the label, which matters because nobody may be watching for weeks.
+
+### Branch protection
+
+The required check is `Tests`, a job in `test.yml` that depends on the Node matrix and the Markdown lint.
+Matrix jobs report under their own names (`Node 22`, …), so a matrix alone never delivers a check called `Tests` - that mismatch kept every Dependabot pull request blocked from September 2026 until the job existed.
+The job runs with `if: always()`, because a skipped required check counts as passed.
+
+"Require branches to be up to date before merging" is off, deliberately.
+The weekly run merges with the workflow's `GITHUB_TOKEN`, and events caused by that token start no further workflow runs.
+After the first merge, the next pull request would need a fresh CI run that nothing could start.
+The test of the merged tree takes over that role.
+
+### The smoke test
+
+`scripts/smoke-test.js` (`npm run smoke`) checks the server the way Claude Code uses it, through the MCP protocol: handshake, tool list, `gemini-list-models`, one grounded search at thinking level `low`, and one request for a model that does not exist.
+The unit tests stop short of exactly this - they run without a key against stubbed responses, so an update that changes the shape of real responses or errors passes them.
+
+Only the search is billed.
+`models.list` is free, and the request for the missing model is rejected with 404 before execution, which makes the error path testable at no cost.
+On the Paid Tier the search comes out of the 5,000 free search requests per month shared by Gemini 3 and newer models; the tokens cost a fraction of a cent.
+
+The script prints check names and verdicts, never the answer text or the sources (invariant I4, see "Terms compliance"): GitHub keeps the CI log, so printing a Grounded Result there would write it to disk.
+The API key reaches the smoke test only.
+`npm ci` runs the install scripts of every dependency of the pull request under test, and they have no business seeing it.

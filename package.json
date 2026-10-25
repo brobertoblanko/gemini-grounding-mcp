@@ -48,7 +48,9 @@
   },
   "scripts": {
     "start": "node index.js",
-    "test": "node --test \"test/*.test.js\""
+    "test": "node --test \"test/*.test.js\"",
+    "smoke": "node scripts/smoke-test.js",
+    "lint:md": "npx --yes markdownlint-cli2@0.24.0"
   },
   "engines": {
     "node": ">=22"

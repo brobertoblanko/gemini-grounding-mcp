@@ -1,8 +1,9 @@
 version: 2
 
+# Dependabot only opens pull requests. Testing and merging happens once a week
+# in .github/workflows/weekly-update.yml, which is what the grouping below is
+# shaped for: minor and patch updates are tested together, majors one by one.
 updates:
-  # Weekly. Minor and patch updates are auto-merged by
-  # .github/workflows/auto-merge.yml, major updates stay open for manual review.
   - package-ecosystem: npm
     directory: /
     schedule:
@@ -12,17 +13,26 @@ updates:
       prefix: deps
     groups:
       minor-patch:
-        update-types:
-          - "minor"
-          - "patch"
-      major:
-        update-types:
-          - "major"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      # Transitive dependencies are only ever updated by security updates -
+      # version updates leave them alone for npm. Grouped as well, so that a
+      # week's fixes arrive as one pull request instead of one each.
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    # No group for majors on purpose: each one is its own pull request,
+    # because the weekly update merges and tests them one at a time.
 
-  # GitHub Actions: monthly, auto-merged - they carry no runtime risk.
+  # Monthly, in one pull request. Merged without a smoke test - actions only
+  # change how CI runs and never reach the server.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
     commit-message:
       prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]

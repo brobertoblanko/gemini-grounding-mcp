@@ -13,6 +13,9 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # A normal run takes under a minute; without a limit a hung one would run
+    # for GitHub's default of six hours.
+    timeout-minutes: 10
 
     strategy:
       # One failing version should not hide the result of the others.
@@ -46,18 +49,34 @@ jobs:
       # regression.
       - run: npm test
 
+  markdown:
+    name: Markdown
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # Via npx with a pinned version rather than as a devDependency: its
+      # dependency katex carries an advisory that micromark-extension-math
+      # cannot take the fix for, which would leave a permanently open alert.
+      - run: npm run lint:md
+
   # Branch protection requires a check named "Tests", while the matrix jobs
   # report as "Node <version>" - without this job the required check never
-  # arrives and every auto-merge waits forever. It gives the whole matrix one
-  # stable name, so changing the matrix never touches the protection rule.
-  # always() is load-bearing: a skipped required check counts as passed, so
-  # without it a failed matrix would let the merge through.
+  # arrives. It gives all jobs above one stable name, so changing them never
+  # touches the protection rule. always() is load-bearing: a skipped required
+  # check counts as passed, so without it a failed job would let the merge
+  # through.
   tests:
     name: Tests
-    needs: test
+    needs: [test, markdown]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - run: test "$RESULT" = success
+      - run: test "$TEST" = success && test "$MARKDOWN" = success
         env:
-          RESULT: ${{ needs.test.result }}
+          TEST: ${{ needs.test.result }}
+          MARKDOWN: ${{ needs.markdown.result }}
