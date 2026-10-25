@@ -1356,3 +1356,87 @@ Weder `ApiError` noch die erfolgreiche `HttpResponse` trägt eine Versuchszahl, 
 
 Sie zu zählen hieße, das globale `fetch` zu umhüllen und einen Kontext pro Aufruf über `AsyncLocalStorage` zu propagieren, denn mehrere `gemini-search`-Aufrufe können parallel laufen und ein globaler Zähler würde sie vermischen.
 Das stand nicht im Verhältnis zu einer Fußnote, deshalb weist der Footer weiterhin Modell, Thinking-Level und Tokenverbrauch aus - und die möglichen Zusatzsekunden stehen stattdessen hier.
+
+## Wöchentliches Abhängigkeits-Update
+
+Dependabot öffnet nur Pull Requests; nichts mergt sie von selbst.
+Einmal pro Woche, am Dienstagmorgen, führt `.github/workflows/weekly-update.yml` das Skript `scripts/weekly-update.js` aus, das die offenen gegen die echte API testet und mergt, was besteht.
+Der Workflow lässt sich auch von Hand starten, wahlweise als Trockenlauf, der testet und berichtet, ohne zu mergen und ohne bezahlte Suche.
+
+### Reihenfolge und Limit
+
+1. **Updates der GitHub Actions**, gemergt ohne Smoke-Test: Sie ändern nur, wie die CI läuft, und erreichen den Server nie.
+2. **Alle npm-Minor-, Patch- und Sicherheitsupdates gemeinsam**, mit einem Smoke-Test.
+3. **npm-Majors einzeln**, die ältesten zuerst, mit je einem Smoke-Test, damit ein kaputter Major zuzuordnen ist.
+
+Ein Lauf verbraucht höchstens drei Smoke-Tests (`MAX_SMOKE_TESTS`), alles Übrige wartet auf die folgende Woche.
+Gab es nichts zu testen, wird main selbst einmal getestet; das fängt Änderungen auf Googles Seite ab, etwa ein abgeschaltetes Modell oder einen umgehängten Alias.
+
+Die Gruppierung in `.github/dependabot.yml` ist auf diese Reihenfolge zugeschnitten.
+Minor- und Patch-Updates bilden eine Gruppe, Majors bewusst keine, sodass jeder Major als eigener Pull Request kommt.
+Sicherheitsupdates haben eine eigene Gruppe, weil sie bei npm der einzige Weg sind, auf dem transitive Abhängigkeiten überhaupt aktualisiert werden - Versionsupdates lassen diese unberührt.
+
+Majors werden so erkannt wie bei `dependabot/fetch-metadata`: an den `update-type`-Zeilen in Dependabots Commit-Message und, wo diese fehlen wie bei Sicherheitsupdates, an den Versionen in den Zeilen `Bumps …` und `Updates …`.
+Unter 1.0 zählt eine Änderung der zweiten Zahl als Major, weil SemVer dort brechende Änderungen erlaubt.
+Ein Head-Commit ohne all das stammt von jemand anderem und zählt als Major; er wird also einzeln getestet, statt in das Sammelpaket zu rutschen.
+
+### Erst testen, dann mergen
+
+Die Kandidaten werden lokal in der Reihenfolge oben auf den aktuellen Stand von main gestapelt, und jeder Schritt durchläuft `npm ci`, `npm test` und den Smoke-Test auf genau diesem Stand.
+GitHubs Squash-Merge eines konfliktfreien Pull Requests erzeugt denselben Stand, und `--match-head-commit` lehnt einen Pull Request ab, dessen Head sich seither bewegt hat; was getestet wurde, ist also das, was landet.
+Ein Pull Request mit Konflikt wird übersprungen; Dependabot rebased ihn von selbst, und er kommt in der folgenden Woche dran.
+Der erste Fehlschlag beendet das Testen, weil jeder spätere Schritt darauf aufbauen würde.
+
+| Ergebnis | Was passiert |
+| --- | --- |
+| bestanden | gemergt |
+| kaputt | bleibt offen mit dem Label `weekly-update-failed` und einem Kommentar mit Link auf den Lauf; der Lauf schlägt fehl, GitHub schickt also eine E-Mail |
+| nicht erreichbar | nichts wird markiert, der Lauf stoppt, die folgende Woche versucht es erneut |
+
+„Nicht erreichbar" umfasst einen Smoke-Test, der auf 408, 429, 5xx oder einen Netzwerkfehler traf, sowie ein scheiterndes `npm ci`: Ein überlastetes Google oder eine überlastete Registry sagt nichts über das Update aus.
+
+Ein gescheiterter Pull Request wird nur übersprungen, solange sein Head-Commit unverändert ist - der Kommentar hält diesen Commit fest.
+Eine neue Version oder ein Rebase durch Dependabot wird deshalb erneut versucht, ohne dass jemand das Label entfernen muss; das zählt, weil womöglich wochenlang niemand hinschaut.
+
+### Zwei Jobs als Sicherheitsgrenze
+
+Testen führt den Code der getesteten Updates aus - `npm ci`, `npm test` und der Smoke-Test tun das alle -, deshalb darf der testende Job nie ein Token halten, das ins Repository schreiben kann.
+Das Token aus der Umgebung eines Kindprozesses zu entfernen, genügte nicht, weil unter Linux ein Kindprozess die Umgebung seines Elternprozesses aus `/proc` lesen kann.
+Der Workflow teilt den Lauf deshalb auf:
+
+| Job | Token | Führt Abhängigkeitscode aus | Tut |
+| --- | --- | --- | --- |
+| `test` | nur lesend | ja | stapelt, testet, schreibt einen Plan, was bestanden hat und was gescheitert ist |
+| `merge` | schreibend | nein - kein `npm ci`, nur Node-Bordmittel | mergt und markiert nach dem Plan |
+
+Der `test`-Job checkt ohne gespeicherte Zugangsdaten aus (`persist-credentials: false`), weil getesteter Code sie sonst aus `.git/config` lesen könnte.
+`npm ci` läuft mit `--ignore-scripts`: Keine Abhängigkeit braucht ihr Installationsskript zur Laufzeit - das einzige vorhandene, in `protobufjs`, prüft nur das eigene Kommandozeilenwerkzeug.
+
+Der Plan stammt aus dem Job, der den getesteten Code ausgeführt hat, deshalb prüft `merge` ihn, statt ihm zu vertrauen.
+Jeder Eintrag muss ein offener Pull Request von Dependabot sein, dessen Head noch der getestete Commit ist.
+Schlimmstenfalls mergt ein manipulierter Plan ein echtes Dependabot-Update ungetestet, und die Branch-Protection verlangt trotzdem den eigenen grünen `Tests`-Check dieses Pull Requests.
+
+### Branch-Protection
+
+Der Pflicht-Check heißt `Tests`, ein Job in `test.yml`, der von der Node-Matrix und dem Markdown-Lint abhängt.
+Matrix-Jobs melden sich unter eigenem Namen (`Node 22`, …), eine Matrix allein liefert also nie einen Check namens `Tests` - genau diese Abweichung hat ab September 2026 jeden Dependabot-Pull-Request blockiert, bis es den Job gab.
+Der Job läuft mit `if: always()`, weil ein übersprungener Pflicht-Check als bestanden gilt.
+
+„Require branches to be up to date before merging" ist bewusst ausgeschaltet.
+Der wöchentliche Lauf mergt mit dem `GITHUB_TOKEN` des Workflows, und Ereignisse dieses Tokens starten keine weiteren Workflow-Läufe.
+Nach dem ersten Merge bräuchte der nächste Pull Request einen frischen CI-Lauf, den nichts starten könnte.
+Der Test des zusammengeführten Stands übernimmt diese Rolle.
+
+### Der Smoke-Test
+
+`scripts/smoke-test.js` (`npm run smoke`) prüft den Server so, wie Claude Code ihn nutzt, über das MCP-Protokoll: Handshake, Tool-Liste, `gemini-list-models`, eine grounded Suche mit Thinking-Level `low` und eine Anfrage an ein Modell, das es nicht gibt.
+Genau hier hören die Unit-Tests auf - sie laufen ohne Key gegen nachgebaute Antworten, ein Update, das die Form echter Antworten oder Fehler ändert, besteht sie also.
+
+Nur die Suche wird abgerechnet.
+`models.list` ist kostenlos, und die Anfrage an das fehlende Modell wird vor der Ausführung mit 404 abgelehnt; das macht den Fehlerpfad kostenlos prüfbar.
+Im Paid Tier kommt die Suche aus den 5.000 kostenlosen Suchanfragen pro Monat, die sich die Modelle ab Gemini 3 teilen; die Tokens kosten einen Bruchteil eines Cents.
+
+Das Skript gibt Prüfnamen und Ergebnisse aus, nie den Antworttext oder die Quellen (Invariante I4, siehe „Terms-Konformität"): GitHub bewahrt das CI-Log auf, ein dort ausgegebenes Grounded Result landete also auf der Festplatte.
+Der Gemini-Key ist das eine Geheimnis, das der getestete Code zwangsläufig sieht, weil der Smoke-Test genau diesen Code gegen die API laufen lässt.
+Er bekommt deshalb einen eigenen Key, beschränkt auf die Generative Language API, statt des Keys für die alltägliche Suche.
+`npm ci` und `npm test` erhalten eine Umgebung ganz ohne Token oder Key.

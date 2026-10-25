@@ -13,14 +13,18 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # A normal run takes under a minute; without a limit a hung one would run
+    # for GitHub's default of six hours.
+    timeout-minutes: 10
 
     strategy:
       # One failing version should not hide the result of the others.
       fail-fast: false
       matrix:
         # 22 is the lower bound promised by "engines" in package.json and is in
-        # Maintenance LTS until April 2027; 24 is Active LTS.
-        node-version: [22, 24]
+        # Maintenance LTS until April 2027; 24 is in Maintenance LTS until
+        # April 2028; 26 is Active LTS from 2026-10-28.
+        node-version: [22, 24, 26]
 
     name: Node ${{ matrix.node-version }}
 
@@ -44,3 +48,35 @@ jobs:
       # if that ever changed. A run that suddenly needed a key would be a
       # regression.
       - run: npm test
+
+  markdown:
+    name: Markdown
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # Via npx with a pinned version rather than as a devDependency: its
+      # dependency katex carries an advisory that micromark-extension-math
+      # cannot take the fix for, which would leave a permanently open alert.
+      - run: npm run lint:md
+
+  # Branch protection requires a check named "Tests", while the matrix jobs
+  # report as "Node <version>" - without this job the required check never
+  # arrives. It gives all jobs above one stable name, so changing them never
+  # touches the protection rule. always() is load-bearing: a skipped required
+  # check counts as passed, so without it a failed job would let the merge
+  # through.
+  tests:
+    name: Tests
+    needs: [test, markdown]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: test "$TEST" = success && test "$MARKDOWN" = success
+        env:
+          TEST: ${{ needs.test.result }}
+          MARKDOWN: ${{ needs.markdown.result }}
