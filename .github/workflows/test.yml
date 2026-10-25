@@ -19,8 +19,9 @@ jobs:
       fail-fast: false
       matrix:
         # 22 is the lower bound promised by "engines" in package.json and is in
-        # Maintenance LTS until April 2027; 24 is Active LTS.
-        node-version: [22, 24]
+        # Maintenance LTS until April 2027; 24 is in Maintenance LTS until
+        # April 2028; 26 is Active LTS from 2026-10-28.
+        node-version: [22, 24, 26]
 
     name: Node ${{ matrix.node-version }}
 
@@ -44,3 +45,19 @@ jobs:
       # if that ever changed. A run that suddenly needed a key would be a
       # regression.
       - run: npm test
+
+  # Branch protection requires a check named "Tests", while the matrix jobs
+  # report as "Node <version>" - without this job the required check never
+  # arrives and every auto-merge waits forever. It gives the whole matrix one
+  # stable name, so changing the matrix never touches the protection rule.
+  # always() is load-bearing: a skipped required check counts as passed, so
+  # without it a failed matrix would let the merge through.
+  tests:
+    name: Tests
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "$RESULT" = success
+        env:
+          RESULT: ${{ needs.test.result }}

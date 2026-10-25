@@ -1,8 +1,8 @@
 version: 2
 
 updates:
-  # Minor and patch updates: weekly, auto-merged via CI workflow.
-  # Major updates: monthly, kept open for manual review.
+  # Weekly. Minor and patch updates are auto-merged by
+  # .github/workflows/auto-merge.yml, major updates stay open for manual review.
   - package-ecosystem: npm
     directory: /
     schedule:
