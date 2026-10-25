@@ -13,11 +13,8 @@ on:
         type: boolean
         default: false
 
-permissions:
-  contents: write
-  pull-requests: write
-  # Labels and comments on pull requests go through the issues API.
-  issues: write
+# Nothing by default; each job asks for what it needs.
+permissions: {}
 
 # Two overlapping runs would each spend their own smoke tests and merge into
 # each other's way; the second one waits instead.
@@ -26,15 +23,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  update:
+  # Runs the code of the updates under test, so it gets a read-only token and
+  # the Gemini key - never a token that can write. Why the jobs are split, the
+  # order and the limit of three smoke tests: see scripts/weekly-update.js.
+  test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
 
     steps:
-      # Full history: the script merges pull request branches locally.
+      # Full history for the local test merges. No stored credentials: the
+      # repository is public, fetching needs none, and code under test could
+      # read them from .git/config.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
@@ -45,9 +53,39 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      # The order, the limit of three smoke tests and why the key is withheld
-      # from npm ci: see scripts/weekly-update.js.
-      - run: node scripts/weekly-update.js ${{ inputs.dry-run && '--dry-run' || '' }}
+      - run: node scripts/weekly-update.js test ${{ inputs.dry-run && '--dry-run' || '' }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+      - id: plan
+        run: echo "plan=$(cat weekly-update-plan.json)" >> "$GITHUB_OUTPUT"
+
+  # Holds the write token and runs no dependency code: no npm ci, Node
+  # built-ins only. It checks the plan instead of trusting it.
+  merge:
+    needs: test
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      # Labels and comments on pull requests go through the issues API.
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - run: |
+          printf '%s' "$PLAN" > "$RUNNER_TEMP/plan.json"
+          node scripts/weekly-update.js merge "$RUNNER_TEMP/plan.json"
+        env:
+          PLAN: ${{ needs.test.outputs.plan }}
+          GH_TOKEN: ${{ github.token }}

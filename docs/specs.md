@@ -1143,9 +1143,10 @@ A head commit without any of this was pushed by someone else and counts as a maj
 
 ### Test before merge
 
-Each candidate is merged locally onto the current main, and exactly that tree runs `npm ci`, `npm test` and the smoke test.
-GitHub's squash merge of a conflict-free pull request produces the same tree, so what was tested is what lands.
+The candidates are stacked locally onto the current main in the order above, and each step runs `npm ci`, `npm test` and the smoke test on exactly that tree.
+GitHub's squash merge of a conflict-free pull request produces the same tree, and `--match-head-commit` refuses a pull request whose head moved since, so what was tested is what lands.
 A pull request that conflicts is skipped; Dependabot rebases it on its own and it comes up the following week.
+The first failure ends the testing, because every later step would build on it.
 
 | Verdict | What happens |
 | --- | --- |
@@ -1157,6 +1158,24 @@ A pull request that conflicts is skipped; Dependabot rebases it on its own and i
 
 A failed pull request is skipped only while its head commit is unchanged - the comment records that commit.
 A new version or a rebase by Dependabot is therefore tried again without anyone having to remove the label, which matters because nobody may be watching for weeks.
+
+### Two jobs as a security boundary
+
+Testing executes the code of the updates under test - `npm ci`, `npm test` and the smoke test all run it - so the job that tests must never hold a token that can write to the repository.
+Removing the token from a child process's environment would not be enough, because on Linux a child can read its parent's environment from `/proc`.
+The workflow therefore splits the run:
+
+| Job | Token | Runs dependency code | Does |
+| --- | --- | --- | --- |
+| `test` | read-only | yes | stacks, tests, writes a plan of what passed and what failed |
+| `merge` | write | no - no `npm ci`, Node built-ins only | merges and marks according to the plan |
+
+The `test` job checks out without stored credentials (`persist-credentials: false`), since code under test could read them from `.git/config`.
+`npm ci` runs with `--ignore-scripts`: no dependency needs its install script at runtime - the one present, in `protobufjs`, only checks its own command-line tooling.
+
+The plan comes from the job that ran the code under test, so `merge` checks it rather than trusting it.
+Each entry must be an open pull request by Dependabot whose head is still the tested commit.
+At worst a tampered plan merges a genuine Dependabot update untested, and branch protection still demands that pull request's own green `Tests` check.
 
 ### Branch protection
 
@@ -1179,5 +1198,6 @@ Only the search is billed.
 On the Paid Tier the search comes out of the 5,000 free search requests per month shared by Gemini 3 and newer models; the tokens cost a fraction of a cent.
 
 The script prints check names and verdicts, never the answer text or the sources (invariant I4, see "Terms compliance"): GitHub keeps the CI log, so printing a Grounded Result there would write it to disk.
-The API key reaches the smoke test only.
-`npm ci` runs the install scripts of every dependency of the pull request under test, and they have no business seeing it.
+The Gemini key is the one secret the code under test necessarily sees, since the smoke test runs that code against the API.
+It therefore gets a key of its own, restricted to the Generative Language API, rather than the key used for everyday searches.
+`npm ci` and `npm test` get an environment without any token or key.

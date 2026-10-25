@@ -2,8 +2,17 @@
 /**
  * The weekly dependency update: merges the open Dependabot pull requests that
  * pass a real end-to-end test, with a hard cap on billed searches. Run by
- * .github/workflows/weekly-update.yml; needs git, gh and GH_TOKEN, plus
- * GEMINI_API_KEY for the smoke test.
+ * .github/workflows/weekly-update.yml in two jobs, one per phase:
+ *
+ *   node scripts/weekly-update.js test [--dry-run]   read-only token
+ *   node scripts/weekly-update.js merge <plan.json>  write token
+ *
+ * The split is the security boundary. "test" executes the code of the updates
+ * under test - npm ci, npm test and the smoke test all run it - so it must
+ * never hold a token that can write to the repository. Stripping the token
+ * from a child's environment would not be enough: on Linux a child can read
+ * its parent's environment from /proc. "merge" holds the write token and runs
+ * no dependency code at all - Node built-ins only, no npm ci.
  *
  * Order, and why:
  * 1. GitHub Actions updates - merged without a smoke test. They only change
@@ -15,23 +24,23 @@
  * testing, main itself is tested once, which catches changes on Google's side
  * such as a retired model.
  *
- * Test before merge: each candidate is merged locally onto the current main
- * and exactly that tree is tested - unit tests, then the smoke test. GitHub's
- * squash merge of a conflict-free pull request produces the same tree. A pull
+ * Test before merge: the "test" phase stacks the candidates locally onto main
+ * in exactly the order "merge" applies them, and tests each step. GitHub's
+ * squash merge of a conflict-free pull request produces the same tree, and
+ * --match-head-commit refuses a pull request whose head moved since. A pull
  * request that conflicts is skipped; Dependabot rebases it on its own and it
  * comes up next week.
  *
  * Merging uses the workflow's GITHUB_TOKEN, and events caused by that token
  * start no further workflow runs. Branch protection therefore must not require
  * branches to be up to date: after the first merge, the next pull request
- * would need a fresh CI run that nothing could start. The test of the merged
- * tree here takes over that role.
+ * would need a fresh CI run that nothing could start. The test of the stacked
+ * tree takes over that role.
  *
- * Node built-ins only: every npm ci replaces node_modules under this script.
  * Full derivation: docs/specs.md, "Weekly dependency update".
  */
 import { spawnSync } from "node:child_process";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
 /** The hard cap on billed searches per run - each smoke test costs one. */
 const MAX_SMOKE_TESTS = 3;
@@ -52,17 +61,7 @@ const FAILED_MARKER = "weekly-update failed at";
 /** EXIT_UNAVAILABLE in scripts/smoke-test.js, which cannot be imported: it runs on import. */
 const SMOKE_UNAVAILABLE = 75;
 
-const DRY_RUN = process.argv.includes("--dry-run");
-
-// The key reaches the smoke test only. npm ci runs the install scripts of
-// every dependency of the pull request under test, and they have no business
-// seeing it; test/helpers.js does not need it either.
-const { GEMINI_API_KEY: _key, ...ENV_WITHOUT_KEY } = process.env;
-
 const report = [];
-let smokeTests = 0;
-let verifications = 0;
-let failed = false;
 
 function log(line) {
   console.log(line);
@@ -91,8 +90,25 @@ function stream(cmd, args, env) {
 const gh = (args) => capture("gh", args).stdout;
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const title = (pr) => `#${pr.number} ${pr.title}`;
+const planEntry = ({ number, title, headRefOid }) => ({ number, title, headRefOid });
+const numbers = (prs) => prs.map((pr) => `#${pr.number}`).join(", ");
 
-const repo = () => process.env.GITHUB_REPOSITORY ?? gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"]).trim();
+const repo = () =>
+  process.env.GITHUB_REPOSITORY ??
+  gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"]).trim();
+
+// --- Phase "test" ------------------------------------------------------------
+
+/**
+ * The environment for the code under test. Every token goes, read-only or not
+ * - least privilege costs nothing here. The Gemini key goes to the smoke test
+ * alone, which cannot work without it; npm ci and npm test never see it.
+ */
+const isCredential = (name) => /TOKEN|SECRET|PASSWORD|_KEY$/i.test(name);
+const ENV_UNTRUSTED = Object.fromEntries(
+  Object.entries(process.env).filter(([name]) => !isCredential(name)),
+);
+const ENV_SMOKE = { ...ENV_UNTRUSTED, GEMINI_API_KEY: process.env.GEMINI_API_KEY ?? "" };
 
 function ciGreen(pr) {
   return (pr.statusCheckRollup ?? []).some(
@@ -155,16 +171,17 @@ function listCandidates() {
   return { actions, batch, majors };
 }
 
-/** Checks out current main with the given pull requests merged on top. */
-function prepare(prs) {
-  const refs = prs.map((pr) => `+refs/heads/${pr.headRefName}:refs/remotes/origin/${pr.headRefName}`);
-  capture("git", ["fetch", "--quiet", "origin", "+refs/heads/main:refs/remotes/origin/main", ...refs]);
-  capture("git", ["checkout", "--quiet", "--force", "--detach", "origin/main"]);
+/**
+ * Merges the given pull requests onto the tree checked out right now - which is
+ * main plus everything accepted so far, the same stack "merge" builds on GitHub.
+ */
+function stack(prs) {
   const included = [];
   for (const pr of prs) {
+    capture("git", ["fetch", "--quiet", "origin", `+refs/heads/${pr.headRefName}:refs/remotes/origin/${pr.headRefName}`]);
     const merged = capture(
       "git",
-      ["merge", "--no-ff", "--no-edit", "-m", `weekly update: ${title(pr)}`, `origin/${pr.headRefName}`],
+      ["merge", "--no-ff", "--no-edit", "-m", `weekly update: ${title(pr)}`, pr.headRefOid],
       { check: false },
     );
     if (merged.status === 0) {
@@ -177,117 +194,178 @@ function prepare(prs) {
   return included;
 }
 
-/** "passed", "broken" or "unavailable" for the tree currently checked out. */
-function verify() {
-  verifications++;
-  // A failing install is far more likely the registry than the update: the
-  // pull request's own CI installed the same lockfile successfully.
-  if (stream("npm", ["ci", "--no-audit", "--no-fund"], ENV_WITHOUT_KEY) !== 0) return "unavailable";
-  if (stream("npm", ["test"], ENV_WITHOUT_KEY) !== 0) return "broken";
-  if (DRY_RUN) {
-    log("  (dry run: smoke test skipped)");
-    return "passed";
+function testPhase(dryRun) {
+  if (capture("git", ["status", "--porcelain"]).stdout.trim()) {
+    throw new Error("The working tree has uncommitted changes; this script checks out other commits.");
   }
-  smokeTests++;
-  const status = stream(process.execPath, ["scripts/smoke-test.js"], process.env);
-  if (status === 0) return "passed";
-  return status === SMOKE_UNAVAILABLE ? "unavailable" : "broken";
+  capture("git", ["fetch", "--quiet", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
+  capture("git", ["checkout", "--quiet", "--force", "--detach", "origin/main"]);
+
+  const plan = { merge: [], failed: [] };
+  let smokeTests = 0;
+  let verifications = 0;
+
+  /** "passed", "broken" or "unavailable" for the tree checked out right now. */
+  function verify() {
+    verifications++;
+    // --ignore-scripts: no dependency needs its install script at runtime -
+    // protobufjs's postinstall only checks its own CLI tooling - and none
+    // should run code before the tests even start. A failing install is far
+    // more likely the registry than the update: the pull request's own CI
+    // installed the same lockfile successfully.
+    if (stream("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], ENV_UNTRUSTED) !== 0) {
+      return "unavailable";
+    }
+    if (stream("npm", ["test"], ENV_UNTRUSTED) !== 0) return "broken";
+    if (dryRun) {
+      log("  (dry run: smoke test skipped)");
+      return "passed";
+    }
+    smokeTests++;
+    const status = stream(process.execPath, ["scripts/smoke-test.js"], ENV_SMOKE);
+    if (status === 0) return "passed";
+    return status === SMOKE_UNAVAILABLE ? "unavailable" : "broken";
+  }
+
+  /** Records the verdict; false stops the phase - later steps would build on a broken one. */
+  function accept(prs, verdict) {
+    if (verdict === "passed") {
+      prs.forEach((pr) => log(`- passed ${title(pr)}`));
+      plan.merge.push(...prs.map(planEntry));
+      return true;
+    }
+    if (verdict === "unavailable") {
+      log("- stopped: the API or the registry was unavailable, nothing marked - next week tries again");
+    } else {
+      prs.forEach((pr) => log(`- FAILED ${title(pr)}`));
+      plan.failed.push(...prs.map(planEntry));
+    }
+    return false;
+  }
+
+  const { actions, batch, majors } = listCandidates();
+
+  // Stacked first, so the npm tests below run on top of them as well.
+  for (const pr of stack(actions)) {
+    log(`- accepted without smoke test (GitHub Actions only) ${title(pr)}`);
+    plan.merge.push(planEntry(pr));
+  }
+
+  let stopped = false;
+  if (batch.length > 0) {
+    log(`Minor, patch and security updates: ${numbers(batch)}`);
+    const included = stack(batch);
+    if (included.length > 0) stopped = !accept(included, verify());
+  }
+
+  for (const [index, pr] of majors.entries()) {
+    if (stopped) break;
+    if (!dryRun && smokeTests >= MAX_SMOKE_TESTS) {
+      log(`Limit of ${MAX_SMOKE_TESTS} smoke tests reached, waiting for next week: ${numbers(majors.slice(index))}`);
+      break;
+    }
+    log(`Major update: ${title(pr)}`);
+    if (stack([pr]).length > 0) stopped = !accept([pr], verify());
+  }
+
+  if (verifications === 0) {
+    log("Nothing to test - testing main against the live API");
+    capture("git", ["checkout", "--quiet", "--force", "--detach", "origin/main"]);
+    const verdict = verify();
+    if (verdict === "broken") plan.mainBroken = true;
+    log({ passed: "- main works", broken: "- FAILED: main itself no longer works against the live API" }[verdict] ??
+      "- the API or the registry was unavailable");
+  }
+
+  log(`Smoke tests used: ${smokeTests} of ${MAX_SMOKE_TESTS}`);
+  return plan;
 }
 
+// --- Phase "merge" -----------------------------------------------------------
+
 function merge(pr) {
-  if (DRY_RUN) {
-    log(`- would merge ${title(pr)}`);
-    return;
-  }
   // GitHub computes mergeability lazily after a push to main, so a merge
   // right after the previous one can be refused for a moment.
   let error = "";
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const result = capture("gh", ["pr", "merge", String(pr.number), "--squash"], { check: false });
+    const result = capture(
+      "gh",
+      ["pr", "merge", String(pr.number), "--squash", "--match-head-commit", pr.headRefOid],
+      { check: false },
+    );
     if (result.status === 0) {
       log(`- merged ${title(pr)}`);
-      return;
+      return true;
     }
     error = result.stderr.trim();
     sleep(15_000);
   }
-  log(`- tested, but GitHub refused to merge ${title(pr)}: ${error}`);
+  log(`- GitHub refused to merge ${title(pr)}, stopping: ${error}`);
+  return false;
 }
 
 function markFailed(pr) {
-  log(`- FAILED ${title(pr)}: left open`);
-  if (DRY_RUN) return;
   const run = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
   capture("gh", ["label", "create", FAILED_LABEL, "--color", "B60205", "--force",
     "--description", "The weekly update tested this pull request and it failed"]);
   capture("gh", ["pr", "edit", String(pr.number), "--add-label", FAILED_LABEL]);
   capture("gh", ["pr", "comment", String(pr.number), "--body",
-    `The weekly update merged this onto main and the tests failed, so it was not merged: ${run}\n\n` +
+    `The weekly update tested this on top of main and it failed, so it was not merged: ${run}\n\n` +
       "It is tried again as soon as Dependabot pushes a new commit here.\n\n" +
       `<!-- ${FAILED_MARKER} ${pr.headRefOid} -->`]);
+  log(`- marked ${title(pr)} as failed, left open`);
 }
 
-/** Tests the tree prepared for prs and acts on the verdict; false stops the run. */
-function testAndMerge(prs) {
-  const verdict = verify();
-  if (verdict === "passed") {
-    prs.forEach(merge);
-    return true;
-  }
-  if (verdict === "unavailable") {
-    log("- stopped: the API or the registry was unavailable, nothing marked - next week tries again");
-    return false;
-  }
-  failed = true;
-  prs.forEach(markFailed);
-  return false;
+/**
+ * The plan comes from the job that ran the code under test, so it is checked
+ * rather than trusted: whatever wrote it could have written anything. Only an
+ * open Dependabot pull request whose head is still the tested commit passes -
+ * at worst a tampered plan merges a genuine Dependabot update untested, and
+ * branch protection still demands its own green "Tests" check.
+ */
+function isGenuine(pr) {
+  if (!Number.isInteger(pr.number) || !/^[0-9a-f]{40}$/.test(pr.headRefOid)) return false;
+  const live = JSON.parse(gh(["pr", "view", String(pr.number), "--json", "state,author,headRefOid"]));
+  return live.state === "OPEN" && live.author?.login === "app/dependabot" && live.headRefOid === pr.headRefOid;
 }
 
-function run() {
-  if (capture("git", ["status", "--porcelain"]).stdout.trim()) {
-    throw new Error("The working tree has uncommitted changes; this script checks out other commits.");
-  }
-  const { actions, batch, majors } = listCandidates();
-
-  actions.forEach(merge);
-
-  if (batch.length > 0) {
-    log(`Minor, patch and security updates: ${batch.map((pr) => `#${pr.number}`).join(", ")}`);
-    const included = prepare(batch);
-    if (included.length > 0 && !testAndMerge(included)) return;
-  }
-
-  for (const [index, pr] of majors.entries()) {
-    if (!DRY_RUN && smokeTests >= MAX_SMOKE_TESTS) {
-      log(`Limit of ${MAX_SMOKE_TESTS} smoke tests reached, waiting for next week: ` +
-        majors.slice(index).map((p) => `#${p.number}`).join(", "));
-      return;
+/** Returns whether the run counts as failed. */
+function mergePhase(plan) {
+  // In the tested order: every step was tested on top of the ones before it,
+  // so after a refused merge the rest no longer matches what was tested.
+  for (const pr of plan.merge) {
+    if (!isGenuine(pr)) {
+      log(`- #${pr.number} is not the tested Dependabot pull request any more, stopping`);
+      return true;
     }
-    log(`Major update: ${title(pr)}`);
-    if (prepare([pr]).length > 0 && !testAndMerge([pr])) return;
+    if (!merge(pr)) return true;
   }
-
-  if (verifications === 0) {
-    log("Nothing to merge - testing main against the live API");
-    prepare([]);
-    const verdict = verify();
-    if (verdict === "broken") {
-      failed = true;
-      log("- FAILED: main itself no longer works against the live API");
-    } else {
-      log(verdict === "passed" ? "- main works" : "- the API or the registry was unavailable");
-    }
-  }
+  plan.failed.filter(isGenuine).forEach(markFailed);
+  return plan.failed.length > 0 || Boolean(plan.mainBroken);
 }
 
+// --- Entry point -------------------------------------------------------------
+
+const [phase, argument] = process.argv.slice(2);
+let failed = false;
 try {
-  log(DRY_RUN ? "Weekly update (dry run)" : "Weekly update");
-  run();
+  if (phase === "test") {
+    const dryRun = argument === "--dry-run";
+    log(dryRun ? "Weekly update - test (dry run)" : "Weekly update - test");
+    const plan = testPhase(dryRun);
+    writeFileSync("weekly-update-plan.json", JSON.stringify(plan));
+    // A dry run has no merge phase to turn failures into a red run.
+    failed = dryRun && (plan.failed.length > 0 || Boolean(plan.mainBroken));
+  } else if (phase === "merge") {
+    log("Weekly update - merge");
+    failed = mergePhase(JSON.parse(readFileSync(argument, "utf8")));
+  } else {
+    throw new Error('Usage: weekly-update.js test [--dry-run] | merge <plan.json>');
+  }
 } catch (error) {
   failed = true;
   log(`- ERROR: ${error.message}`);
 }
-log(`Smoke tests used: ${smokeTests} of ${MAX_SMOKE_TESTS}`);
 if (process.env.GITHUB_STEP_SUMMARY) {
   appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${report.join("\n")}\n`);
 }

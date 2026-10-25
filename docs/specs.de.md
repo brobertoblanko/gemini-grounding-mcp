@@ -1382,9 +1382,10 @@ Ein Head-Commit ohne all das stammt von jemand anderem und zählt als Major; er 
 
 ### Erst testen, dann mergen
 
-Jeder Kandidat wird lokal auf den aktuellen Stand von main gemergt, und genau dieser Stand durchläuft `npm ci`, `npm test` und den Smoke-Test.
-GitHubs Squash-Merge eines konfliktfreien Pull Requests erzeugt denselben Stand; was getestet wurde, ist also das, was landet.
+Die Kandidaten werden lokal in der Reihenfolge oben auf den aktuellen Stand von main gestapelt, und jeder Schritt durchläuft `npm ci`, `npm test` und den Smoke-Test auf genau diesem Stand.
+GitHubs Squash-Merge eines konfliktfreien Pull Requests erzeugt denselben Stand, und `--match-head-commit` lehnt einen Pull Request ab, dessen Head sich seither bewegt hat; was getestet wurde, ist also das, was landet.
 Ein Pull Request mit Konflikt wird übersprungen; Dependabot rebased ihn von selbst, und er kommt in der folgenden Woche dran.
+Der erste Fehlschlag beendet das Testen, weil jeder spätere Schritt darauf aufbauen würde.
 
 | Ergebnis | Was passiert |
 | --- | --- |
@@ -1396,6 +1397,24 @@ Ein Pull Request mit Konflikt wird übersprungen; Dependabot rebased ihn von sel
 
 Ein gescheiterter Pull Request wird nur übersprungen, solange sein Head-Commit unverändert ist - der Kommentar hält diesen Commit fest.
 Eine neue Version oder ein Rebase durch Dependabot wird deshalb erneut versucht, ohne dass jemand das Label entfernen muss; das zählt, weil womöglich wochenlang niemand hinschaut.
+
+### Zwei Jobs als Sicherheitsgrenze
+
+Testen führt den Code der getesteten Updates aus - `npm ci`, `npm test` und der Smoke-Test tun das alle -, deshalb darf der testende Job nie ein Token halten, das ins Repository schreiben kann.
+Das Token aus der Umgebung eines Kindprozesses zu entfernen, genügte nicht, weil unter Linux ein Kindprozess die Umgebung seines Elternprozesses aus `/proc` lesen kann.
+Der Workflow teilt den Lauf deshalb auf:
+
+| Job | Token | Führt Abhängigkeitscode aus | Tut |
+| --- | --- | --- | --- |
+| `test` | nur lesend | ja | stapelt, testet, schreibt einen Plan, was bestanden hat und was gescheitert ist |
+| `merge` | schreibend | nein - kein `npm ci`, nur Node-Bordmittel | mergt und markiert nach dem Plan |
+
+Der `test`-Job checkt ohne gespeicherte Zugangsdaten aus (`persist-credentials: false`), weil getesteter Code sie sonst aus `.git/config` lesen könnte.
+`npm ci` läuft mit `--ignore-scripts`: Keine Abhängigkeit braucht ihr Installationsskript zur Laufzeit - das einzige vorhandene, in `protobufjs`, prüft nur das eigene Kommandozeilenwerkzeug.
+
+Der Plan stammt aus dem Job, der den getesteten Code ausgeführt hat, deshalb prüft `merge` ihn, statt ihm zu vertrauen.
+Jeder Eintrag muss ein offener Pull Request von Dependabot sein, dessen Head noch der getestete Commit ist.
+Schlimmstenfalls mergt ein manipulierter Plan ein echtes Dependabot-Update ungetestet, und die Branch-Protection verlangt trotzdem den eigenen grünen `Tests`-Check dieses Pull Requests.
 
 ### Branch-Protection
 
@@ -1418,5 +1437,6 @@ Nur die Suche wird abgerechnet.
 Im Paid Tier kommt die Suche aus den 5.000 kostenlosen Suchanfragen pro Monat, die sich die Modelle ab Gemini 3 teilen; die Tokens kosten einen Bruchteil eines Cents.
 
 Das Skript gibt Prüfnamen und Ergebnisse aus, nie den Antworttext oder die Quellen (Invariante I4, siehe „Terms-Konformität"): GitHub bewahrt das CI-Log auf, ein dort ausgegebenes Grounded Result landete also auf der Festplatte.
-Der API-Key erreicht nur den Smoke-Test.
-`npm ci` führt die Installationsskripte jeder Abhängigkeit des getesteten Pull Requests aus, und die haben ihn nicht zu sehen.
+Der Gemini-Key ist das eine Geheimnis, das der getestete Code zwangsläufig sieht, weil der Smoke-Test genau diesen Code gegen die API laufen lässt.
+Er bekommt deshalb einen eigenen Key, beschränkt auf die Generative Language API, statt des Keys für die alltägliche Suche.
+`npm ci` und `npm test` erhalten eine Umgebung ganz ohne Token oder Key.
