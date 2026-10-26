@@ -52,6 +52,15 @@ Ohne diese Prüfung wäre aus `… what does --thinking high mean …` die Anfra
 Unbekannte Optionen (`--al` statt `--all`) und überzählige Argumente sind ebenfalls Fehler mit Exit-Code 1.
 Nichts davon wird stillschweigend übergangen.
 
+```console
+$ gemini-grounding models --al
+Error: Unknown option "--al".
+Run "gemini-grounding help" for usage.
+```
+
+Ein Fehler in der Syntax des Aufrufs bekommt diese zweite Zeile, oder die Verwendung des Befehls selbst, wo es um einen einzelnen Befehl geht.
+Ein Fehler in den Werten - eine Modellkollision, eine ungültige Frist - sagt selbst, was zu tun ist, und bekommt keine.
+
 ## Wo eine Option gilt
 
 Dieselbe Option bedeutet je nach Befehl etwas anderes, deshalb nimmt jeder Befehl nur die an, die bei ihm etwas bewirken.
@@ -67,9 +76,10 @@ Eine Option ohne Bedeutung für den gewählten Befehl bricht mit Exit-Code 1 ab 
 | `set-backup --thinking <level>` | Ändert nur das Level des bereits gespeicherten Backups |
 | `set-backup off --thinking <level>` | Fehler - ein abgeschaltetes Backup hat kein Thinking-Level |
 | `set-model <id> --model <id2>` | Fehler - zwei Modelle, und welches gemeint ist, wissen nur Sie |
-| `set-deadline <seconds\|off>` | Speichert, nach wie vielen Sekunden Google eine Suche abbricht; nimmt keine Option |
+| `set-deadline <seconds\|off>` | Speichert, nach wie vielen Sekunden Google eine Suche abbricht; nimmt keine Option außer `--debug` |
 | `models --all` | Listet alle Modelle mit Statusspalte, an der Vorauswahl der Standardansicht vorbei |
-| `config`, `help`, `version`, `models` mit `--model` / `--thinking` | Fehler |
+| `--debug` bei einer Suche, `models` oder einem `set-*`-Befehl | Gibt den vollständigen Stacktrace aus, wenn der Befehl zur Laufzeit scheitert |
+| `config`, `help`, `version` mit einer beliebigen Option, `models` mit `--model` / `--thinking` | Fehler |
 
 Jedes Speichern antwortet zweimal - was sich geändert hat, und was ab jetzt gilt:
 
@@ -77,7 +87,7 @@ Jedes Speichern antwortet zweimal - was sich geändert hat, und was ab jetzt gil
 $ gemini-grounding set-model gemini-flash-latest --thinking low
 Saved - Model: gemini-flash-latest, Thinking level: low
 
-Primary:  gemini-flash-latest · low
+Default:  gemini-flash-latest · low
 Backup:   gemini-3.5-flash · low (inherited)
 Deadline: 300 s
 ```
@@ -105,7 +115,7 @@ Um nur das Level zu ändern, lassen Sie das Modell weg:
 $ gemini-grounding set-backup --thinking minimal
 Saved - Backup thinking level: minimal
 
-Primary:  gemini-flash-latest · low
+Default:  gemini-flash-latest · low
 Backup:   gemini-3.5-flash · minimal
 Deadline: 300 s
 ```
@@ -114,7 +124,7 @@ Dafür muss bereits ein Backup gespeichert und eingeschaltet sein - ein Level oh
 
 ```console
 $ gemini-grounding set-backup --thinking minimal
-no backup model is set - a thinking level on its own has nothing to belong to. Name the backup model together with the level.
+Error: no backup model is set - a thinking level on its own has nothing to belong to. Name the backup model together with the level.
 ```
 
 Dasselbe gilt für `set-backup off --thinking <level>`, das mit `a backup that is switched off has no thinking level` abbricht.
@@ -124,7 +134,7 @@ Standard und Backup dürfen nicht dasselbe Modell sein, und jeder Befehl, der ei
 
 ```console
 $ gemini-grounding set-backup gemini-flash-latest
-"gemini-flash-latest" is already the default model - a backup only helps if it is a different one.
+Error: "gemini-flash-latest" is already the default model - a backup only helps if it is a different one.
 ```
 
 Geprüft wird der Zustand, den das Schreiben **erzeugen würde**, und deshalb sitzt die Prüfung an der einen Stelle, durch die alle drei Befehle laufen (`findModelCollision` in `config.js`, gemeinsam mit dem MCP-Server genutzt).
@@ -134,7 +144,7 @@ Ein Befehl, der gar kein Modell nennt, wird auch dann durchgelassen, wenn die ge
 **`--model` bei einer Suche schaltet das Backup für diesen Aufruf ab.**
 Ein Modell zu nennen heißt meist, genau dieses Modell prüfen zu wollen, und eine Antwort von einem anderen beantwortet diese Frage nicht.
 
-`gemini-grounding config` zeigt alle drei Zustände - ein Modell, `disabled` oder `not set`.
+`gemini-grounding config` zeigt alle drei Zustände - ein Modell, `off` oder `not set`.
 Die letzten beiden verhalten sich gleich; der Unterschied hält fest, ob die Entscheidung je getroffen wurde.
 
 ## Die Frist
@@ -146,7 +156,7 @@ Die letzten beiden verhalten sich gleich; der Unterschied hält fest, ob die Ent
 $ gemini-grounding set-deadline 600
 Saved - Deadline: 600 s
 
-Primary:  gemini-flash-latest · low
+Default:  gemini-flash-latest · low
 Backup:   gemini-3.5-flash · low (inherited)
 Deadline: 600 s
 ```
@@ -158,14 +168,26 @@ Dreißig Sekunden nach der Frist hört der Server von sich aus auf zu warten, fa
 Ohne Frist gibt es auch diese Bremse nicht.
 Warum es beides gibt und was es kostet: [specs.de.md, „Die Frist, die dieser Server mitschickt"](./specs.de.md#die-frist-die-dieser-server-mitschickt).
 
-## Fehler bleiben vollständig sichtbar
+## Fehler in einer lesbaren Zeile
 
-Anders als der MCP-Server gibt die CLI den vollständigen Stacktrace samt Original-Fehlermeldung der Google-API aus und endet mit Exit-Code 1.
+Scheitert eine Anfrage, gibt die CLI Googles Statuscode, Statusnamen und Meldung in einer Zeile aus und endet mit Exit-Code 1:
 
-Beim Testen ist genau das erwünscht.
-Eine Meldung wie `ApiError: {"error":{"code":503, ...}}` sagt, dass die Anfrage nicht bei Google angekommen ist - ein anderes Problem als eine kaputte Installation, und eines, gegen das nichts hilft außer einem späteren Versuch.
+```console
+$ gemini-grounding "test" --model gemini-x
+Error: 404 NOT_FOUND - models/gemini-x is not found for API version v1beta, ...
+Run again with --debug for the full stack trace.
+```
 
-Ein reiner Bedienfehler (falsches Argument, unbekannte Option, leere Anfrage oder ein nicht gesetztes `GEMINI_API_KEY`) gibt nur die eine erklärende Zeile aus, ebenfalls mit Exit-Code 1.
+Ein `503 UNAVAILABLE` sagt, dass die Anfrage nicht bei Google angekommen ist - ein anderes Problem als eine kaputte Installation, und eines, gegen das nichts hilft außer einem späteren Versuch.
+
+`--debug` gibt zusätzlich den vollständigen Stacktrace und den rohen Fehler aus, samt Googles kompletter Antwort.
+Standardmäßig ist das aus, weil der Stack aus SDK-Interna besteht und absolute Pfade Ihres Rechners enthält, die in jedem Bug-Report landen, in den die Ausgabe kopiert wird.
+Angenommen wird die Option überall, wo ein Laufzeitfehler auftreten kann: bei einer Suche, bei `models` und bei jedem `set-*`-Befehl.
+
+Der MCP-Server nutzt diese Darstellung nicht.
+Er reicht Googles rohe Antwort an den Client weiter, der sie mühelos liest, sodass nichts darin - etwa die Wartezeit eines `429` - unterwegs verlorengeht.
+
+Ein reiner Bedienfehler (falsches Argument, unbekannte Option, leere Anfrage oder ein nicht gesetztes `GEMINI_API_KEY`) beginnt ebenfalls mit `Error:` und endet mit Exit-Code 1, verweist aber nie auf `--debug`.
 Für einen Tippfehler braucht niemand einen Stacktrace.
 
 Der Key wird vor der Anfrage geprüft und nicht dem API-Aufruf überlassen; deshalb gehört er in diese Gruppe und nicht zu den Fehlern darüber.
@@ -175,7 +197,7 @@ Zu diesem Zeitpunkt ist noch nichts abgeschickt, die Zeile sagt bereits, was zu 
 
 ```console
 $ gemini-grounding config
-Primary:  gemini-flash-latest · medium
+Default:  gemini-flash-latest · medium
 Backup:   gemini-3.5-flash · medium (inherited)
 Deadline: 300 s
 API key:  set (39 chars)
@@ -233,4 +255,4 @@ Die übrig gebliebene Kopie im Klon kann gelöscht werden.
 | 1 | Bedienfehler, oder der API-Aufruf ist fehlgeschlagen |
 
 Für API-Fehler gibt es keinen eigenen Code.
-Der Unterschied steht in der Ausgabe: Ein Bedienfehler ist eine Zeile, ein API-Fehler ein Stacktrace mit Googles Originalmeldung.
+Der Unterschied steht in der Ausgabe: Ein API-Fehler nennt Googles Statuscode und verweist auf `--debug`, ein Bedienfehler tut beides nicht.

@@ -76,23 +76,32 @@ Umgesetzt in flachen Modulen ohne `src/`-Layout und ohne Build-Step
   `gemini.js` und `config.js`, die auch `index.js` nutzt, über die
   Kommandozeile erreichbar. Ohne zusätzliche Abhängigkeit (ein `switch` über
   `process.argv` genügt), ohne zweiten Ort für den API-Key. Zwei bewusste
-  Unterschiede zum MCP-Server: Laufzeitfehler werden mit vollem Stacktrace
-  ausgegeben statt wie in `index.js` auf eine Zeile für den Client verdichtet,
-  und die Ausgabe geht auf stdout - beim stdio-Transport wäre das unmöglich,
-  weil dort JSON-RPC darüber läuft. Aufruf und Unterbefehle: siehe README.
+  Unterschiede zum MCP-Server: Ein Laufzeitfehler wird für einen Menschen
+  ausgegeben - ein `ApiError` als `<Code> <Status> - <Googles Text>` über
+  `formatRuntimeError()` in `gemini.js`, der volle Stacktrace nur mit
+  `--debug` -, wo `index.js` dem Client über `describeError()` Googles rohen
+  Body übergibt, und die Ausgabe geht auf stdout - beim stdio-Transport wäre das
+  unmöglich, weil dort JSON-RPC darüber läuft. Der Stack bleibt hinter
+  `--debug`, weil er aus SDK-Interna besteht und absolute lokale Pfade in
+  jeden Bug-Report trägt, in den er kopiert wird. Aufruf und Unterbefehle:
+  siehe README.
 
-  Der Fehler wird dabei trotzdem per `try`/`catch` abgefangen, obwohl die
-  Ausgabe dieselbe bleibt: Beendet Node den Prozess wegen einer unbehandelten
+  Der Fehler müsste auch bei Nodes eigener Ausgabe per `try`/`catch` abgefangen
+  werden: Beendet Node den Prozess wegen einer unbehandelten
   Rejection hart, während noch eine Netzwerkverbindung offen ist, bricht libuv
   unter Windows mit `Assertion failed ... src\win\async.c` ab, und der Prozess
-  endet mit `0xC0000409` statt mit Code 1. Deshalb `console.error(error)` -
-  identisch zu Nodes eigener Ausgabe - gefolgt von `process.exitCode = 1`
-  statt `process.exit()`, damit Node regulär herunterfährt.
+  endet mit `0xC0000409` statt mit Code 1. Deshalb die Ausgabe über
+  `console.error` - mit `--debug` `console.error(error)`, identisch zu Nodes
+  eigener Ausgabe - gefolgt von `process.exitCode = 1` statt `process.exit()`,
+  damit Node regulär herunterfährt.
 
   Das gilt **ausnahmslos**: `cli.js` enthält kein `process.exit()`. Ein
   Bedienfehler wirft stattdessen einen `UsageError`, den derselbe `catch`-Block
-  abfängt und mit nur seiner Meldung ausgibt - für einen Tippfehler auf der
-  Kommandozeile ist ein Stacktrace sinnlos. Zweiter Grund gegen `process.exit()`:
+  abfängt und mit nur seiner Meldung ausgibt, wie jeden anderen Fehler hinter
+  `Error:` - für einen Tippfehler auf der Kommandozeile ist ein Stacktrace
+  sinnlos. Ein Fehler in der Syntax des Aufrufs trägt eine zweite Zeile mit der
+  Verwendung des Befehls oder einem Verweis auf `help`; ein Fehler in den
+  Werten sagt selbst, was zu tun ist. Zweiter Grund gegen `process.exit()`:
   stdout und stderr sind unter Windows auf einem TTY asynchron, ein sofortiges
   Beenden kann eine längere Ausgabe wie die Hilfe abschneiden. Weil `fail()`
   wirft statt zu beenden, liegen Argumentauswertung und `switch` gemeinsam in
@@ -879,10 +888,14 @@ unten beschriebene Ausschlussliste:
 
 Deshalb ist `all` kein reiner Komfortschalter: Da die Liste ohnehin keine
 Garantie gibt, darf die gefilterte Sicht nie die einzige sein. `all: true`
-zeigt die vollständige Liste mit einer Statusspalte. Ergibt der Filter kein
-einziges Modell - etwa weil die API die ausgewerteten Felder nicht mehr
-liefert - fällt `listModels` selbsttätig auf die vollständige Liste zurück und
-weist im Hinweistext darauf hin, statt eine leere Ausgabe zu erzeugen.
+zeigt die vollständige Liste mit einer Statusspalte, die angebotenen Modelle
+zuerst und als `offered` markiert; ein Modell ohne `generateContent` zeigt
+`no text` und das, was es stattdessen tut, etwa `no text (embedContent)`.
+Beide Ansichten beginnen mit einer Kopfzeile, die die Spalten benennt. Ergibt
+der Filter kein einziges Modell - etwa weil die API die ausgewerteten Felder
+nicht mehr liefert - fällt `listModels` selbsttätig auf die vollständige Liste
+zurück und weist im Hinweistext darauf hin, statt eine leere Ausgabe zu
+erzeugen.
 
 ### Die Ausschlussliste
 
@@ -980,9 +993,12 @@ Grounding-Metadaten kamen - nie den Antworttext und nie die Quellen
 sieht, ist so undurchsichtig wie die verkürzte Auswahl, aus der diese Liste
 entstanden ist. Die Standardansicht nennt deshalb, wie viele Modelle verborgen
 sind und dass eine vollständige Auflistung den Ausschluss umgeht.
-Er sagt das in einer Zeile: Den Hinweistext liest ein Mensch am Terminal bei
-jedem einzelnen Aufruf, und einen Absatz Begründung, der sich nie ändert, lernt
-das Auge zu überspringen. Die Begründung gehört hierher, wo sie einmal gelesen
+Er sagt das in einer Zeile unter 80 Spalten: Den Hinweistext liest ein Mensch
+am Terminal bei jedem einzelnen Aufruf, einen Absatz Begründung, der sich nie
+ändert, lernt das Auge zu überspringen, und eine längere Zeile bricht mitten im
+Wort um. Aus demselben Grund nennt er `models-excluded.js` nicht, eine Datei,
+die jemand, der das Paket installiert hat, nie sieht; das tun nur die beiden
+Rückfall-Hinweise, die sich an den richten, der die Liste pflegt. Die Begründung gehört hierher, wo sie einmal gelesen
 wird; die Zahlen im Hinweistext stammen aus der Antwort, sodass keine
 Formulierung nachzuziehen ist, wenn Modelle hinzukommen oder wegfallen.
 
@@ -1031,7 +1047,7 @@ Drei der fünf Parameter kennen einen Zustand jenseits von „ein Wert":
 Die Ausnahme in dieser Tabelle ist die Einheits-Regel aus dem Abschnitt „Implementierung": Ein `backupModel`, das ohne eigenes Level ankommt, setzt das gespeicherte zurück, damit ein für das vorherige Backup gewähltes Level nicht stillschweigend auf das neue Modell übergeht.
 `setSavedConfig` liefert deshalb zurück, was es tatsächlich geschrieben hat, `null` eingeschlossen - nur so kann die Bestätigung das weggefallene Level nennen, statt es zu verschweigen.
 `backupThinkingLevel` allein zu übergeben ist der Weg, das Level des gespeicherten Backups zu ändern, ohne das Modell anzufassen.
-Dafür braucht es ein gespeichertes, eingeschaltetes Backup: Ein Level ohne sein Modell hat keinen Bezug, stünde wirkungslos in der Datei, und die Bestätigung nennte einen Wert, den der Zustandsblock zwei Zeilen darunter als `not set` oder `disabled` wieder einkassiert.
+Dafür braucht es ein gespeichertes, eingeschaltetes Backup: Ein Level ohne sein Modell hat keinen Bezug, stünde wirkungslos in der Datei, und die Bestätigung nennte einen Wert, den der Zustandsblock zwei Zeilen darunter als `not set` oder `off` wieder einkassiert.
 `findBackupLevelProblem` in `config.js` weist beide Fälle ab, bevor irgendetwas geschrieben wird - `null` bleibt ausgenommen, denn der Weg zurück auf „erbt vom Aufruf" muss auch dann offenstehen, wenn kein Backup mehr da ist.
 
 Diese Prüfung und `findModelCollision` weiter unten haben aus demselben Grund dieselbe Bauform, und beide sichern beide Schnittstellen ab.
@@ -1112,7 +1128,7 @@ Jedes Speichern beantwortet zwei verschiedene Fragen, und beide werden gebraucht
 ```text
 Saved - Backup: gemini-3.5-flash, Backup thinking level: inherited from the call
 
-Primary:  gemini-flash-latest · high
+Default:  gemini-flash-latest · high
 Backup:   gemini-3.5-flash · high (inherited)
 Deadline: 300 s
 ```

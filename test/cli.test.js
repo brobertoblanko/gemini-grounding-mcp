@@ -169,7 +169,7 @@ test("shows all three backup states in config", () => {
 
   runCli(["set-backup", "off"], { configHome });
   const disabled = runCli(["config"], { configHome });
-  assert.match(disabled.stdout, /Backup:\s+disabled/);
+  assert.match(disabled.stdout, /Backup:\s+off$/m);
 });
 
 test("names the complete state after every save", () => {
@@ -181,7 +181,7 @@ test("names the complete state after every save", () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /^Saved - /m, "what was written");
-  assert.match(result.stdout, /^Primary:  gemini-x · high$/m, "and what it runs with from now on");
+  assert.match(result.stdout, /^Default:  gemini-x · high$/m, "and what it runs with from now on");
   assert.match(result.stdout, /^Backup:   gemini-y · high \(inherited\)$/m);
   assert.match(result.stdout, /^Deadline: 300 s$/m, "the deadline is part of the state");
 });
@@ -295,4 +295,54 @@ test("warns about an unusable deadline in a hand-edited file", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /deadlineSeconds .* must be a positive whole number or false/);
   assert.match(result.stdout, /^Deadline: 300 s$/m, "the default applies instead");
+});
+
+test("frames every usage error and points syntax errors at the help", () => {
+  const syntax = runCli(["models", "--al"]);
+  assert.equal(syntax.status, 1);
+  assert.equal(
+    syntax.stderr,
+    'Error: Unknown option "--al".\nRun "gemini-grounding help" for usage.\n',
+  );
+
+  // A wrong argument count names the command's own usage rather than all of it.
+  const count = runCli(["set-model"]);
+  assert.match(count.stderr, /^Error: .*\nUsage: gemini-grounding set-model /);
+
+  // An error about the values says what to do by itself.
+  const value = runCli(["set-deadline", "0"]);
+  assert.match(value.stderr, /^Error: Invalid deadline/);
+  assert.doesNotMatch(value.stderr, /help/);
+});
+
+test("prints the help without an error frame when called without arguments", () => {
+  const result = runCli([]);
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /^gemini-grounding - /);
+});
+
+test("shows a runtime error as one line, and its stack only on --debug", () => {
+  // A file where the configuration directory belongs makes the write fail
+  // without any network involved.
+  const blocker = path.join(freshConfigHome(), "not-a-directory");
+  writeFileSync(blocker, "");
+
+  const plain = runCli(["set-model", "gemini-x"], { configHome: blocker });
+  assert.equal(plain.status, 1);
+  assert.match(plain.stderr, /^Error: .+\nRun again with --debug for the full stack trace\.\n$/);
+  assert.doesNotMatch(plain.stderr, /^\s+at /m);
+
+  const debug = runCli(["set-model", "gemini-x", "--debug"], { configHome: blocker });
+  assert.equal(debug.status, 1);
+  assert.match(debug.stderr, /^Error: /);
+  assert.match(debug.stderr, /^\s+at /m);
+});
+
+test("accepts --debug only where a runtime error can occur", () => {
+  const result = runCli(["config", "--debug"]);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /"config" takes no --debug option/);
 });
