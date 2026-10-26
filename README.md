@@ -10,7 +10,7 @@ answer.
 
 Use it when an assistant needs web-grounded research instead of relying on
 training data alone. It builds on nothing but the official `@google/genai` and
-`@modelcontextprotocol/sdk` packages, pinned to exact versions.
+`@modelcontextprotocol/server` packages, pinned to exact versions.
 
 > **Scope of use:** research queries only. Not intended for production workloads
 > or for connecting to sensitive systems.
@@ -193,8 +193,10 @@ individual call visible.
   level, the backup model and/or the search deadline (only those values, never
   the API key). The answer names what was written and the resulting
   configuration in full, so which models are in force is never something to be
-  guessed at. Up to 1.x this tool was called `gemini-set-model`; permission
-  rules naming the old name need updating.
+  guessed at. Up to 1.x this tool was called `gemini-set-model`. Claude Code
+  asks for your confirmation on every call of this tool, even in auto mode and
+  despite allow rules, and refuses it in `claude -p` - a configuration change
+  always needs a person. From a script, use the CLI below instead.
 
 <details>
 <summary>Why the model list is shorter than your key allows</summary>

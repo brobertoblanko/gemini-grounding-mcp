@@ -24,8 +24,8 @@
  * on 75 - an overloaded Google says nothing about the update.
  */
 import { fileURLToPath } from "node:url";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { DEFAULT_DEADLINE_SECONDS } from "../config.js";
 import { LOCAL_BRAKE_MARGIN_SECONDS } from "../gemini.js";
 
@@ -43,6 +43,12 @@ const TOOLS = ["gemini-search", "gemini-list-models", "gemini-set-config"];
 const QUERY = "What is the current stable version of Node.js? Answer in a single sentence.";
 
 const MISSING_MODEL = "smoke-test-nonexistent-model";
+
+/**
+ * The revision Claude Code prefers when the server offers it. The one billed
+ * search runs over this revision only; test/mcp.test.js covers both for free.
+ */
+const PROTOCOL_REVISION = "2026-07-28";
 
 /** Statuses that describe Google's availability rather than this code. */
 const UNAVAILABLE_STATUS = [408, 429, 500, 502, 503, 504];
@@ -67,7 +73,7 @@ function check(condition, message) {
 }
 
 const call = (client, name, args) =>
-  client.callTool({ name, arguments: args }, undefined, { timeout: CALL_TIMEOUT_MS });
+  client.callTool({ name, arguments: args }, { timeout: CALL_TIMEOUT_MS });
 
 // Messages name what is missing, never what arrived - see I4 above.
 const CHECKS = [
@@ -76,6 +82,8 @@ const CHECKS = [
     async (client) => {
       const name = client.getServerVersion()?.name;
       check(name === "gemini-grounding", `unexpected server name "${name}"`);
+      const revision = client.getNegotiatedProtocolVersion();
+      check(revision === PROTOCOL_REVISION, `negotiated "${revision}"`);
     },
   ],
   [
@@ -149,7 +157,10 @@ async function main() {
     args: [SERVER],
     env: { ...process.env },
   });
-  const client = new Client({ name: "smoke-test", version: "1.0.0" });
+  const client = new Client(
+    { name: "smoke-test", version: "1.0.0" },
+    { versionNegotiation: { mode: "auto" } },
+  );
   try {
     await client.connect(transport);
     // Sequential and stopping at the first failure: every check presupposes
