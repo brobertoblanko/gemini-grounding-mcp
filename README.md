@@ -60,7 +60,7 @@ Sources:
 [1] nodejs.org - https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG52u...
 
 ---
-🔢 30 input / 86 output / 0 thinking tokens | 🔍 1 sources | 🤖 gemini-flash-latest (thinking: minimal)
+🔢 30 input / 86 output / 0 thinking tokens | 🔍 1 sources | 🤖 gemini-flash-latest → gemini-3.8-flash (thinking: minimal)
 🔎 Searched: Node js latest LTS version
 ```
 

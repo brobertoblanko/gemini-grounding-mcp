@@ -6,7 +6,25 @@
         "generateContent",
         "countTokens"
       ],
-      "inputTokenLimit": 131072,
+      "inputTokenLimit": 1048576,
+      "outputTokenLimit": 65536
+    },
+    {
+      "name": "models/antigravity-preview-09-2026",
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens"
+      ],
+      "inputTokenLimit": 1048576,
+      "outputTokenLimit": 65536
+    },
+    {
+      "name": "models/antigravity-preview-latest",
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens"
+      ],
+      "inputTokenLimit": 1048576,
       "outputTokenLimit": 65536
     },
     {
@@ -23,9 +41,9 @@
         "generateContent",
         "countTokens"
       ],
-      "thinking": true,
       "inputTokenLimit": 131072,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/deep-research-preview-04-2026",
@@ -33,9 +51,9 @@
         "generateContent",
         "countTokens"
       ],
-      "thinking": true,
       "inputTokenLimit": 131072,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/deep-research-pro-preview-12-2025",
@@ -43,9 +61,9 @@
         "generateContent",
         "countTokens"
       ],
-      "thinking": true,
       "inputTokenLimit": 131072,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-2.5-computer-use-preview-10-2025",
@@ -53,9 +71,9 @@
         "generateContent",
         "countTokens"
       ],
-      "thinking": true,
       "inputTokenLimit": 131072,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-2.5-flash",
@@ -65,9 +83,9 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 1048576,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-2.5-flash-image",
@@ -87,9 +105,9 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 1048576,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-2.5-flash-native-audio-latest",
@@ -97,9 +115,9 @@
         "countTokens",
         "bidiGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 131072,
-      "outputTokenLimit": 8192
+      "outputTokenLimit": 8192,
+      "thinking": true
     },
     {
       "name": "models/gemini-2.5-flash-native-audio-preview-09-2025",
@@ -107,9 +125,9 @@
         "countTokens",
         "bidiGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 131072,
-      "outputTokenLimit": 8192
+      "outputTokenLimit": 8192,
+      "thinking": true
     },
     {
       "name": "models/gemini-2.5-flash-native-audio-preview-12-2025",
@@ -117,9 +135,9 @@
         "countTokens",
         "bidiGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 131072,
-      "outputTokenLimit": 8192
+      "outputTokenLimit": 8192,
+      "thinking": true
     },
     {
       "name": "models/gemini-2.5-flash-preview-tts",
@@ -138,9 +156,9 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 1048576,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-2.5-pro-preview-tts",
@@ -160,9 +178,9 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 1048576,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-3-pro-image",
@@ -171,9 +189,9 @@
         "countTokens",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 131072,
-      "outputTokenLimit": 32768
+      "outputTokenLimit": 32768,
+      "thinking": true
     },
     {
       "name": "models/gemini-3-pro-image-preview",
@@ -182,9 +200,9 @@
         "countTokens",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 131072,
-      "outputTokenLimit": 32768
+      "outputTokenLimit": 32768,
+      "thinking": true
     },
     {
       "name": "models/gemini-3.1-flash-image",
@@ -193,9 +211,9 @@
         "countTokens",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 65536,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-3.1-flash-image-preview",
@@ -204,9 +222,9 @@
         "countTokens",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 65536,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-3.1-flash-lite",
@@ -216,9 +234,9 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 1048576,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-3.1-flash-lite-image",
@@ -227,9 +245,9 @@
         "countTokens",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 65536,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-3.1-flash-lite-preview",
@@ -239,9 +257,9 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 1048576,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-3.1-flash-live-preview",
@@ -258,7 +276,6 @@
         "countTokens",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 8192,
       "outputTokenLimit": 16384
     },
@@ -270,9 +287,9 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 1048576,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-3.1-pro-preview-customtools",
@@ -282,9 +299,9 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 1048576,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-3.5-flash",
@@ -294,9 +311,9 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 1048576,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-3.5-flash-lite",
@@ -306,9 +323,9 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 1048576,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-3.5-live-translate-preview",
@@ -319,6 +336,23 @@
       "outputTokenLimit": 32768
     },
     {
+      "name": "models/gemini-3.5-transcribe",
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens"
+      ],
+      "inputTokenLimit": 98304,
+      "outputTokenLimit": 32768
+    },
+    {
+      "name": "models/gemini-3.5-transcribe-live",
+      "supportedGenerationMethods": [
+        "bidiGenerateContent"
+      ],
+      "inputTokenLimit": 131072,
+      "outputTokenLimit": 65536
+    },
+    {
       "name": "models/gemini-3.6-flash",
       "supportedGenerationMethods": [
         "generateContent",
@@ -326,9 +360,9 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 1048576,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-3.7-flash",
@@ -338,9 +372,69 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 1048576,
+      "outputTokenLimit": 65536,
+      "thinking": true
+    },
+    {
+      "name": "models/gemini-3.8-flash",
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens",
+        "createCachedContent",
+        "batchGenerateContent"
+      ],
+      "inputTokenLimit": 1048576,
+      "outputTokenLimit": 65536,
+      "thinking": true
+    },
+    {
+      "name": "models/gemini-3.8-flash-lite-tts",
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens",
+        "batchGenerateContent"
+      ],
+      "inputTokenLimit": 8192,
+      "outputTokenLimit": 16384
+    },
+    {
+      "name": "models/gemini-3.8-flash-tts",
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens",
+        "batchGenerateContent"
+      ],
+      "inputTokenLimit": 8192,
+      "outputTokenLimit": 16384
+    },
+    {
+      "name": "models/gemini-3.8-live",
+      "supportedGenerationMethods": [
+        "bidiGenerateContent"
+      ],
+      "inputTokenLimit": 131072,
       "outputTokenLimit": 65536
+    },
+    {
+      "name": "models/gemini-3.8-live-extended-thinking",
+      "supportedGenerationMethods": [
+        "bidiGenerateContent"
+      ],
+      "inputTokenLimit": 131072,
+      "outputTokenLimit": 65536,
+      "thinking": true
+    },
+    {
+      "name": "models/gemini-4-argon",
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens",
+        "batchGenerateContent"
+      ],
+      "inputTokenLimit": 1048576,
+      "outputTokenLimit": 32768,
+      "thinking": true
     },
     {
       "name": "models/gemini-embedding-001",
@@ -383,9 +477,9 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 1048576,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-flash-lite-latest",
@@ -395,9 +489,30 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 1048576,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
+    },
+    {
+      "name": "models/gemini-nano-banana-2.1",
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens",
+        "batchGenerateContent"
+      ],
+      "inputTokenLimit": 65536,
+      "outputTokenLimit": 65536,
+      "thinking": true
+    },
+    {
+      "name": "models/gemini-omni-1.1-flash",
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens"
+      ],
+      "inputTokenLimit": 131072,
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-omni-flash-preview",
@@ -405,9 +520,9 @@
         "generateContent",
         "countTokens"
       ],
-      "thinking": true,
       "inputTokenLimit": 131072,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-pro-latest",
@@ -417,21 +532,9 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 1048576,
-      "outputTokenLimit": 65536
-    },
-    {
-      "name": "models/gemini-robotics-er-1.6-preview",
-      "supportedGenerationMethods": [
-        "generateContent",
-        "countTokens",
-        "createCachedContent",
-        "batchGenerateContent"
-      ],
-      "thinking": true,
-      "inputTokenLimit": 131072,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-robotics-er-2-preview",
@@ -441,9 +544,9 @@
         "createCachedContent",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 131072,
-      "outputTokenLimit": 65536
+      "outputTokenLimit": 65536,
+      "thinking": true
     },
     {
       "name": "models/gemini-robotics-er-2-streaming-preview",
@@ -459,9 +562,9 @@
         "generateContent",
         "countTokens"
       ],
-      "thinking": true,
       "inputTokenLimit": 262144,
-      "outputTokenLimit": 32768
+      "outputTokenLimit": 32768,
+      "thinking": true
     },
     {
       "name": "models/gemma-4-31b-it",
@@ -469,33 +572,9 @@
         "generateContent",
         "countTokens"
       ],
-      "thinking": true,
       "inputTokenLimit": 262144,
-      "outputTokenLimit": 32768
-    },
-    {
-      "name": "models/imagen-4.0-fast-generate-001",
-      "supportedGenerationMethods": [
-        "predict"
-      ],
-      "inputTokenLimit": 480,
-      "outputTokenLimit": 8192
-    },
-    {
-      "name": "models/imagen-4.0-generate-001",
-      "supportedGenerationMethods": [
-        "predict"
-      ],
-      "inputTokenLimit": 480,
-      "outputTokenLimit": 8192
-    },
-    {
-      "name": "models/imagen-4.0-ultra-generate-001",
-      "supportedGenerationMethods": [
-        "predict"
-      ],
-      "inputTokenLimit": 480,
-      "outputTokenLimit": 8192
+      "outputTokenLimit": 32768,
+      "thinking": true
     },
     {
       "name": "models/lyria-3-clip-preview",
@@ -516,39 +595,32 @@
       "outputTokenLimit": 65536
     },
     {
+      "name": "models/lyria-3.5",
+      "supportedGenerationMethods": [
+        "generateContent",
+        "countTokens"
+      ],
+      "inputTokenLimit": 1048576,
+      "outputTokenLimit": 65536
+    },
+    {
+      "name": "models/lyria-realtime-exp",
+      "supportedGenerationMethods": [
+        "bidiGenerateMusic"
+      ],
+      "inputTokenLimit": 1048576,
+      "outputTokenLimit": 65536
+    },
+    {
       "name": "models/nano-banana-pro-preview",
       "supportedGenerationMethods": [
         "generateContent",
         "countTokens",
         "batchGenerateContent"
       ],
-      "thinking": true,
       "inputTokenLimit": 131072,
-      "outputTokenLimit": 32768
-    },
-    {
-      "name": "models/veo-3.1-fast-generate-preview",
-      "supportedGenerationMethods": [
-        "predictLongRunning"
-      ],
-      "inputTokenLimit": 480,
-      "outputTokenLimit": 8192
-    },
-    {
-      "name": "models/veo-3.1-generate-preview",
-      "supportedGenerationMethods": [
-        "predictLongRunning"
-      ],
-      "inputTokenLimit": 480,
-      "outputTokenLimit": 8192
-    },
-    {
-      "name": "models/veo-3.1-lite-generate-preview",
-      "supportedGenerationMethods": [
-        "predictLongRunning"
-      ],
-      "inputTokenLimit": 480,
-      "outputTokenLimit": 8192
+      "outputTokenLimit": 32768,
+      "thinking": true
     }
   ]
 }

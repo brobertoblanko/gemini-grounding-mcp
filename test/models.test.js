@@ -59,10 +59,14 @@ test("no excluded model is one the usability filter already removes", () => {
 });
 
 test("every reason names its kind", () => {
-  // The three kinds carry different weight, and the header says each entry
+  // The four kinds carry different weight, and the header says each entry
   // states which it is. An entry without one cannot be reviewed later.
   for (const [id, reason] of Object.entries(EXCLUDED_MODELS)) {
-    assert.match(reason, /^(\d{3} [A-Z_]+|no sources|unsuitable) - /, `reason for ${id}`);
+    assert.match(
+      reason,
+      /^(\d{3} [A-Z_]+|deprecated|no sources|unsuitable) - /,
+      `reason for ${id}`,
+    );
   }
 });
 
@@ -74,7 +78,7 @@ test("the default list hides the excluded models and says so", async () => {
     assert.ok(!output.includes(`${id} `), `${id} must not appear in the default list`);
   }
   assert.match(output, /models-excluded\.js/);
-  assert.match(output, /8 of 53 models offered here, \d+ usable ones excluded/);
+  assert.match(output, /8 of 60 models offered here, \d+ usable ones excluded/);
 });
 
 test("the note names the switch the way the caller's frontend spells it", async () => {

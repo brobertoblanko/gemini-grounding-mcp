@@ -406,6 +406,7 @@ export function formatFallbackNote(fallback) {
 export function formatFooter({
   usageMetadata,
   model,
+  modelVersion,
   thinkingLevel,
   sourceCount,
   dropped,
@@ -416,6 +417,13 @@ export function formatFooter({
   const inputTokens = usageMetadata?.promptTokenCount ?? 0;
   const outputTokens = usageMetadata?.candidatesTokenCount ?? 0;
   const thinkingTokens = usageMetadata?.thoughtsTokenCount ?? 0;
+
+  // The model that answered, where it is not the one requested: aliases such as
+  // gemini-flash-latest resolve to a concrete model, and deprecated ids are
+  // routed to their successor without an error (gemini-3.7-flash answers as
+  // gemini-3.8-flash, measured 2026-10-26). Without it the footer names a model
+  // that never ran. Full derivation: docs/specs.md, "Footer format in the tool result".
+  const served = modelVersion && modelVersion !== model ? ` → ${modelVersion}` : "";
 
   // Dropped markers belong in the footer because they change how much the
   // response can be relied on: if a marker is missing, the passage may be
@@ -430,7 +438,8 @@ export function formatFooter({
 
   return (
     `\n\n---\n🔢 ${inputTokens} input / ${outputTokens} output / ${thinkingTokens} thinking tokens ` +
-    `| 🔍 ${sourceCount} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}${skippedNote}` +
+    `| 🔍 ${sourceCount} sources | 🤖 ${model}${served} (thinking: ${thinkingLevel})` +
+    `${droppedNote}${skippedNote}` +
     formatSearchQueries(searchQueries) +
     formatFallbackNote(fallback)
   );
@@ -623,6 +632,7 @@ export async function runSearch({
   const footer = formatFooter({
     usageMetadata: response.usageMetadata,
     model,
+    modelVersion: response.modelVersion,
     thinkingLevel,
     sourceCount: sources.length,
     dropped,

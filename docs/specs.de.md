@@ -606,9 +606,13 @@ const droppedNote = dropped > 0 ? ` | ⚠️ ${dropped} markers dropped` : "";
 const skippedNote =
   skipped > 0 ? ` | ⚠️ ${skipped} sources omitted (unknown chunk type)` : "";
 
+// Das Modell, das geantwortet hat, wo es nicht das angefragte ist.
+const served = modelVersion && modelVersion !== model ? ` → ${modelVersion}` : "";
+
 const footer =
   `\n\n---\n🔢 ${inputTokens} input / ${outputTokens} output / ${thinkingTokens} thinking tokens ` +
-  `| 🔍 ${sources.length} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}${skippedNote}` +
+  `| 🔍 ${sources.length} sources | 🤖 ${model}${served} (thinking: ${thinkingLevel})` +
+  `${droppedNote}${skippedNote}` +
   formatSearchQueries(searchQueries) +
   formatFallbackNote(fallback);
 
@@ -630,9 +634,15 @@ Sources:
 [2] Google Gen AI SDK - https://googleapis.github.io/js-genai/
 
 ---
-🔢 245 input / 89 output / 40 thinking tokens | 🔍 2 sources | 🤖 gemini-flash-latest (thinking: high)
+🔢 245 input / 89 output / 40 thinking tokens | 🔍 2 sources | 🤖 gemini-flash-latest → gemini-3.8-flash (thinking: high)
 🔎 Searched: gemini api models list · google genai sdk models.list pagination
 ```
+
+Das Feld `🤖` nennt das angefragte Modell und nach einem Pfeil dasjenige, das tatsächlich geantwortet hat, entnommen aus `response.modelVersion`.
+Die beiden unterscheiden sich in zwei Fällen, gemessen am 26.10.2026: Ein Alias löst sich in ein konkretes Modell auf (`gemini-flash-latest` antwortet als `gemini-3.8-flash`, `gemini-pro-latest` als `gemini-3.1-pro-preview`), und eine abgekündigte ID wird ohne Fehler auf ihren Nachfolger umgeleitet (`gemini-3.7-flash` antwortet als `gemini-3.8-flash`).
+Ohne den Pfeil nennte der Footer ein Modell, das nie gelaufen ist, und die Regel, dass das tatsächlich genutzte Modell immer sichtbar ist, gälte nur für konkrete, aktuelle IDs.
+Verglichen wird auf exakte Zeichengleichheit; stimmen beide Namen überein oder fehlt `modelVersion` in der Antwort, sieht das Feld aus wie bisher.
+Nach einem Fallback enthält `model` bereits das Backup, der Pfeil vergleicht also mit dem Modell, das tatsächlich gefragt wurde.
 
 Die Zahl der verworfenen Marker gehört in den Footer, weil sie die
 Aussagekraft der Antwort verändert: Fehlt ein Marker, kann die Stelle
@@ -789,8 +799,8 @@ holt weitere Seiten selbstständig nach; `pageSize` bestimmt nur die Größe der
 einzelnen Anfrage, nicht die Gesamtzahl.
 
 **Standardmäßig gefiltert.** Der Key gibt erheblich mehr Modelle frei, als
-hier funktionieren - in der weiter unten genannten Messung 53 insgesamt, davon
-31 nutzbar. Gefiltert wird über zwei Angaben, die jedes Modell selbst
+hier funktionieren - in der weiter unten genannten Messung 60 insgesamt, davon
+33 nutzbar. Gefiltert wird über zwei Angaben, die jedes Modell selbst
 mitliefert:
 
 | Feld | Bedingung | Andernfalls |
@@ -827,32 +837,37 @@ trotzdem nicht in eine Liste gehören, aus der jemand ein Recherchemodell
 auswählt. Sie wird zusätzlich zu diesem Filter angewandt und nur in der
 Standardansicht; `all: true` umgeht sie vollständig und trägt bei jedem Eintrag
 die Sorte seines Ausschlusses als Status ein - `400 INVALID_ARGUMENT`,
-`404 NOT_FOUND`, `no sources` oder `unsuitable` -, der Ausschluss verlagert die
+`404 NOT_FOUND`, `deprecated`, `no sources` oder `unsuitable` -, der Ausschluss verlagert die
 Information also, statt sie zu verlieren. Sie steuert die Anzeige und sonst
 nichts: `gemini-set-model` und ein `model` pro Aufruf nehmen jede ID an, auch
 eine ausgeschlossene.
 
-Gemessen am 13.08.2026 mit `scripts/probe-models.js` gegen einen einzelnen
-API-Key: 53 Modelle insgesamt, 31 nach `isUsableModel`, 23 ausgeschlossen, 8
+Gemessen am 26.10.2026 mit `scripts/probe-models.js` gegen einen einzelnen
+API-Key: 60 Modelle insgesamt, 33 nach `isUsableModel`, 25 ausgeschlossen, 8
 angeboten.
 
-**Drei Sorten Eintrag, nach Belastbarkeit geordnet.** Jede Begründung nennt
+**Vier Sorten Eintrag, nach Belastbarkeit geordnet.** Jede Begründung nennt
 ihre Sorte, weil sie unterschiedlich altern:
 
 | Sorte | Grundlage | Anzahl |
 | --- | --- | --- |
-| `400`/`404` | die Zurückweisung der API im Wortlaut | 17 |
+| `400`/`404` | die Zurückweisung der API im Wortlaut | 18 |
+| `deprecated` | der Hersteller leitet die ID auf ihren Nachfolger um, und `modelVersion` nennt diesen | 2 |
 | `no sources` | das Modell antwortet und liefert keinen Grounding-Chunk | 3 |
-| `unsuitable` | der Hersteller dokumentiert das Modell für einen anderen Zweck | 3 |
+| `unsuitable` | der Hersteller dokumentiert das Modell für einen anderen Zweck | 2 |
 
 Die erste Sorte ist die stärkste und kommt ohne Beurteilung aus:
 `Code execution is not enabled for this model` bei den Bildmodellen,
-`Thinking level is not supported for this model.` bei TTS und Gemma,
-`This model only supports Interactions API` bei den Deep-Research-Modellen und
-`gemini-omni-flash-preview`, sowie `no longer available to new users` bei
-`gemini-2.5-flash`, `-flash-lite` und `-pro`. Die letzte Sorte ist die
-schwächste und bei einer Überprüfung als Erstes nachzuschlagen: Ein Modell ist
-nur so lange ungeeignet, wie seine Dokumentation das sagt.
+`Thinking level is not supported for this model.` bei Gemma,
+`This model only supports Interactions API` bei den Deep-Research- und
+Omni-Modellen, sowie `no longer available to new users` bei
+`gemini-2.5-flash`, `-flash-lite` und `-pro`.
+
+`deprecated` erfasst IDs, die Google ohne Fehler zurückzieht: Seit dem 08.10.2026 wird laut [Changelog](https://ai.google.dev/gemini-api/docs/changelog) `gemini-3.7-flash` serverseitig auf `gemini-3.8-flash` umgeleitet und `gemini-3.5-flash` auf `gemini-3.6-flash`.
+Beide antworten und grounden, weder die Probe noch ein Statuscode fängt sie also; verraten werden sie durch `response.modelVersion`, das den Nachfolger nennt.
+Sie anzubieten hieße, einen Namen in die Liste zu setzen, unter dem nie ein Aufruf läuft.
+Der Eintrag blendet sie nur in der Liste aus - ein Aufruf, der eine davon nennt, funktioniert weiterhin, und der Footer zeigt dann beide Namen (siehe „Footer-Format im Tool-Ergebnis").
+Die letzte Sorte ist die schwächste und bei einer Überprüfung als Erstes nachzuschlagen: Ein Modell ist nur so lange ungeeignet, wie seine Dokumentation das sagt.
 
 **Exakte IDs, keine Wildcards.** Ein Muster wie `*-image` würde Nachfolger von
 selbst fangen, aber ein künftiges Modell, das Bilder *versteht* und `image` im
