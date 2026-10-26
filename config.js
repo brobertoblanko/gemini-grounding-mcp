@@ -160,7 +160,7 @@ export function getSavedDeadline() {
  *
  * The difference between the last two changes nothing about the behaviour and
  * exists solely for the output of "gemini-grounding config": "not set" and
- * "disabled" are two different statements to the user.
+ * "off" are two different statements to the user.
  *
  * Both are validated because the file can be edited by hand. A model has to be
  * a non-empty string, a level one of the known ones - otherwise an unusable
@@ -254,7 +254,7 @@ export function findModelCollision({ model, backupModel } = {}) {
  * A level belongs to exactly one model (see the unit rule in setSavedConfig).
  * Without that model it has nothing to refer to: it sits in the file, takes
  * effect nowhere, and the confirmation reports a value that the state block two
- * lines below revokes as "not set" or "disabled".
+ * lines below revokes as "not set" or "off".
  *
  * As in findModelCollision, checked on the STATE AFTER THE WRITE and not on the
  * single argument, because only gemini-set-config can set model and level in ONE
@@ -411,11 +411,11 @@ export function formatConfigState() {
   const backupLine = backup.model
     ? `${backup.model} · ${backup.thinkingLevel ?? `${thinkingLevel} (inherited)`}`
     : backup.disabled
-      ? "disabled"
+      ? "off"
       : "not set";
 
   return (
-    `Primary:  ${getSavedModel()} · ${thinkingLevel}\n` +
+    `Default:  ${getSavedModel()} · ${thinkingLevel}\n` +
     `Backup:   ${backupLine}\n` +
     `Deadline: ${formatDeadline(getSavedDeadline())}`
   );

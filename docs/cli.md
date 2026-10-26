@@ -52,6 +52,15 @@ Without that check, `… what does --thinking high mean …` would have run as `
 Unknown options (`--al` instead of `--all`) and surplus arguments are errors with exit code 1 as well.
 None of it is silently ignored.
 
+```console
+$ gemini-grounding models --al
+Error: Unknown option "--al".
+Run "gemini-grounding help" for usage.
+```
+
+An error in the syntax of the call adds this second line, or the usage of the command itself where a single command is concerned.
+An error about the values - a model collision, an invalid deadline - says what to do by itself and gets none.
+
 ## Where an option applies
 
 The same option means different things depending on the command, so each command accepts only the ones that do something there.
@@ -65,11 +74,12 @@ An option that has no meaning for the given command aborts with exit code 1 - it
 | `set-backup <id> --thinking <level>` | Saves the backup model **and** its own thinking level |
 | `set-backup <id>` | Saves the backup model and **removes** a previously saved backup level |
 | `set-backup --thinking <level>` | Changes only the level of the backup already saved |
-| `set-backup off --thinking <level>` | Error - a disabled backup has no thinking level |
+| `set-backup off --thinking <level>` | Error - a backup that is off has no thinking level |
 | `set-model <id> --model <id2>` | Error - two models, and only you know which one is meant |
-| `set-deadline <seconds\|off>` | Saves after how many seconds Google aborts a search; takes no option |
+| `set-deadline <seconds\|off>` | Saves after how many seconds Google aborts a search; takes no option besides `--debug` |
 | `models --all` | Lists every model with a status column, past the shortlist the default view shows |
-| `config`, `help`, `version`, `models` with `--model` / `--thinking` | Error |
+| `--debug` on a search, `models` or any `set-*` command | Prints the full stack trace if the command fails at runtime |
+| `config`, `help`, `version` with any option, `models` with `--model` / `--thinking` | Error |
 
 Every save answers twice - what changed, and what applies from now on:
 
@@ -77,7 +87,7 @@ Every save answers twice - what changed, and what applies from now on:
 $ gemini-grounding set-model gemini-flash-latest --thinking low
 Saved - Model: gemini-flash-latest, Thinking level: low
 
-Primary:  gemini-flash-latest · low
+Default:  gemini-flash-latest · low
 Backup:   gemini-3.5-flash · low (inherited)
 Deadline: 300 s
 ```
@@ -105,7 +115,7 @@ To change only the level, leave the model out:
 $ gemini-grounding set-backup --thinking minimal
 Saved - Backup thinking level: minimal
 
-Primary:  gemini-flash-latest · low
+Default:  gemini-flash-latest · low
 Backup:   gemini-3.5-flash · minimal
 Deadline: 300 s
 ```
@@ -114,7 +124,7 @@ That needs a backup to already be saved and switched on - a level without its mo
 
 ```console
 $ gemini-grounding set-backup --thinking minimal
-no backup model is set - a thinking level on its own has nothing to belong to. Name the backup model together with the level.
+Error: no backup model is set - a thinking level on its own has nothing to belong to. Name the backup model together with the level.
 ```
 
 The same applies to `set-backup off --thinking <level>`, which aborts with `a backup that is switched off has no thinking level`.
@@ -124,7 +134,7 @@ Default and backup may not be the same model, and every command that writes a mo
 
 ```console
 $ gemini-grounding set-backup gemini-flash-latest
-"gemini-flash-latest" is already the default model - a backup only helps if it is a different one.
+Error: "gemini-flash-latest" is already the default model - a backup only helps if it is a different one.
 ```
 
 The check runs on the state the write **would produce**, which is why it sits at the one place all three commands pass through (`findModelCollision` in `config.js`, shared with the MCP server).
@@ -134,7 +144,7 @@ A command that names no model at all is let through even when the stored values 
 **`--model` on a search disables the backup for that call.**
 Naming a model is usually a way of checking that particular model, and an answer from a different one does not answer that question.
 
-`gemini-grounding config` shows all three states - a model, `disabled`, or `not set`.
+`gemini-grounding config` shows all three states - a model, `off`, or `not set`.
 The last two behave identically; the distinction records whether the decision was ever made.
 
 ## The deadline
@@ -146,7 +156,7 @@ The last two behave identically; the distinction records whether the decision wa
 $ gemini-grounding set-deadline 600
 Saved - Deadline: 600 s
 
-Primary:  gemini-flash-latest · low
+Default:  gemini-flash-latest · low
 Backup:   gemini-3.5-flash · low (inherited)
 Deadline: 600 s
 ```
@@ -158,14 +168,26 @@ Thirty seconds after the deadline the server stops waiting by itself, in case th
 Without a deadline there is no such brake either.
 Why both exist and what they cost: [specs.md, "The deadline this server does send"](./specs.md#the-deadline-this-server-does-send).
 
-## Errors stay fully visible
+## Errors in one readable line
 
-Unlike the MCP server, the CLI prints the full stack trace including the original Google API error and exits with code 1.
+When a request fails, the CLI prints Google's status code, status name and message on one line and exits with code 1:
 
-When testing, that is exactly what you want.
-A message like `ApiError: {"error":{"code":503, ...}}` tells you the request did not get through to Google, which is a different problem from a broken installation - and one you can do nothing about except try again later.
+```console
+$ gemini-grounding "test" --model gemini-x
+Error: 404 NOT_FOUND - models/gemini-x is not found for API version v1beta, ...
+Run again with --debug for the full stack trace.
+```
 
-A plain usage error (wrong argument, unknown option, empty query, or an unset `GEMINI_API_KEY`) prints only the one explanatory line, also with exit code 1.
+A `503 UNAVAILABLE` tells you the request did not get through to Google, which is a different problem from a broken installation - and one you can do nothing about except try again later.
+
+`--debug` adds the full stack trace and the raw error, including Google's complete response body.
+It is off by default because the stack consists of SDK internals and contains absolute paths of your machine, which end up in every bug report the output is pasted into.
+It is accepted wherever a runtime error can occur: on a search, on `models` and on every `set-*` command.
+
+The MCP server does not use this rendering.
+It hands Google's raw response body to the client, which reads it without effort, so nothing in it - such as the waiting time of a `429` - can get lost on the way.
+
+A plain usage error (wrong argument, unknown option, empty query, or an unset `GEMINI_API_KEY`) also starts with `Error:` and exits with code 1, but never points to `--debug`.
 Nobody needs a stack trace for a typo.
 
 The key is checked before the request rather than left to the API call, which is why it lands in this group and not among the errors above.
@@ -175,7 +197,7 @@ Nothing has been sent at that point, the line already says what to do, and it is
 
 ```console
 $ gemini-grounding config
-Primary:  gemini-flash-latest · medium
+Default:  gemini-flash-latest · medium
 Backup:   gemini-3.5-flash · medium (inherited)
 Deadline: 300 s
 API key:  set (39 chars)
@@ -233,4 +255,4 @@ The leftover copy in the clone can be deleted.
 | 1 | Usage error, or the API call failed |
 
 There is no separate code for API failures.
-The distinction is in the output: a usage error is one line, an API failure is a stack trace with Google's original message.
+The distinction is in the output: an API failure names Google's status code and points to `--debug`, a usage error does neither.

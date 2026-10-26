@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { describeError } from "../gemini.js";
+import { describeError, formatRuntimeError } from "../gemini.js";
 
 test("appends the cause of a real network error", async () => {
   // A REAL error from Node's fetch instead of a rebuilt one: the shape of
@@ -55,4 +55,30 @@ test("leaves an API error unchanged", () => {
     '"status":"UNAVAILABLE"}}';
 
   assert.equal(describeError(new Error(message)), message);
+});
+
+test("renders an API error as code, status and Google's text for the command line", () => {
+  // The shape of an ApiError: the raw body as message, the code as status.
+  const error = Object.assign(
+    new Error(
+      '{"error":{"code":404,"message":"models/gemini-x is not found.","status":"NOT_FOUND"}}',
+    ),
+    { status: 404 },
+  );
+
+  assert.equal(formatRuntimeError(error), "404 NOT_FOUND - models/gemini-x is not found.");
+});
+
+test("leaves everything that is no API error to describeError", () => {
+  const network = new TypeError("fetch failed", {
+    cause: Object.assign(new Error("connect refused"), { code: "ECONNREFUSED" }),
+  });
+  assert.equal(formatRuntimeError(network), describeError(network));
+
+  // A status without a JSON body, and a plain Error carrying one inside its
+  // text, as runSearch throws when both models fail.
+  const noBody = Object.assign(new Error("Bad Gateway"), { status: 502 });
+  assert.equal(formatRuntimeError(noBody), "Bad Gateway");
+  const both = new Error('gemini-x: {"error":{}} | backup gemini-y: {"error":{}}');
+  assert.equal(formatRuntimeError(both), both.message);
 });

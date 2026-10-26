@@ -7,7 +7,7 @@
 
 import { createRequire } from "node:module";
 
-import { runSearch, listModels, API_KEY_MISSING_MESSAGE } from "./gemini.js";
+import { runSearch, listModels, formatRuntimeError, API_KEY_MISSING_MESSAGE } from "./gemini.js";
 import {
   CONFIG_PATH,
   DEFAULT_DEADLINE_SECONDS,
@@ -25,57 +25,74 @@ import {
 // Import Attributes sits there.
 const { version } = createRequire(import.meta.url)("./package.json");
 
-const HELP = `gemini-grounding - CLI for the Gemini grounding MCP server
+const HELP = `gemini-grounding - Google search through Gemini, from the command line
 
 Usage:
   gemini-grounding "<query>" [--model <id>] [--thinking <level>]
-  gemini-grounding <command> [argument]
+  gemini-grounding <command> [arguments]
 
 Commands:
-  config                 Show saved model, thinking level, backup, deadline and
-                         API key status
-  models [--all]         List the models suggested for use here; --all lists
-                         every model the API key exposes, with a status column.
-                         Either way set-model accepts any of them
-  set-model <id>         Persist the default model; add --thinking <level> to
-                         persist both in one call
-  set-thinking <level>   Persist the default thinking level; add --model <id> to
-                         persist both in one call
-  set-backup <id|off>    Persist a model to retry a failed request with; add
-                         --thinking <level> to give it its own level, leave it
-                         out to inherit the level of the call. "off" disables it
-  set-backup
-    --thinking <level>   Change only the level of the backup already saved
-  set-deadline <s|off>   Persist after how many seconds Google aborts a search
-                         (default ${DEFAULT_DEADLINE_SECONDS}); "off" sends no deadline, so Google's own
-                         limit applies
-  help                   Show this help
-  version                Show the installed version
+  config                         Show the saved settings and the API key status
+  models [--all]                 List the models offered here; --all lists all
+                                 models the API key exposes, with their status
+  set-model <id>                 Save the default model
+  set-thinking <level>           Save the default thinking level
+  set-backup <id|off>            Save a model to retry a failed search with;
+                                 "off" switches the backup off
+  set-backup --thinking <level>  Change only the backup's thinking level
+  set-deadline <seconds|off>     Save after how many seconds Google aborts a
+                                 search (default ${DEFAULT_DEADLINE_SECONDS}); "off" sends none
+  help                           Show this help
+  version                        Show the installed version
 
 Options:
-  --model <id>           On a search: use for this call only, nothing is saved.
-                         Also disables the backup model for that call
-  --thinking <level>     On a search: use for this call only, nothing is saved
+  --model <id>                   On a search: use this model for this call
+                                 only, without the backup. With set-thinking:
+                                 save it as well
+  --thinking <level>             On a search: use this level for this call
+                                 only. With set-model or set-backup: save it
+                                 as well - a backup saved without one inherits
+                                 the level of the call
+  --debug                        On an error, also print the full stack trace
 
 Thinking levels: ${THINKING_LEVELS.join(", ")}
 
-Anything that is not a known command is treated as a search query - one single
-argument, so quote it if it contains spaces. An option a command has no meaning
-for is an error, never silently ignored.
+Examples:
+  gemini-grounding "which node version is the current lts"
+  gemini-grounding "explain css nesting" --thinking high
+  gemini-grounding set-model gemini-flash-latest --thinking low
+  gemini-grounding set-backup gemini-3.6-flash
 
-The API key comes from GEMINI_API_KEY. The saved defaults are shared with the
-MCP server; "config" prints where they live.`;
+The query is one argument - quote it if it contains spaces. The API key comes
+from GEMINI_API_KEY. Settings are shared with the MCP server; "config" shows
+where they are stored.`;
+
+/** The second line of a syntax error, for when the message alone does not say how. */
+const SEE_HELP = 'Run "gemini-grounding help" for usage.';
 
 /**
  * Usage error - wrong arguments, unknown option, empty query. Handled
  * differently from a real runtime error: the message only, no stack trace,
  * because a typo on the command line does not need one.
+ *
+ * hint is an optional second line - the usage of the command or SEE_HELP - for
+ * errors in the syntax of the call. An error about the values, such as a
+ * model collision, says what to do by itself and gets none.
  */
-class UsageError extends Error {}
-
-function fail(message) {
-  throw new UsageError(message);
+class UsageError extends Error {
+  constructor(message, hint) {
+    super(message);
+    this.hint = hint;
+  }
 }
+
+function fail(message, hint) {
+  throw new UsageError(message, hint);
+}
+
+// Module scope because the catch at the end of the file reads it, outside
+// main(), where it is parsed.
+let debug = false;
 
 function requireThinkingLevel(value, origin) {
   if (!THINKING_LEVELS.includes(value)) {
@@ -94,7 +111,7 @@ function takeFlag(args, name) {
   if (index === -1) return undefined;
   const value = args[index + 1];
   if (value === undefined || value.startsWith("--")) {
-    fail(`Missing value for --${name}`);
+    fail(`Missing value for --${name}.`, SEE_HELP);
   }
   args.splice(index, 2);
   return value;
@@ -139,6 +156,8 @@ async function main() {
   // passed by the user start at index 2.
   const args = process.argv.slice(2);
 
+  // First, so that it is known whatever goes wrong after it.
+  debug = takeSwitch(args, "debug");
   const modelFlag = takeFlag(args, "model");
   const thinkingFlag = takeFlag(args, "thinking");
   const allFlag = takeSwitch(args, "all");
@@ -153,20 +172,21 @@ async function main() {
   const unknownOption = args.find(
     (arg) => arg.startsWith("--") && arg !== "--help" && arg !== "--version",
   );
-  if (unknownOption) fail(`Unknown option "${unknownOption}".`);
+  if (unknownOption) fail(`Unknown option "${unknownOption}".`, SEE_HELP);
 
   const [command, ...rest] = args;
 
   // Every branch checks that nothing surplus is left over - otherwise
   // "set-thinking low nonsense" would save without complaint and drop the rest.
   const requireNoArgs = () => {
-    if (rest.length > 0) fail(`"${command}" takes no arguments.`);
+    if (rest.length > 0) fail(`"${command}" takes no arguments.`, SEE_HELP);
   };
 
   const givenFlags = [];
   if (modelFlag !== undefined) givenFlags.push("model");
   if (thinkingFlag !== undefined) givenFlags.push("thinking");
   if (allFlag) givenFlags.push("all");
+  if (debug) givenFlags.push("debug");
 
   // Counterpart to requireNoArgs for the options: every branch names the ones
   // that mean something to it, everything else aborts. Without this check
@@ -177,13 +197,17 @@ async function main() {
   // accidentally permitted everywhere.
   const allowFlags = (...allowed) => {
     const unexpected = givenFlags.find((name) => !allowed.includes(name));
-    if (unexpected) fail(`"${command}" takes no --${unexpected} option.`);
+    if (unexpected) fail(`"${command}" takes no --${unexpected} option.`, SEE_HELP);
   };
 
+  // --debug is allowed wherever a runtime error can occur: the search, the
+  // model list and every command that writes the file.
   switch (command) {
     case undefined:
-      // A call without arguments is a usage error: help to stderr, exit 1.
-      fail(HELP);
+      // A call without arguments is a usage error: help to stderr, exit 1. Not
+      // through fail(), which would put "Error: " in front of the help.
+      console.error(HELP);
+      process.exitCode = 1;
       break;
 
     case "help":
@@ -213,7 +237,7 @@ async function main() {
         : "NOT SET - set the GEMINI_API_KEY environment variable";
       // The same two lines as after every set command - "config" is not a second
       // rendering of the same thing, but that one plus what only matters here.
-      // Three states of the backup stay distinguishable: a model, "disabled",
+      // Three states of the backup stay distinguishable: a model, "off",
       // "not set".
       console.log(formatConfigState());
       console.log(`API key:  ${keyStatus}`);
@@ -227,7 +251,7 @@ async function main() {
 
     case "models":
       // Before listModels, so a typo costs no API call.
-      allowFlags("all");
+      allowFlags("all", "debug");
       requireNoArgs();
       console.log(await listModels({ all: allFlag, allOption: "--all" }));
       break;
@@ -237,18 +261,22 @@ async function main() {
     // expire. The command's own option is an error - "set-model x --model y"
     // names two models, and which one is meant only the caller can know.
     case "set-model": {
-      allowFlags("thinking");
+      allowFlags("thinking", "debug");
       if (rest.length !== 1) {
-        fail("Usage: gemini-grounding set-model <model-id> [--thinking <level>]");
+        fail(
+          '"set-model" takes exactly one model id.',
+          "Usage: gemini-grounding set-model <id> [--thinking <level>]",
+        );
       }
       saveAndReport({ model: rest[0], thinkingLevel: thinkingFlag });
       break;
     }
 
     case "set-thinking": {
-      allowFlags("model");
+      allowFlags("model", "debug");
       if (rest.length !== 1) {
         fail(
+          '"set-thinking" takes exactly one thinking level.',
           `Usage: gemini-grounding set-thinking <${THINKING_LEVELS.join("|")}> [--model <id>]`,
         );
       }
@@ -261,7 +289,7 @@ async function main() {
     // without --thinking, setSavedConfig() expires a previously stored level
     // instead of leaving it in place (see setSavedConfig).
     case "set-backup": {
-      allowFlags("thinking");
+      allowFlags("thinking", "debug");
 
       // Without a model argument the command applies to the backup already
       // stored and changes only its level. Without this branch the model would
@@ -277,7 +305,10 @@ async function main() {
       }
 
       if (rest.length !== 1) {
-        fail("Usage: gemini-grounding set-backup <model-id|off> [--thinking <level>]");
+        fail(
+          '"set-backup" takes exactly one model id, or "off".',
+          "Usage: gemini-grounding set-backup <id|off> [--thinking <level>]",
+        );
       }
       // false and not deleting: the difference between "never set" and
       // "deliberately switched off" stays in the file. A --thinking alongside is
@@ -289,8 +320,13 @@ async function main() {
     }
 
     case "set-deadline": {
-      allowFlags();
-      if (rest.length !== 1) fail("Usage: gemini-grounding set-deadline <seconds|off>");
+      allowFlags("debug");
+      if (rest.length !== 1) {
+        fail(
+          '"set-deadline" takes exactly one value.',
+          "Usage: gemini-grounding set-deadline <seconds|off>",
+        );
+      }
       // Digits only, so "1e3", "300.5" or " 300" fail here instead of turning
       // into a number Number() would quietly accept. "off" becomes false for
       // the same reason as on set-backup.
@@ -311,10 +347,13 @@ async function main() {
       // beforehand, so a distorted query would be sent off unnoticed. An own
       // message instead of allowFlags: there the command name would stand in the
       // quotes, and here that name is the search query itself.
-      if (allFlag) fail('--all is only valid for the "models" command.');
+      if (allFlag) fail('--all is only valid for the "models" command.', SEE_HELP);
 
       if (rest.length > 0) {
-        fail("The query must be a single argument - put it in quotes.");
+        fail(
+          "The query must be a single argument - put it in quotes.",
+          'Example: gemini-grounding "what is an mcp server"',
+        );
       }
       const query = command.trim();
       // Without this check an empty argument - from an unset shell variable, say
@@ -344,11 +383,11 @@ async function main() {
 try {
   await main();
 } catch (error) {
-  // On a real runtime error, console.error(error) prints the same full stack
-  // trace Node would show for an unhandled error - while testing that is exactly
-  // what is wanted, unlike index.js, which has to condense the error into a
-  // single line for the client. A usage error needs no stack trace, only the
-  // message.
+  // A runtime error prints one readable line, and the full stack trace only on
+  // --debug: the stack consists of SDK internals and carries absolute local
+  // paths, which end up in every bug report it is pasted into. With --debug,
+  // console.error(error) prints what Node would show for an unhandled error. A
+  // usage error needs no stack trace at all, only the message.
   //
   // It is caught all the same, because Node ends the process hard on an
   // unhandled rejection: with a network connection still open, libuv on Windows
@@ -359,6 +398,12 @@ try {
   // - that holds without exception, which is why fail() only throws a UsageError
   // instead of exiting itself: stdout and stderr are asynchronous on a Windows
   // TTY, so process.exit() could cut off a longer output such as HELP.
-  console.error(error instanceof UsageError ? error.message : error);
+  if (error instanceof UsageError) {
+    console.error(`Error: ${error.message}`);
+    if (error.hint) console.error(error.hint);
+  } else {
+    console.error(`Error: ${formatRuntimeError(error)}`);
+    console.error(debug ? error : "Run again with --debug for the full stack trace.");
+  }
   process.exitCode = 1;
 }

@@ -64,24 +64,30 @@ Implemented as flat modules without a `src/` layout and without a build step
   `gemini.js` and `config.js` that `index.js` uses, reachable from the command
   line. Without an additional dependency (a `switch` over `process.argv` is
   enough), without a second home for the API key. Two deliberate differences
-  from the MCP server: runtime errors are printed with a full stack trace
-  instead of being condensed into a single line for the client as in
-  `index.js`, and output goes to stdout - which would be impossible with the
-  stdio transport, because JSON-RPC runs over it. Invocation and subcommands:
-  see the README.
+  from the MCP server: a runtime error is printed for a human - an `ApiError`
+  as `<code> <status> - <Google's text>` through `formatRuntimeError()` in
+  `gemini.js`, the full stack trace only on `--debug` - where `index.js`
+  hands the client Google's raw body through `describeError()`, and output
+  goes to stdout - which would be impossible with the stdio transport, because
+  JSON-RPC runs over it. The stack stays behind `--debug` because it consists
+  of SDK internals and carries absolute local paths into every bug report it is
+  pasted into. Invocation and subcommands: see the README.
 
-  The error is still caught via `try`/`catch` even though the output stays the
-  same: if Node terminates the process hard because of an unhandled rejection
+  The error would have to be caught via `try`/`catch` even with Node's own
+  output: if Node terminates the process hard because of an unhandled rejection
   while a network connection is still open, libuv on Windows aborts with
   `Assertion failed ... src\win\async.c`, and the process ends with
-  `0xC0000409` instead of code 1. Hence `console.error(error)` - identical to
-  Node's own output - followed by `process.exitCode = 1` rather than
-  `process.exit()`, so that Node shuts down normally.
+  `0xC0000409` instead of code 1. Hence the output through `console.error` -
+  on `--debug` `console.error(error)`, identical to Node's own output -
+  followed by `process.exitCode = 1` rather than `process.exit()`, so that
+  Node shuts down normally.
 
   This holds **without exception**: `cli.js` contains no `process.exit()`. A
   usage error throws a `UsageError` instead, which the same `catch` block picks
-  up and prints with its message only - a stack trace is pointless for a typo on
-  the command line. A second argument against `process.exit()`: on Windows,
+  up and prints with its message only, behind `Error:` like every other error
+  - a stack trace is pointless for a typo on the command line. An error in the
+  syntax of the call carries a second line with the command's usage or a
+  pointer to `help`; an error about the values says what to do by itself. A second argument against `process.exit()`: on Windows,
   stdout and stderr are asynchronous on a TTY, and an immediate exit can cut off
   longer output such as the help text. Because `fail()` throws instead of
   exiting, argument parsing and the `switch` both live inside a `main()`
@@ -725,7 +731,8 @@ Limits the filter does not resolve - both are the reason for the exclusion list 
   generation. A field that would indicate this state up front does not exist.
 
 `all` is therefore not merely a convenience switch: since the list gives no guarantee anyway, the filtered view must never be the only one.
-`all: true` shows the complete list with a status column.
+`all: true` shows the complete list with a status column, the offered models first and marked `offered`; a model without `generateContent` shows `no text` and what it does instead, for example `no text (embedContent)`.
+Both views start with a header row naming the columns.
 If the filter yields no model at all - because the API no longer provides the fields being evaluated, say - `listModels` falls back to the complete list on its own and says so in the notice text, rather than producing empty output.
 
 ### The exclusion list
@@ -782,7 +789,8 @@ The script is excluded from the published package by the `files` list in `packag
 
 **The notice names the list.**
 An exclusion the user cannot see is as opaque as the shortened choice this list came from, so the default view states how many models are hidden and that a full listing bypasses the exclusion.
-It says that in one line: the notice is read by a human at the terminal on every single call, and a paragraph of reasoning that never changes is one the eye learns to skip.
+It says that in one line under 80 columns: the notice is read by a human at the terminal on every single call, a paragraph of reasoning that never changes is one the eye learns to skip, and a longer line wraps mid-word.
+For the same reason it does not name `models-excluded.js`, a file somebody who installed the package never sees; only the two fallback notices, which address whoever maintains the list, do.
 The reasoning belongs here, where it is read once; the numbers in the notice come from the response, so no wording has to be revised when models come and go.
 
 The display rule for agents - name the listed models before proposing a shorter selection, mark that selection as a suggestion, and say that any other model id can be set as well - sits in the tool description of `gemini-list-models` instead.
@@ -818,7 +826,7 @@ Three of the five parameters have a state beyond "a value":
 The exception in that table is the unit rule described under "Implementation": a `backupModel` arriving without a level of its own resets the stored one, so a level chosen for the previous backup does not silently carry over to the new model.
 `setSavedConfig` therefore returns what it actually wrote, `null` included - only then can the confirmation name the level that fell away instead of concealing it.
 Passing `backupThinkingLevel` on its own is how the level of the stored backup is changed without touching the model.
-That requires a stored backup that is switched on: a level without its model has nothing to belong to, would sit in the file without effect, and the confirmation would name a value that the state block two lines below revokes as `not set` or `disabled`.
+That requires a stored backup that is switched on: a level without its model has nothing to belong to, would sit in the file without effect, and the confirmation would name a value that the state block two lines below revokes as `not set` or `off`.
 `findBackupLevelProblem` in `config.js` rejects both cases before anything is written - `null` stays exempt, because the way back to "inherits from the call" must remain open even when no backup is left.
 
 That check and `findModelCollision` below are the same shape for the same reason, and both guard both interfaces.
@@ -896,7 +904,7 @@ Every save answers two different questions, and both are needed:
 ```text
 Saved - Backup: gemini-3.5-flash, Backup thinking level: inherited from the call
 
-Primary:  gemini-flash-latest · high
+Default:  gemini-flash-latest · high
 Backup:   gemini-3.5-flash · high (inherited)
 Deadline: 300 s
 ```

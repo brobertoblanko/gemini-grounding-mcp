@@ -77,8 +77,30 @@ test("the default list hides the excluded models and says so", async () => {
   for (const id of Object.keys(EXCLUDED_MODELS)) {
     assert.ok(!output.includes(`${id} `), `${id} must not appear in the default list`);
   }
-  assert.match(output, /models-excluded\.js/);
-  assert.match(output, /8 of 60 models offered here, \d+ usable ones excluded/);
+  assert.match(output, /8 of 60 models offered, \d+ excluded after testing/);
+});
+
+test("the note fits a terminal line", async () => {
+  // Wider than 80 columns, the terminal wraps it mid-word.
+  for (const all of [false, true]) {
+    mockFetch(listResponse);
+    const note = (await listModels({ all })).split("\n").at(-1);
+    assert.ok(note.length < 80, `note is ${note.length} columns: ${note}`);
+  }
+});
+
+test("all=true lists the offered models first, under a header", async () => {
+  mockFetch(listResponse);
+  const [header, ...rest] = (await listModels({ all: true })).split("\n");
+
+  assert.match(header, /^MODEL\s+INPUT\s+OUTPUT\s+STATUS$/);
+  const statuses = rest.filter((line) => line !== "").slice(0, -1).map((line) => line.trim());
+  const firstOther = statuses.findIndex((line) => !line.endsWith("  offered"));
+  assert.equal(firstOther, 8, "the 8 offered models lead the list");
+  assert.ok(
+    statuses.slice(firstOther).every((line) => !line.endsWith("  offered")),
+    "no offered model after the first other one",
+  );
 });
 
 test("the note names the switch the way the caller's frontend spells it", async () => {
@@ -86,10 +108,10 @@ test("the note names the switch the way the caller's frontend spells it", async 
   // and the two frontends spell that switch differently. A wording that fits
   // both would name neither.
   mockFetch(listResponse);
-  assert.match(await listModels({ allOption: "--all" }), /--all lists them all/);
+  assert.match(await listModels({ allOption: "--all" }), /--all lists all models/);
 
   mockFetch(listResponse);
-  assert.match(await listModels({ allOption: "all: true" }), /all: true lists them all/);
+  assert.match(await listModels({ allOption: "all: true" }), /all: true lists all models/);
 });
 
 test("all=true bypasses the exclusion list and names the kind of each entry", async () => {

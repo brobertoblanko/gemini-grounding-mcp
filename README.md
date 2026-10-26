@@ -140,10 +140,10 @@ needs no installation of its own:
 npx -p @brobertoblanko/gemini-grounding-mcp gemini-grounding "your query"
 ```
 
-It prints the full error including the original Google API message, which the
-MCP server has to condense into a single line for the client. An
-`ApiError: {"error":{"code":503, ...}}` means the request did not get through to
-Google, which is a different problem from a broken installation. That one is
+It prints Google's status code and message on one line, and with `--debug` the
+full stack trace and Google's raw response as well. An `Error: 503 UNAVAILABLE`
+means the request did not get through to Google, which is a different problem
+from a broken installation. That one is
 worth simply retrying: 503 is temporary overload on Google's side, and the
 server already tries such a request up to four times on its own before reporting
 it - which is also why an answer can take some ten seconds longer than usual
@@ -291,7 +291,7 @@ CLI - it then waits silently on stdio, which looks like a hang.
 
 | Command                                 | Effect                                                                                                                                                     |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gemini-grounding "<query>"`            | Search using the saved defaults; `--model <id>` and `--thinking <level>` apply to this call only                                                           |
+| `gemini-grounding "<query>"`            | Search using the saved defaults; `--model <id>` and `--thinking <level>` apply to this call only, `--debug` adds the full stack trace on an error          |
 | `gemini-grounding config`               | Shows the saved models with their thinking levels and the deadline, whether an API key is present, where the config file lives, and the installed version  |
 | `gemini-grounding models [--all]`       | Lists the models suggested for use here with their token limits; `--all` lists every one with a status column                                              |
 | `gemini-grounding set-model <id>`       | Persists the default model; add `--thinking <level>` to save both in one call                                                                              |
@@ -309,7 +309,7 @@ has to be followed by `config`:
 $ gemini-grounding set-backup gemini-3.5-flash
 Saved - Backup: gemini-3.5-flash, Backup thinking level: inherited from the call
 
-Primary:  gemini-flash-latest · high
+Default:  gemini-flash-latest · high
 Backup:   gemini-3.5-flash · high (inherited)
 Deadline: 300 s
 ```

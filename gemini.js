@@ -121,12 +121,30 @@ export function describeError(error) {
 }
 
 /**
+ * The command line's rendering of a runtime error: an ApiError as
+ * "<code> <status> - <Google's text>" instead of its raw JSON body, everything
+ * else as describeError() has it.
+ *
+ * For cli.js only. The MCP handler keeps describeError(): the agent reads the
+ * raw body without effort, and nothing in error.details such as a 429's
+ * retryDelay can get lost on the way. A plain Error carrying such a body inside
+ * its text - both models failing after a fallback - passes through unchanged.
+ */
+export function formatRuntimeError(error) {
+  const { statusName, message } = readErrorBody(error);
+  if (typeof error?.status !== "number" || typeof message !== "string") {
+    return describeError(error);
+  }
+  return `${error.status}${statusName ? ` ${statusName}` : ""} - ${message}`;
+}
+
+/**
  * Exported because cli.js checks the key itself before a search and needs the
  * same wording. The throw below stays as the safety net for every other caller.
  */
 export const API_KEY_MISSING_MESSAGE =
-  "GEMINI_API_KEY is not set. The API key must be provided via environment " +
-  "variable (never hardcoded).";
+  "GEMINI_API_KEY is not set - set the environment variable to your Gemini API " +
+  "key and try again.";
 
 /**
  * deadlineSeconds false sends no header, and Google then runs to its own limit
@@ -477,8 +495,9 @@ export function formatFooter({
 }
 
 /**
- * The API's error body as an object: status ("UNAVAILABLE", "NOT_FOUND", ...)
- * and, where present, the machine-readable reason from error.details.
+ * The API's error body as an object: status ("UNAVAILABLE", "NOT_FOUND", ...),
+ * Google's plain-text message and, where present, the machine-readable reason
+ * from error.details.
  *
  * The message of an ApiError IS the JSON body of the error response, even for a
  * response without JSON - the SDK then builds one itself. In a try all the same:
@@ -490,6 +509,7 @@ export function readErrorBody(error) {
     const body = JSON.parse(error.message)?.error;
     return {
       statusName: body?.status,
+      message: body?.message,
       reason: body?.details?.find((detail) => detail.reason)?.reason,
     };
   } catch {
@@ -786,17 +806,29 @@ export function isExcludedModel(model) {
   return Object.hasOwn(EXCLUDED_MODELS, modelId(model));
 }
 
+/** Whether a model is in the default list: usable and not excluded. */
+function isOfferedModel(model) {
+  return isUsableModel(model) && !isExcludedModel(model);
+}
+
 /**
  * Why a model is not in the default list - for the --all view only. An excluded
  * model shows the kind of its exclusion, everything before the first dash of its
  * reason: the reason itself runs to three lines for the "unsuitable" entries,
  * and the kind is what says how much the entry is worth.
+ *
+ * A model without generateContent names what it does instead, skipping the
+ * count* actions: the native audio models list countTokens first, which says
+ * nothing about them.
  */
 function modelStatus(model) {
   const actions = model.supportedActions ?? [];
-  if (!actions.includes("generateContent")) return actions[0] ?? "no generateContent";
+  if (!actions.includes("generateContent")) {
+    const action = actions.find((name) => !name.startsWith("count")) ?? actions[0];
+    return action ? `no text (${action})` : "no text";
+  }
   if (model.thinking !== true) return "no thinking";
-  if (!isExcludedModel(model)) return "thinking";
+  if (!isExcludedModel(model)) return "offered";
   return EXCLUDED_MODELS[modelId(model)].split(" - ")[0];
 }
 
@@ -807,9 +839,10 @@ function modelStatus(model) {
  *
  * Two filters run in the default view, and the closing note counts both: leaving
  * EXCLUDED_MODELS unmentioned would make it as invisible to the user as the
- * shortened choice that issue #15 started from. The note stays one line and
- * takes every number from the response, so no wording needs revising when models
- * come and go. Full derivation: docs/specs.md, "The notice names the list".
+ * shortened choice that issue #15 started from. The note stays a single line
+ * under 80 columns, so a terminal does not wrap it mid-word, and takes every
+ * number from the response, so no wording needs revising when models come and
+ * go. Full derivation: docs/specs.md, "The notice names the list".
  *
  * allOption is how the caller's own frontend spells that switch, because the
  * note names it and the two spell it differently: "--all" on the command line,
@@ -828,7 +861,7 @@ export async function listModels({ all = false, allOption = "--all" } = {}) {
   if (models.length === 0) return "No models available for this API key.";
 
   const usable = models.filter(isUsableModel);
-  const offered = usable.filter((model) => !isExcludedModel(model));
+  const offered = usable.filter(isOfferedModel);
 
   // Guard against an empty result, whichever filter empties it: the API might
   // stop supplying the evaluated fields, or the exclusion list might one day
@@ -838,17 +871,28 @@ export async function listModels({ all = false, allOption = "--all" } = {}) {
   const showAll = all || filterFailed;
   const shown = [...(showAll ? models : exclusionFailed ? usable : offered)];
 
+  // In the full view the offered models come first: they are what somebody
+  // picking a model is looking for, and alphabetically they scatter among 50
+  // others.
   const name = modelId;
-  shown.sort((a, b) => name(a).localeCompare(name(b)));
-  const width = Math.max(...shown.map((model) => name(model).length));
+  const rank = (model) => (showAll && !isOfferedModel(model) ? 1 : 0);
+  shown.sort((a, b) => rank(a) - rank(b) || name(a).localeCompare(name(b)));
+  const width = Math.max("MODEL".length, ...shown.map((model) => name(model).length));
 
-  const lines = shown.map((model) => {
-    const limits =
-      `${formatTokenLimit(model.inputTokenLimit).padStart(4)} in / ` +
-      `${formatTokenLimit(model.outputTokenLimit).padStart(4)} out`;
-    const status = showAll ? `  ${modelStatus(model)}` : "";
-    return `${name(model).padEnd(width)}  ${limits}${status}`;
-  });
+  const row = (id, input, output, status) =>
+    `${id.padEnd(width)}  ${input.padStart(5)}  ${output.padStart(6)}` +
+    (showAll ? `  ${status}` : "");
+  const lines = [
+    row("MODEL", "INPUT", "OUTPUT", "STATUS"),
+    ...shown.map((model) =>
+      row(
+        name(model),
+        formatTokenLimit(model.inputTokenLimit),
+        formatTokenLimit(model.outputTokenLimit),
+        modelStatus(model),
+      ),
+    ),
+  ];
 
   const hidden = usable.length - offered.length;
 
@@ -863,12 +907,12 @@ export async function listModels({ all = false, allOption = "--all" } = {}) {
       "Check models-excluded.js against this API key.";
   } else if (all) {
     note =
-      `All ${models.length} models; the ${offered.length} marked "thinking" are the default ` +
-      "list, the rest name the kind of their exclusion. Listed is no guarantee of an answer.";
+      `All ${models.length} models; "offered" marks the default list. ` +
+      "Not every model answers.";
   } else {
     note =
-      `${offered.length} of ${models.length} models offered here, ${hidden} usable ones ` +
-      `excluded (models-excluded.js). ${allOption} lists them all with their status.`;
+      `${offered.length} of ${models.length} models offered, ${hidden} excluded after testing. ` +
+      `${allOption} lists all models.`;
   }
 
   return `${lines.join("\n")}\n\n${note}`;
