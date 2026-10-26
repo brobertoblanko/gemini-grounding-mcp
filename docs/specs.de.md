@@ -20,7 +20,7 @@ automatisch die neueste Version aus der npm-Registry nach. Das bedeutet:
 der ausschließlich zwei offizielle, seriöse SDKs nutzt:
 
 - `@google/genai` - Googles offizielles Gemini-SDK
-- `@modelcontextprotocol/sdk` - das offizielle MCP-SDK (Anthropic)
+- `@modelcontextprotocol/server` - das offizielle MCP-SDK (Anthropic), Server-Paket seiner 2.x-Linie
 
 Dadurch bleibt der komplette Code lokal, nachvollziehbar und ändert sich nur,
 wenn ich selbst etwas anpasse - kein automatischer Versionswechsel im Hintergrund.
@@ -55,7 +55,8 @@ Umgesetzt in flachen Modulen ohne `src/`-Layout und ohne Build-Step
 (für die Projektgröße bringt `src/` in Node ohne Build-Step keinen Vorteil):
 
 - `index.js` - Server-Bootstrap, registriert die drei Tools über
-  `server.registerTool(...)`, baut den stdio-Transport auf.
+  `server.registerTool(...)` in `createServer()` und übergibt diese Factory
+  an `serveStdio` (siehe „Beide Protokollrevisionen bedienen").
 - `gemini.js` - kapselt den `GoogleGenAI`-Aufruf inkl. der drei kombinierten
   Built-in-Tools, baut Quellenliste und Footer aus der API-Antwort.
 - `citations.js` - setzt die Belegmarker in den Antworttext. Eigene Datei, weil
@@ -167,11 +168,13 @@ Quellen: [Gemini API Docs](https://ai.google.dev/gemini-api/docs),
 - Token-Zahlen liegen unter `response.usageMetadata`: `promptTokenCount`,
   `candidatesTokenCount`, `totalTokenCount`, sowie `thoughtsTokenCount` für
   die reinen Thinking-Tokens.
-- Verbindungsaufbau im MCP-SDK erfolgt über
-  `await server.connect(transport)` (nicht umgekehrt).
-- `server.registerTool(name, { title?, description?, inputSchema }, handler)`
-  ist die aktuell empfohlene API; `inputSchema` akzeptiert sowohl ein rohes
-  Shape-Objekt (`{ query: z.string() }`) als auch ein volles `z.object({...})`.
+- MCP-SDK 2.x (Stand 10/2026, Version 2.4.0): `McpServer` kommt aus
+  `@modelcontextprotocol/server`, `serveStdio` und `StdioServerTransport` aus
+  dem Subpath `@modelcontextprotocol/server/stdio`. `@modelcontextprotocol/node`
+  ist HTTP-Middleware und für stdio nicht nötig.
+- `server.registerTool(name, { title?, description?, inputSchema?, annotations?, _meta? }, handler)`;
+  `inputSchema` ist ein Standard Schema wie `z.object({...})`. Ein rohes Shape
+  (`{ query: z.string() }`) wird nur noch über einen veralteten Overload angenommen.
 
 ## Bereits getestete Gemini-API-Befehle (Referenz)
 
@@ -1052,7 +1055,7 @@ beim Client anzukommen.
 server.registerTool(
   "gemini-set-config",
   {
-    inputSchema: {
+    inputSchema: z.object({
       model: z
         .string()
         .optional()
@@ -1066,7 +1069,7 @@ server.registerTool(
       backupModel: z
         .union([z.string(), z.literal(false)])
         .optional()
-        .describe("Modell fuer den zweiten Versuch; false schaltet es ab"),
+        .describe("Modell für den zweiten Versuch; false schaltet es ab"),
       backupThinkingLevel: z
         .enum(["minimal", "low", "medium", "high"])
         .nullable()
@@ -1076,12 +1079,13 @@ server.registerTool(
         .union([z.number().int().positive(), z.literal(false)])
         .optional()
         .describe("Sekunden, nach denen Google eine Suche abbricht; false sendet keine"),
-    },
+    }),
+    // annotations und _meta: siehe „Tool-Annotations"
   },
   async ({ model, thinkingLevel, backupModel, backupThinkingLevel, deadlineSeconds }) => {
     // mindestens ein Parameter ist Pflicht, sonst Fehler
     // findModelCollision und findBackupLevelProblem vor dem Schreiben - siehe config.js
-    // Merge statt Ueberschreiben, ausser bei der Backup-Einheit - siehe config.js
+    // Merge statt Überschreiben, außer bei der Backup-Einheit - siehe config.js
     const saved = setSavedConfig({
       model,
       thinkingLevel,
@@ -1230,6 +1234,65 @@ Ein solcher Fall erzeugt deshalb eine Warnung, die den Pfad und die Originalmeld
 
 Sie geht nach **stderr**, nie nach stdout: Der MCP-Server spricht über stdout JSON-RPC, wo eine einzelne verirrte Zeile die Verbindung zum Client zerstört.
 Ein Flag auf Modulebene begrenzt sie auf ein Vorkommen, denn `readConfig()` läuft pro Aufruf viermal - einmal für das Modell, einmal für das Thinking-Level, einmal für das Backup, einmal für die Frist. Ohne das Flag stünde dieselbe Warnung viermal da und sähe nach vier Fehlern aus.
+
+## MCP-Schnittstelle
+
+### Beide Protokollrevisionen bedienen
+
+Der Server baut auf `@modelcontextprotocol/server` 2.x auf, der Linie des MCP TypeScript SDK, die seit 27.07.2026 stabil ist.
+Das 1.x-Paket `@modelcontextprotocol/sdk` implementiert das Protokoll nur bis zur Revision 2025-11-25 und ist in der Wartungsphase; die Revision 2026-07-28 gibt es nur in 2.x.
+
+`index.js` verbindet keinen Server selbst mit einem Transport, sondern übergibt `createServer` an `serveStdio` aus `@modelcontextprotocol/server/stdio`.
+`server.connect(new StdioServerTransport())` würde nur Clients der 2025er-Generation bedienen.
+`serveStdio` liest die Revision aus der ersten Nachricht des Clients - `initialize` für 2025-11-25, `server/discover` für 2026-07-28 - und baut aus der Factory einen Server für die Verbindung.
+Seit SDK 2.3.0 bedient ein Server-Objekt nur eine Verbindung zur Zeit, die Factory ist also auch die Form, die das SDK erwartet.
+
+Die Revision wählt Claude Code selbst: Ab v2.1.232 fragt seine v2-Client-Runtime stdio-Server, ob sie 2026-07-28 unterstützen, und nutzt sie dann; `MCP_PROTOCOL_NEGOTIATION=legacy` hält es bei 2025-11-25.
+Gemessen mit Claude Code 2.1.310: `auto` eröffnete mit `server/discover` und lief bei jedem Aufruf über 2026-07-28, `legacy` eröffnete mit `initialize` über 2025-11-25.
+In beiden Fällen kamen Footer und Quellenliste wie bisher an.
+Die Ergebnisse von `gemini-list-models`, von beiden Fehlerpfaden von `gemini-set-config` und von einer Anfrage an ein fehlendes Modell sind byteidentisch mit denen des 1.x-Servers.
+
+Drei Dinge unterscheiden sich auf der Leitung, keines davon in einem Tool-Ergebnis:
+
+- Die Eingabeschemas werden als JSON Schema 2020-12 statt draft-07 angekündigt; Properties und Beschreibungen sind unverändert.
+- 1.x kündigte für jedes Tool `execution: { taskSupport: "forbidden" }` an, 2.x lässt es weg. Die Spec legt `"forbidden"` als Standard fest, wenn das Feld fehlt.
+- Ein Aufruf, dessen Argumente am Schema scheitern, bekommt vom SDK einen leicht anderen Text (`query: Invalid input: ...` statt `Invalid input: ... at query`). Dieser Text stammt vom SDK, nicht von diesem Server.
+
+Die Eingabeschemas werden als `z.object({...})` übergeben.
+2.x nimmt ein rohes Shape wie `{ query: z.string() }` zwar noch an, aber nur über einen veralteten Overload, der es mit der SDK-eigenen Kopie von Zod umschließt.
+Zod muss 4.2 oder neuer sein: Mit 4.0 und 4.1 weicht das SDK auf eine Umwandlung aus, die die `.describe()`-Texte verwirft, und das Modell verliert ohne jeden Fehler alle Parameterbeschreibungen.
+
+`test/mcp.test.js` startet das echte `index.js` über stdio in beiden Revisionen, ohne Key und ohne die Gemini-API zu erreichen, und prüft unter anderem, dass jede Parameterbeschreibung ankommt.
+
+### Tool-Annotations
+
+Jedes Tool teilt dem Client mit, welche Art von Aktion es ist:
+
+| Tool | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` |
+| --- | --- | --- | --- | --- |
+| `gemini-search` | `true` | - | - | `true` |
+| `gemini-list-models` | `true` | - | - | `false` |
+| `gemini-set-config` | `false` | `false` | `true` | `false` |
+
+`destructiveHint` und `idempotentHint` haben nur Bedeutung, wenn `readOnlyHint` `false` ist, deshalb lassen die beiden lesenden Tools sie weg.
+`gemini-list-models` ist nicht Open-World: `models.list` erreicht zwar Google, liefert aber nur die geschlossene Menge der Modelle hinter dem API-Key, während eine Suche jede Seite im Web berühren kann.
+`gemini-set-config` ist idempotent, weil dieselben Argumente immer dieselbe `config.json` hinterlassen, und nicht destruktiv, weil es nur Werte ersetzt, die der Nutzer zurücksetzen kann.
+Der Anzeigename bleibt im Feld `title` des Tools, das die Spec vor `annotations.title` stellt; Letzteres ist nicht gesetzt.
+
+Die Spec nennt diese Werte Hinweise und sagt, dass Clients Sicherheitsentscheidungen nicht auf Hinweise nicht vertrauenswürdiger Server stützen dürfen.
+Was Claude Code laut seiner MCP-Dokumentation damit tut:
+
+- `readOnlyHint: true` lässt es die Aufrufe des Tools parallel zu anderen lesenden Aufrufen ausführen. Für `gemini-search` heißt das, dass mehrere Suchen in einem Zug mehrere gleichzeitig abgerechnete Anfragen sind, und das ist gewollt.
+- `readOnlyHint` oder `idempotentHint` lässt es einen Aufruf wiederholen, der beim Schließen einer Verbindung noch offen war - aber nur bei HTTP-Servern und claude.ai-Connectoren, nicht bei einem stdio-Server wie diesem.
+
+`gemini-set-config` trägt zusätzlich `_meta: { "anthropic/requiresUserInteraction": true }`, einen Schlüssel, den Claude Code außerhalb der Spec definiert.
+Damit zeigt Claude Code bei jedem Aufruf den Berechtigungsdialog, auch in den Modi `acceptEdits`, `auto` und `bypassPermissions`, bietet kein „nicht mehr fragen" an, und Allow-Regeln überspringen den Dialog nicht.
+Wo niemand antworten kann - Modus `dontAsk`, `claude -p` - wird der Aufruf abgelehnt.
+Gemessen mit Claude Code 2.1.310: `claude -p --allowedTools mcp__gemini-grounding__gemini-set-config` antwortete „MCPTool requires permission"; ohne den Schlüssel erreichte derselbe Aufruf den Server.
+Das ist das technische Gegenstück zur Regel in CLAUDE.md, dass Standardmodell, Backup-Modell und Frist sich nur auf ausdrückliche Anweisung des Nutzers ändern: Kein Agent und kein Skript ohne Mensch kann die Konfiguration über MCP ändern.
+Die CLI (`gemini-grounding set-model ...`) ist nicht betroffen, und andere Clients ignorieren den Schlüssel.
+
+`test/mcp.test.js` nagelt die Annotations und den Schlüssel fest.
 
 ## Vorübergehende Fehler und Wiederholungen
 
@@ -1536,8 +1599,9 @@ Der Test des zusammengeführten Stands übernimmt diese Rolle.
 
 ### Der Smoke-Test
 
-`scripts/smoke-test.js` (`npm run smoke`) prüft den Server so, wie Claude Code ihn nutzt, über das MCP-Protokoll: Handshake, Tool-Liste, `gemini-list-models`, eine grounded Suche mit Thinking-Level `low` und eine Anfrage an ein Modell, das es nicht gibt.
+`scripts/smoke-test.js` (`npm run smoke`) prüft den Server so, wie Claude Code ihn nutzt, über das MCP-Protokoll: Handshake über Revision 2026-07-28, Tool-Liste, `gemini-list-models`, eine grounded Suche mit Thinking-Level `low` und eine Anfrage an ein Modell, das es nicht gibt.
 Genau hier hören die Unit-Tests auf - sie laufen ohne Key gegen nachgebaute Antworten, ein Update, das die Form echter Antworten oder Fehler ändert, besteht sie also.
+Der Smoke-Test nutzt nur die Revision 2026-07-28, die Claude Code bevorzugt; Revision 2025-11-25, die Annotations und die Parameterbeschreibungen deckt `test/mcp.test.js` bei jedem CI-Lauf kostenlos ab.
 
 Nur die Suche wird abgerechnet.
 `models.list` ist kostenlos, und die Anfrage an das fehlende Modell wird vor der Ausführung mit 404 abgelehnt; das macht den Fehlerpfad kostenlos prüfbar.
