@@ -47,6 +47,7 @@ test("passes default and backup through when the call specifies nothing", () => 
     thinkingLevel: "medium",
     backupModel: "gemini-backup",
     backupThinkingLevel: "low",
+    deadlineSeconds: 300,
   });
 });
 
@@ -138,7 +139,7 @@ test("changes only the level when no backup model comes along", () => {
 });
 
 test("detects the collision even when one call sets both values", () => {
-  // The case only gemini-set-model can produce; the CLI has no command that
+  // The case only gemini-set-config can produce; the CLI has no command that
   // writes default and backup at once. What is checked is therefore the state
   // AFTER the write, not the single value against the file.
   writeConfig(SAVED);
@@ -183,7 +184,7 @@ test("rejects a backup level without its model", () => {
 
 test("rejects a level for a switched-off backup", () => {
   // Two ways into the same state, and both must be recognized: the saved false
-  // and the one passed in this call. Only gemini-set-model can produce the
+  // and the one passed in this call. Only gemini-set-config can produce the
   // second, setting model and level at once.
   writeConfig({ backupModel: false });
   assert.match(findBackupLevelProblem({ backupThinkingLevel: "low" }), /switched off/);
@@ -218,5 +219,23 @@ test("works without any saved configuration", () => {
     thinkingLevel: "medium",
     backupModel: undefined,
     backupThinkingLevel: undefined,
+    deadlineSeconds: 300,
   });
+});
+
+test("passes a saved deadline through, including false", () => {
+  // false and not the default: whoever switched the deadline off gets none, and
+  // gemini.js then neither sends the header nor arms the local brake.
+  writeConfig({ deadlineSeconds: 600 });
+  assert.equal(resolveCallConfig({}).deadlineSeconds, 600);
+
+  writeConfig({ deadlineSeconds: false });
+  assert.equal(resolveCallConfig({}).deadlineSeconds, false);
+});
+
+test("falls back to the default deadline for an unusable value", () => {
+  for (const deadlineSeconds of [0, -1, 1.5, "300", null, true]) {
+    writeConfig({ deadlineSeconds });
+    assert.equal(resolveCallConfig({}).deadlineSeconds, 300, JSON.stringify(deadlineSeconds));
+  }
 });

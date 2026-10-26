@@ -53,7 +53,9 @@ const server = new McpServer(
       "The only permitted fallback is the backup model the user configured, it happens " +
       "inside the server, and the footer always names it.\n" +
       "- Before changing the default model, list what's available with gemini-list-models; " +
-      "use gemini-set-model only when explicitly asked.\n" +
+      "use gemini-set-config only when explicitly asked.\n" +
+      '- A search that hits the deadline fails with 504 or "no response within" - report it, ' +
+      "never raise the deadline on your own to try again.\n" +
       "- Every answer has a source list and a token-usage footer appended - keep them intact.",
   },
 );
@@ -67,7 +69,7 @@ server.registerTool(
       "Google Search, URL context, and code execution in a single call. " +
       "Uses the saved default model and thinking level unless the user " +
       "explicitly requests a different one for this call - the default " +
-      "can be changed anytime via gemini-set-model. " +
+      "can be changed anytime via gemini-set-config. " +
       "The response includes a source list and a token-usage footer.",
     inputSchema: {
       query: z.string().describe("The search or research query"),
@@ -91,7 +93,7 @@ server.registerTool(
   },
   // The defaults are resolved here in the handler, NOT as a Zod .default() in
   // the schema: a schema default is evaluated once when the tool is registered
-  // and then frozen, so gemini-set-model would only take effect after a server
+  // and then frozen, so gemini-set-config would only take effect after a server
   // restart.
   //
   // resolveCallConfig instead of two ?? in this place, because the CLI has to
@@ -119,7 +121,7 @@ server.registerTool(
       "List the Gemini models available for the current API key with their token " +
       "limits. By default a hand-picked shortlist of those suited to research here; " +
       "all: true shows every model with a status column. The shortlist decides what " +
-      "is shown, not what is allowed - gemini-set-model and gemini-search accept any " +
+      "is shown, not what is allowed - gemini-set-config and gemini-search accept any " +
       "model id. Before proposing a shorter selection to the user, name the models the " +
       "call returned, mark the selection as a suggestion, and say that any other model " +
       "id can be set too.",
@@ -146,15 +148,17 @@ server.registerTool(
   },
 );
 
+// Named for the file it writes rather than for one of its values: up to 1.x it
+// was gemini-set-model, which stopped fitting once it set a deadline as well.
 server.registerTool(
-  "gemini-set-model",
+  "gemini-set-config",
   {
-    title: "Set default model, thinking level and backup model",
+    title: "Set default model, thinking level, backup model and deadline",
     description:
-      "Persist the default model ID, thinking level and/or backup model to the user " +
-      "config file. Used by gemini-search as the default from the next call on, unless " +
-      "the call specifies otherwise. Check availability with gemini-list-models first. " +
-      "At least one parameter is required.",
+      "Persist the default model ID, thinking level, backup model and/or search deadline " +
+      "to the user config file. Used by gemini-search from the next call on, unless the " +
+      "call specifies otherwise. Check availability with gemini-list-models first. Only " +
+      "use when the user explicitly asks for the change. At least one parameter is required.",
     inputSchema: {
       model: z
         .string()
@@ -181,22 +185,31 @@ server.registerTool(
             "which is the default. Set it on its own to change the level of the " +
             "backup already saved, leaving the model as it is.",
         ),
+      deadlineSeconds: z
+        .union([z.number().int().positive(), z.literal(false)])
+        .optional()
+        .describe(
+          "Seconds after which Google aborts a search (504) - 300 unless set. Pass " +
+            "false to send no deadline, so Google's own limit applies. Never raise it " +
+            "on your own after a search hit the deadline: report the error instead.",
+        ),
     },
   },
-  async ({ model, thinkingLevel, backupModel, backupThinkingLevel }) => {
+  async ({ model, thinkingLevel, backupModel, backupThinkingLevel, deadlineSeconds }) => {
     if (
       model === undefined &&
       thinkingLevel === undefined &&
       backupModel === undefined &&
-      backupThinkingLevel === undefined
+      backupThinkingLevel === undefined &&
+      deadlineSeconds === undefined
     ) {
       return {
         content: [
           {
             type: "text",
             text:
-              "Error in gemini-set-model: at least one of model, thinkingLevel, " +
-              "backupModel or backupThinkingLevel must be provided.",
+              "Error in gemini-set-config: at least one of model, thinkingLevel, " +
+              "backupModel, backupThinkingLevel or deadlineSeconds must be provided.",
           },
         ],
         isError: true,
@@ -210,7 +223,7 @@ server.registerTool(
       findBackupLevelProblem({ backupModel, backupThinkingLevel });
     if (problem) {
       return {
-        content: [{ type: "text", text: `Error in gemini-set-model: ${problem}` }],
+        content: [{ type: "text", text: `Error in gemini-set-config: ${problem}` }],
         isError: true,
       };
     }
@@ -224,13 +237,19 @@ server.registerTool(
       // setSavedConfig returns what was actually written, which matters for the
       // backup it writes as a unit: the confirmation below names a level that
       // expired instead of concealing it.
-      saved = setSavedConfig({ model, thinkingLevel, backupModel, backupThinkingLevel });
+      saved = setSavedConfig({
+        model,
+        thinkingLevel,
+        backupModel,
+        backupThinkingLevel,
+        deadlineSeconds,
+      });
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `Error in gemini-set-model: could not write ${CONFIG_PATH} - ${error.message}`,
+            text: `Error in gemini-set-config: could not write ${CONFIG_PATH} - ${error.message}`,
           },
         ],
         isError: true,
@@ -238,7 +257,7 @@ server.registerTool(
     }
     // Two pieces of information, and both are needed: the first line names every
     // written value on its own, because a stored value would otherwise be
-    // indistinguishable from a discarded parameter. The two below it name the
+    // indistinguishable from a discarded parameter. The lines below it name the
     // complete state, so that after the change it is settled without asking what
     // the next query runs with - exactly the confirmation CLAUDE.md requires
     // after a model change. Same functions as in the CLI, so the two interfaces

@@ -2,8 +2,8 @@
 /**
  * End-to-end check against the real Gemini API, through the MCP protocol the
  * way Claude Code uses the server: handshake, tool list, gemini-list-models,
- * one grounded search and one deliberate error. The 99 unit tests stop short
- * of exactly this - they run without a key and against stubbed responses, so
+ * one grounded search and one deliberate error. The unit tests stop short of
+ * exactly this - they run without a key and against stubbed responses, so
  * an update that changes the shape of real responses or errors passes them.
  *
  * Run by scripts/weekly-update.js before a dependency update is merged, and by
@@ -26,13 +26,15 @@
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { DEFAULT_DEADLINE_SECONDS } from "../config.js";
+import { LOCAL_BRAKE_MARGIN_SECONDS } from "../gemini.js";
 
 export const EXIT_PASSED = 0;
 export const EXIT_BROKEN = 1;
 export const EXIT_UNAVAILABLE = 75;
 
 const SERVER = fileURLToPath(new URL("../index.js", import.meta.url));
-const TOOLS = ["gemini-search", "gemini-list-models", "gemini-set-model"];
+const TOOLS = ["gemini-search", "gemini-list-models", "gemini-set-config"];
 
 /**
  * Needs a real search to be answerable, so an answer without sources fails the
@@ -47,9 +49,11 @@ const UNAVAILABLE_STATUS = [408, 429, 500, 502, 503, 504];
 
 /**
  * The client's own default is 60 s, while a search may legitimately run up to
- * the server's deadline of 290 s (SERVER_DEADLINE_SECONDS in gemini.js).
+ * the server's local brake - the default deadline plus its margin, 330 s. Ten
+ * seconds on top, so the brake's message arrives rather than the client's.
+ * Assumes the default deadline, as on CI, where no config.json exists.
  */
-const CALL_TIMEOUT_MS = 300_000;
+const CALL_TIMEOUT_MS = (DEFAULT_DEADLINE_SECONDS + LOCAL_BRAKE_MARGIN_SECONDS + 10) * 1000;
 
 class Unavailable extends Error {}
 
@@ -97,7 +101,10 @@ const CHECKS = [
       const text = textOf(result);
       if (result.isError) {
         const status = apiStatus(text);
-        if (UNAVAILABLE_STATUS.includes(status) || text.includes("fetch failed")) {
+        // "no response within" is the local brake (LocalDeadlineError in
+        // gemini.js): a silent line says nothing about the update either.
+        const silent = text.includes("fetch failed") || text.includes("no response within");
+        if (UNAVAILABLE_STATUS.includes(status) || silent) {
           throw new Unavailable(`API unavailable, status ${status ?? "none (network)"}`);
         }
         throw new Error(`tool error, status ${status ?? "none"}`);
@@ -107,7 +114,12 @@ const CHECKS = [
       check(rest, "no source list");
       check(/^\[1\] /m.test(rest), "source list without entry [1]");
       check(Number(rest.match(/🔍 (\d+) sources/)?.[1]) > 0, "footer reports no sources");
-      check(/🤖 \S+ \(thinking: low\)/.test(rest), "footer without model and thinking level");
+      // The arrow and the model that answered appear whenever that differs from
+      // the requested one - with the default alias, every time.
+      check(
+        /🤖 \S+( → \S+)? \(thinking: low\)/.test(rest),
+        "footer without model and thinking level",
+      );
     },
   ],
   [

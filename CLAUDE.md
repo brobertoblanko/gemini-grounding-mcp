@@ -55,8 +55,8 @@ verbindlich:
   an eine Redirect-URL. Einziger ausgehender Verkehr ist der SDK-Aufruf an die
   Gemini-API.
 - **I4 - Nichts wird zwischengespeichert.** Grounded Results berühren nie die
-  Festplatte. `config.json` enthält ausschließlich Modellnamen und
-  Thinking-Level (Standard und Backup), sonst nichts.
+  Festplatte. `config.json` enthält ausschließlich Modellnamen,
+  Thinking-Level (Standard und Backup) und die Frist für Suchen, sonst nichts.
 
 Deduplizieren nach identischer URI ist erlaubt, weil dabei kein Ziel
 verlorengeht. Deduplizieren nach Domain ist es nicht.
@@ -125,7 +125,7 @@ für die Byte-gegen-Zeichen-Prüfung in `test/citations.test.js`.
 die englische Fassung, weil sie kanonisch ist, und **niemals über
 Zeilennummern** - die verrutschen lautlos und sind unprüfbar, während eine
 umbenannte Überschrift per `grep` auffindbar bleibt. Verweise auf Symbole im
-eigenen Code (`see SERVER_DEADLINE_SECONDS`) sind die haltbarste Form.
+eigenen Code (`see LOCAL_BRAKE_MARGIN_SECONDS`) sind die haltbarste Form.
 
 **Keine Aussage darf nirgends landen.** Wer eine Begründung aus einem Kommentar
 entfernt, prüft vorher, ob sie in `docs/specs.md` steht. Tut sie das nicht,
@@ -153,15 +153,18 @@ verdichtet: Invariantennummer, Warnung und der Verweis auf diese Datei plus
   schaltet es für diesen Aufruf ab
 - Vor einer Modelländerung immer zuerst `gemini-list-models` aufrufen, um zu
   prüfen, ob das gewünschte Modell tatsächlich verfügbar ist
-- `gemini-set-model` nur nach expliziter Anweisung durch mich nutzen, nie
-  eigenständig das Standardmodell oder das Backup-Modell wechseln
+- `gemini-set-config` nur nach expliziter Anweisung durch mich nutzen, nie
+  eigenständig das Standardmodell, das Backup-Modell oder die Frist ändern
+- **Die Frist nie eigenständig anheben**, auch nicht nach einem `504` oder
+  einem `no response within`. Der Fehler wird gemeldet; eine längere Frist
+  kostet eine zweite volle Generierung und ist meine Entscheidung
 - Nach einer Änderung kurz bestätigen, welches Modell ab jetzt als Standard aktiv ist
 
 **API-Key-Sicherheit:**
 
 Die `config.json` - sie liegt am plattformüblichen Ort für Nutzer-State, nicht
-im Projektordner (siehe specs.md) - speichert ausschließlich Modellname und
-Thinking-Level, niemals den API-Key oder andere sensible Daten. Der API-Key
+im Projektordner (siehe specs.md) - speichert ausschließlich Modellname,
+Thinking-Level und Frist, niemals den API-Key oder andere sensible Daten. Der API-Key
 bleibt ausschließlich über die Umgebungsvariable `GEMINI_API_KEY` verwaltet.
 
 **Quellenliste und Footer:**

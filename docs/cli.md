@@ -67,6 +67,7 @@ An option that has no meaning for the given command aborts with exit code 1 - it
 | `set-backup --thinking <level>` | Changes only the level of the backup already saved |
 | `set-backup off --thinking <level>` | Error - a disabled backup has no thinking level |
 | `set-model <id> --model <id2>` | Error - two models, and only you know which one is meant |
+| `set-deadline <seconds\|off>` | Saves after how many seconds Google aborts a search; takes no option |
 | `models --all` | Lists every model with a status column, past the shortlist the default view shows |
 | `config`, `help`, `version`, `models` with `--model` / `--thinking` | Error |
 
@@ -76,12 +77,13 @@ Every save answers twice - what changed, and what applies from now on:
 $ gemini-grounding set-model gemini-flash-latest --thinking low
 Saved - Model: gemini-flash-latest, Thinking level: low
 
-Primary: gemini-flash-latest · low
-Backup:  gemini-3.5-flash · low (inherited)
+Primary:  gemini-flash-latest · low
+Backup:   gemini-3.5-flash · low (inherited)
+Deadline: 300 s
 ```
 
 The first line names every value that was actually written; whatever is not listed there did not end up in the file.
-The two below name the complete stored state, so a change never has to be followed by `config` to see what the next query will actually run with.
+The lines below name the complete stored state, so a change never has to be followed by `config` to see what the next query will actually run with.
 
 On the backup, the level is shown as the value rather than the bare word "inherited": what the backup would run with if it stepped in right now is the answer you are after.
 The suffix says the value is not its own but travels along - hand a call its own `--thinking`, and the backup inherits that one instead.
@@ -95,7 +97,7 @@ Which errors trigger it: [google_errors.md](./google_errors.md).
 Unlike the default model and its level, the backup is written **as a unit**.
 Naming a backup model without `--thinking` removes a previously saved backup level, and the backup inherits the level of the call it stands in for.
 The level belongs to that one model - left lying around across a change of backup, it would silently apply to a model it was never chosen for.
-The rule lives in `setSavedConfig` rather than in the CLI, so `gemini-set-model` on the MCP server follows it too.
+The rule lives in `setSavedConfig` rather than in the CLI, so `gemini-set-config` on the MCP server follows it too.
 
 To change only the level, leave the model out:
 
@@ -103,8 +105,9 @@ To change only the level, leave the model out:
 $ gemini-grounding set-backup --thinking minimal
 Saved - Backup thinking level: minimal
 
-Primary: gemini-flash-latest · low
-Backup:  gemini-3.5-flash · minimal
+Primary:  gemini-flash-latest · low
+Backup:   gemini-3.5-flash · minimal
+Deadline: 300 s
 ```
 
 That needs a backup to already be saved and switched on - a level without its model has nothing to belong to:
@@ -134,6 +137,27 @@ Naming a model is usually a way of checking that particular model, and an answer
 `gemini-grounding config` shows all three states - a model, `disabled`, or `not set`.
 The last two behave identically; the distinction records whether the decision was ever made.
 
+## The deadline
+
+`set-deadline <seconds>` sets after how many seconds Google aborts a search and answers `504` - 300 unless you set it.
+`set-deadline off` sends no deadline at all, and Google's own limit applies.
+
+```console
+$ gemini-grounding set-deadline 600
+Saved - Deadline: 600 s
+
+Primary:  gemini-flash-latest · low
+Backup:   gemini-3.5-flash · low (inherited)
+Deadline: 600 s
+```
+
+Only digits are accepted: `300.5`, `1e3` or `0` abort with `Invalid deadline`, because each would otherwise be stored as something nobody typed.
+There is no per-call option - the deadline is an operating setting, and raising it after a `504` costs a second full generation.
+
+Thirty seconds after the deadline the server stops waiting by itself, in case the line went silent rather than Google answering.
+Without a deadline there is no such brake either.
+Why both exist and what they cost: [specs.md, "The deadline this server does send"](./specs.md#the-deadline-this-server-does-send).
+
 ## Errors stay fully visible
 
 Unlike the MCP server, the CLI prints the full stack trace including the original Google API error and exits with code 1.
@@ -151,14 +175,15 @@ Nothing has been sent at that point, the line already says what to do, and it is
 
 ```console
 $ gemini-grounding config
-Primary: gemini-flash-latest · medium
-Backup:  gemini-3.5-flash · medium (inherited)
-API key: set (39 chars)
-Config:  /home/you/.config/gemini-grounding-mcp/config.json
-Version: 1.3.0
+Primary:  gemini-flash-latest · medium
+Backup:   gemini-3.5-flash · medium (inherited)
+Deadline: 300 s
+API key:  set (39 chars)
+Config:   /home/you/.config/gemini-grounding-mcp/config.json
+Version:  1.3.0
 ```
 
-The first two lines are the same ones every save prints, so there is only one rendering of "which models am I using" to learn.
+The first three lines are the same ones every save prints, so there is only one rendering of "which models am I using" to learn.
 `config` adds the three things that are only of interest here - key status, config path, and the installed version, so a bug report needs no second command.
 
 The key check only establishes whether a key arrives in the environment at all and prints its length - **never the value itself**, not even shortened.

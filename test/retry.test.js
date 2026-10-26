@@ -7,9 +7,10 @@
 // The global fetch is replaced for that (mockFetch in helpers.js). The SDK calls
 // it directly in apiCall(), so the number of calls IS the number of attempts.
 
-import { test, afterEach } from "node:test";
+import { test, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
-import { RETRY_OPTIONS, SERVER_DEADLINE_SECONDS, runSearch } from "../gemini.js";
+import { DEFAULT_DEADLINE_SECONDS } from "../config.js";
+import { LOCAL_BRAKE_MARGIN_SECONDS, RETRY_OPTIONS, runSearch } from "../gemini.js";
 import { errorResponse, mockFetch, okResponse } from "./helpers.js";
 
 process.env.GEMINI_API_KEY = "test-key-never-sent";
@@ -20,7 +21,28 @@ const realFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = realFetch;
+  mock.timers.reset();
 });
+
+/**
+ * A fetch that never answers on its own, like a line that went silent, and
+ * rejects only once its signal aborts. Resolves `called` on the first request,
+ * so a case can advance the clock only after the brake is armed and the
+ * request is out.
+ */
+function silentFetch() {
+  const calls = [];
+  let markCalled;
+  const called = new Promise((resolve) => (markCalled = resolve));
+  globalThis.fetch = (url, init) => {
+    calls.push({ url, init });
+    markCalled();
+    return new Promise((_, reject) => {
+      init.signal?.addEventListener("abort", () => reject(init.signal.reason));
+    });
+  };
+  return { calls, called };
+}
 
 test("retries a 503 and returns the second attempt's response", async () => {
   // The only case that covers the wiring: without httpOptions.retryOptions on
@@ -77,9 +99,66 @@ test("sends the deadline without losing the default headers", async () => {
   await runSearch(SEARCH);
 
   const headers = new Headers(calls[0].init.headers);
-  assert.equal(headers.get("x-server-timeout"), String(SERVER_DEADLINE_SECONDS));
+  assert.equal(headers.get("x-server-timeout"), String(DEFAULT_DEADLINE_SECONDS));
   assert.equal(headers.get("content-type"), "application/json");
   assert.ok(headers.get("user-agent"), "the SDK's user-agent must be preserved");
+});
+
+test("sends a configured deadline, and none when it is switched off", async () => {
+  const calls = mockFetch(okResponse);
+
+  await runSearch({ ...SEARCH, deadlineSeconds: 600 });
+  await runSearch({ ...SEARCH, deadlineSeconds: false });
+
+  assert.equal(new Headers(calls[0].init.headers).get("x-server-timeout"), "600");
+  assert.equal(new Headers(calls[1].init.headers).get("x-server-timeout"), null);
+});
+
+test("tells Google not to log the request", async () => {
+  // Since 2026-10-26 generateContent logs by default for new projects, and the
+  // field on the request is the only setting that overrides the project's.
+  const calls = mockFetch(okResponse);
+
+  await runSearch(SEARCH);
+
+  assert.equal(JSON.parse(calls[0].init.body).store, false);
+});
+
+test("ends a silent request at the deadline plus the margin", async () => {
+  // Since @google/genai 2.29 nothing else on this side ends it: the SDK turns
+  // off Node's headersTimeout, and the next limit is the MCP client's 1800 s.
+  mock.timers.enable({ apis: ["setTimeout"] });
+  const { calls, called } = silentFetch();
+
+  const search = runSearch({ ...SEARCH, backupModel: "gemini-backup" });
+  // Attached at once, so the rejection is never unhandled while the clock moves.
+  const outcome = search.then(
+    () => assert.fail("the search must not succeed"),
+    (error) => error,
+  );
+  await called;
+
+  const brake = (DEFAULT_DEADLINE_SECONDS + LOCAL_BRAKE_MARGIN_SECONDS) * 1000;
+  mock.timers.tick(brake - 1);
+  assert.equal(calls[0].init.signal?.aborted, false, "not before the margin has passed");
+  mock.timers.tick(1);
+
+  const error = await outcome;
+  assert.match(error.message, /no response within 330 s - aborted locally/);
+  // The backup would run over the same silent line, so it is not tried.
+  assert.match(error.message, /backup not tried: no response within 330 s/);
+  assert.equal(calls.length, 1, "neither retried nor handed to the backup");
+});
+
+test("arms no brake when the deadline is switched off", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  const { calls, called } = silentFetch();
+
+  runSearch({ ...SEARCH, deadlineSeconds: false }).catch(() => {});
+  await called;
+  mock.timers.tick(3600 * 1000);
+
+  assert.notEqual(calls[0].init.signal?.aborted, true);
 });
 
 test("does not retry what cannot fix itself", async () => {

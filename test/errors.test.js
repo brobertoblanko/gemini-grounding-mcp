@@ -29,10 +29,11 @@ test("puts the error code first when there is one", () => {
   // while ECONNREFUSED and the timeouts do. It is therefore optional and produces
   // no empty parentheses without it.
   //
-  // The wording here is not invented but the case that can actually hit this
-  // server: a response that takes too long. Measured against a local server that
-  // accepts the request and then stays silent - Node 24.15.0 aborts after 306.8 s
-  // and returns exactly these two strings.
+  // The wording here is not invented but the case that hit this server up to
+  // @google/genai 2.28: a response that takes too long. Measured against a local
+  // server that accepts the request and then stays silent - Node 24.15.0 aborts
+  // after 306.8 s and returns exactly these two strings. Since 2.29 the SDK
+  // switches that timeout off, but any other network error takes the same shape.
   const error = new TypeError("fetch failed", {
     cause: Object.assign(new Error("Headers Timeout Error"), {
       code: "UND_ERR_HEADERS_TIMEOUT",

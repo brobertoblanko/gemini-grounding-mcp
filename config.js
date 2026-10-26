@@ -38,8 +38,32 @@ const DEFAULT_MODEL = "gemini-flash-latest";
 // Deliberately "medium" and not "high": this default applies to every new user
 // without a config.json, and a higher level spends more thinking tokens
 // unasked. Whoever wants more sets it per call or permanently via
-// gemini-set-model.
+// gemini-set-config.
 const DEFAULT_THINKING_LEVEL = "medium";
+
+/**
+ * The deadline Google's gateway is told about, in whole seconds, for a missing
+ * or unusable config.json entry. Exported because gemini.js and the tests need
+ * the number the server runs with when nobody set one.
+ *
+ * Below Google's own server-side limit of 10 minutes for a unary request (SDK
+ * comment on createUndiciNoTimeoutDispatcher, @google/genai 2.31.0), so the
+ * header still decides. A round number, because since @google/genai 2.29 no
+ * client-side limit is left to stay under: Node no longer severs a silent
+ * connection after 306.8 s. Full derivation: docs/specs.md, "The deadline this
+ * server does send".
+ */
+export const DEFAULT_DEADLINE_SECONDS = 300;
+
+/**
+ * Whether a value may be stored as the deadline: a positive whole number of
+ * seconds, or false for "send none". false and not 0 or null, the same
+ * convention as backupModel: false - a switch that is deliberately off, kept
+ * apart from "never set".
+ */
+export function isValidDeadline(value) {
+  return value === false || (Number.isInteger(value) && value > 0);
+}
 
 /**
  * The thinking levels the Gemini API accepts - single source for MCP server and
@@ -49,11 +73,14 @@ const DEFAULT_THINKING_LEVEL = "medium";
  */
 export const THINKING_LEVELS = ["minimal", "low", "medium", "high"];
 
-// readConfig() runs three times per call - from getSavedModel(), from
-// getSavedThinkingLevel() and from getSavedBackup(). Without this flag the same
-// warning would stand there three times over and look like three separate
-// faults.
+// readConfig() runs four times per call - from getSavedModel(), from
+// getSavedThinkingLevel(), from getSavedBackup() and from getSavedDeadline().
+// Without this flag the same warning would stand there four times over and look
+// like four separate faults.
 let warned = false;
+// Same reason for the unusable deadline: getSavedDeadline() runs on every
+// search and after every write.
+let warnedDeadline = false;
 
 function readConfig() {
   try {
@@ -96,6 +123,32 @@ export function getSavedThinkingLevel() {
 }
 
 /**
+ * Reads the stored deadline: whole seconds, or false when none is to be sent.
+ * Returns DEFAULT_DEADLINE_SECONDS when no or a broken config.json exists.
+ *
+ * Validated because the file can be edited by hand. An unusable value warns
+ * instead of falling back silently: unlike an unknown model, which comes back
+ * from the API as an error, a deadline nobody applies would show nowhere - the
+ * search simply runs under a different limit than the one written down.
+ */
+export function getSavedDeadline() {
+  const { deadlineSeconds } = readConfig();
+  if (deadlineSeconds === undefined) return DEFAULT_DEADLINE_SECONDS;
+  if (isValidDeadline(deadlineSeconds)) return deadlineSeconds;
+
+  // console.error for the same reason as in readConfig(): stdout carries
+  // JSON-RPC.
+  if (!warnedDeadline) {
+    warnedDeadline = true;
+    console.error(
+      `Warning: deadlineSeconds in ${CONFIG_PATH} must be a positive whole number or false, ` +
+        `not ${JSON.stringify(deadlineSeconds)} - using ${DEFAULT_DEADLINE_SECONDS}.`,
+    );
+  }
+  return DEFAULT_DEADLINE_SECONDS;
+}
+
+/**
  * Reads the stored backup model as a unit: a model and the thinking level
  * assigned to it belong together and are therefore read together, rather than
  * through two getters like the default values.
@@ -131,7 +184,7 @@ export function getSavedBackup() {
  * so both give the same answer.
  *
  * Resolution happens anew on EVERY call. A value resolved once would be wrong
- * from the next gemini-set-model on, without anyone noticing.
+ * from the next gemini-set-config on, without anyone noticing.
  *
  * Full derivation: docs/specs.md, "Resolving the defaults per call".
  */
@@ -151,6 +204,9 @@ export function resolveCallConfig({ model, thinkingLevel } = {}) {
     thinkingLevel: thinkingLevel ?? getSavedThinkingLevel(),
     backupModel: backup.model,
     backupThinkingLevel: backup.thinkingLevel,
+    // No per-call override: the deadline is an operating setting, and a call
+    // that could raise it would turn a 504 into an invitation to retry longer.
+    deadlineSeconds: getSavedDeadline(),
   };
 }
 
@@ -169,7 +225,7 @@ export function resolveCallConfig({ model, thinkingLevel } = {}) {
  * "set-thinking low" did not cause that state and should not fail on it.
  *
  * Here and not in cli.js, because it would otherwise apply to the CLI alone:
- * gemini-set-model writes the same file and can set both values in one go.
+ * gemini-set-config writes the same file and can set both values in one go.
  */
 export function findModelCollision({ model, backupModel } = {}) {
   if (model === undefined && backupModel === undefined) return undefined;
@@ -201,7 +257,7 @@ export function findModelCollision({ model, backupModel } = {}) {
  * lines below revokes as "not set" or "disabled".
  *
  * As in findModelCollision, checked on the STATE AFTER THE WRITE and not on the
- * single argument, because only gemini-set-model can set model and level in ONE
+ * single argument, because only gemini-set-config can set model and level in ONE
  * call - at the time of the check neither of them is stored yet.
  */
 export function findBackupLevelProblem({ backupModel, backupThinkingLevel } = {}) {
@@ -229,12 +285,14 @@ export function findBackupLevelProblem({ backupModel, backupThinkingLevel } = {}
 }
 
 /**
- * Stores model, thinking level and backup persistently without overwriting the
- * respective other stored values (undefined fields stay untouched). Contains
- * these values only, never the API key or other sensitive data.
+ * Stores model, thinking level, backup and deadline persistently without
+ * overwriting the respective other stored values (undefined fields stay
+ * untouched). Contains these values only, never the API key, other sensitive
+ * data or anything from a response - INVARIANT I4 (see CLAUDE.md and
+ * docs/specs.md, "Terms compliance"): Grounded Results never touch the disk.
  *
  * null deletes the key. Today only backupThinkingLevel needs that, to fall back
- * to "inherits from the primary call" - the rule applies to all four all the
+ * to "inherits from the primary call" - the rule applies to all five all the
  * same, because a special rule for exactly one field is not explainable later.
  *
  * THE ONE EXCEPTION TO THE MERGE RULE: the backup is written as a UNIT. A
@@ -247,7 +305,13 @@ export function findBackupLevelProblem({ backupModel, backupThinkingLevel } = {}
  * can the confirmation at the caller name the level that fell away instead of
  * concealing it.
  */
-export function setSavedConfig({ model, thinkingLevel, backupModel, backupThinkingLevel }) {
+export function setSavedConfig({
+  model,
+  thinkingLevel,
+  backupModel,
+  backupThinkingLevel,
+  deadlineSeconds,
+}) {
   if (backupModel !== undefined && backupThinkingLevel === undefined) {
     backupThinkingLevel = null;
   }
@@ -262,13 +326,21 @@ export function setSavedConfig({ model, thinkingLevel, backupModel, backupThinki
   apply("thinkingLevel", thinkingLevel);
   apply("backupModel", backupModel);
   apply("backupThinkingLevel", backupThinkingLevel);
+  apply("deadlineSeconds", deadlineSeconds);
   // Created on the write path only, so the package creates nothing unasked: as
   // long as nobody sets the model, neither directory nor file comes into
   // existence - readConfig() already handles the missing file.
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 
-  return { model, thinkingLevel, backupModel, backupThinkingLevel };
+  return { model, thinkingLevel, backupModel, backupThinkingLevel, deadlineSeconds };
+}
+
+/** "300 s", or what false means, for the confirmation and the state block. */
+function formatDeadline(deadlineSeconds) {
+  return deadlineSeconds === false
+    ? "none (Google's own limit applies)"
+    : `${deadlineSeconds} s`;
 }
 
 /**
@@ -284,7 +356,13 @@ export function setSavedConfig({ model, thinkingLevel, backupModel, backupThinki
  *
  * Full derivation: docs/specs.md, "Reporting what was saved".
  */
-export function formatSavedValues({ model, thinkingLevel, backupModel, backupThinkingLevel }) {
+export function formatSavedValues({
+  model,
+  thinkingLevel,
+  backupModel,
+  backupThinkingLevel,
+  deadlineSeconds,
+}) {
   const parts = [];
   if (model !== undefined) parts.push(`Model: ${model}`);
   if (thinkingLevel !== undefined) parts.push(`Thinking level: ${thinkingLevel}`);
@@ -301,15 +379,16 @@ export function formatSavedValues({ model, thinkingLevel, backupModel, backupThi
         : `Backup thinking level: ${backupThinkingLevel}`,
     );
   }
+  if (deadlineSeconds !== undefined) parts.push(`Deadline: ${formatDeadline(deadlineSeconds)}`);
   return parts.join(", ");
 }
 
 /**
- * The complete stored state in two lines - what applies from now on, not what
+ * The complete stored state in three lines - what applies from now on, not what
  * was just written.
  *
  * Printed after EVERY write and in "config", in the CLI as in the MCP handler.
- * The confirmation above says what changed; only these two lines say what the
+ * The confirmation above says what changed; only these lines say what the
  * next query runs with - and that gap is exactly where somebody ends up working
  * with a model they did not mean.
  *
@@ -321,6 +400,9 @@ export function formatSavedValues({ model, thinkingLevel, backupModel, backupThi
  * The middle dot separates as in formatSearchQueries (gemini.js): model names
  * contain hyphens and digits of their own, between which another hyphen would
  * disappear.
+ *
+ * The labels are padded to the width of "Deadline: ", and cli.js pads its own
+ * lines in "config" to the same column.
  */
 export function formatConfigState() {
   const thinkingLevel = getSavedThinkingLevel();
@@ -332,5 +414,9 @@ export function formatConfigState() {
       ? "disabled"
       : "not set";
 
-  return `Primary: ${getSavedModel()} · ${thinkingLevel}\nBackup:  ${backupLine}`;
+  return (
+    `Primary:  ${getSavedModel()} · ${thinkingLevel}\n` +
+    `Backup:   ${backupLine}\n` +
+    `Deadline: ${formatDeadline(getSavedDeadline())}`
+  );
 }

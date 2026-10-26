@@ -10,10 +10,12 @@ import { createRequire } from "node:module";
 import { runSearch, listModels, API_KEY_MISSING_MESSAGE } from "./gemini.js";
 import {
   CONFIG_PATH,
+  DEFAULT_DEADLINE_SECONDS,
   findBackupLevelProblem,
   findModelCollision,
   formatConfigState,
   formatSavedValues,
+  isValidDeadline,
   resolveCallConfig,
   setSavedConfig,
   THINKING_LEVELS,
@@ -30,8 +32,8 @@ Usage:
   gemini-grounding <command> [argument]
 
 Commands:
-  config                 Show saved model, thinking level, backup and API key
-                         status
+  config                 Show saved model, thinking level, backup, deadline and
+                         API key status
   models [--all]         List the models suggested for use here; --all lists
                          every model the API key exposes, with a status column.
                          Either way set-model accepts any of them
@@ -44,6 +46,9 @@ Commands:
                          out to inherit the level of the call. "off" disables it
   set-backup
     --thinking <level>   Change only the level of the backup already saved
+  set-deadline <s|off>   Persist after how many seconds Google aborts a search
+                         (default ${DEFAULT_DEADLINE_SECONDS}); "off" sends no deadline, so Google's own
+                         limit applies
   help                   Show this help
   version                Show the installed version
 
@@ -211,12 +216,12 @@ async function main() {
       // Three states of the backup stay distinguishable: a model, "disabled",
       // "not set".
       console.log(formatConfigState());
-      console.log(`API key: ${keyStatus}`);
+      console.log(`API key:  ${keyStatus}`);
       // The path is always named, even when the file does not exist yet - it
       // then states where it will appear on the first set-model, and the values
       // above are the built-in defaults.
-      console.log(`Config:  ${CONFIG_PATH}`);
-      console.log(`Version: ${version}`);
+      console.log(`Config:   ${CONFIG_PATH}`);
+      console.log(`Version:  ${version}`);
       break;
     }
 
@@ -280,6 +285,22 @@ async function main() {
       // the option does not expire silently.
       const backupModel = rest[0] === "off" ? false : rest[0];
       saveAndReport({ backupModel, backupThinkingLevel: thinkingFlag });
+      break;
+    }
+
+    case "set-deadline": {
+      allowFlags();
+      if (rest.length !== 1) fail("Usage: gemini-grounding set-deadline <seconds|off>");
+      // Digits only, so "1e3", "300.5" or " 300" fail here instead of turning
+      // into a number Number() would quietly accept. "off" becomes false for
+      // the same reason as on set-backup.
+      let deadlineSeconds = NaN;
+      if (rest[0] === "off") deadlineSeconds = false;
+      else if (/^\d+$/.test(rest[0])) deadlineSeconds = Number(rest[0]);
+      if (!isValidDeadline(deadlineSeconds)) {
+        fail(`Invalid deadline "${rest[0]}" - a positive whole number of seconds, or "off".`);
+      }
+      saveAndReport({ deadlineSeconds });
       break;
     }
 

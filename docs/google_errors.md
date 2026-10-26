@@ -44,6 +44,7 @@ An error **without** an HTTP code is not an API error but a network error: see t
 | 503 | `UNAVAILABLE` | model overloaded | **yes** | **yes** | no |
 | 504 | `DEADLINE_EXCEEDED` | our own deadline | no | no | **yes** |
 | - | `fetch failed` | connection dead | no | no | partly |
+| - | `no response within` | silent line, ended by the local brake | no | no | partly |
 
 "Retry?" refers to the four attempts from `RETRY_OPTIONS` in `gemini.js`, which the SDK works through by itself.
 
@@ -178,8 +179,8 @@ That is exactly where the backup model comes from: once the retries are exhauste
 
 Documented, and recorded as non-retryable in `test/retry.test.js`.
 
-On this server a 504 is usually **not** Google's overloaded gateway but the deadline the server sends itself: `X-Server-Timeout: 290` (see `SERVER_DEADLINE_SECONDS` in `gemini.js`).
-After 290 seconds Google's gateway aborts the generation instead of computing on.
+On this server a 504 is usually **not** Google's overloaded gateway but the deadline the server sends itself: `X-Server-Timeout: 300` unless configured otherwise (see `DEFAULT_DEADLINE_SECONDS` in `config.js`).
+After 300 seconds Google's gateway aborts the generation instead of computing on.
 
 **Deliberately not retried**, and **no backup** applies either.
 Both would mean another full generation up to the deadline, and it is billed regardless.
@@ -201,15 +202,29 @@ What actually happened lives solely in `error.cause`, and that would be lost, be
 fetch failed (UND_ERR_HEADERS_TIMEOUT: Headers Timeout Error)
 ```
 
-The most important case behind it is `UND_ERR_HEADERS_TIMEOUT`: Node severs a silent connection after **306.8 seconds** (Undici's `headersTimeout` of 300 seconds plus connection setup).
-That is the shortest link in the chain, shorter than the 1800 seconds Claude Code's MCP client waits, and without the deadline header Google knows no limit at all.
-That is exactly why the 290 seconds sit just below it: so Google stops before the line is cut, and the failure arrives as a 504 with a reason rather than a bare connection abort.
+Up to `@google/genai` 2.28 the most important case behind it was `UND_ERR_HEADERS_TIMEOUT`: Node severed a silent connection after **306.8 seconds** (Undici's `headersTimeout` of 300 seconds plus connection setup), and the deadline of 290 seconds sat just below it.
+Since 2.29 the SDK switches that timeout off, and a silent connection ends at the local brake instead - see below.
 
-Whatever is generated beyond that limit can no longer be received by anyone; it is paid for all the same.
+Whatever is generated after the connection is gone can no longer be received by anyone; it is paid for all the same.
 A connection that never reached Google at all - refused, unknown host, wrong port - costs nothing, which is why the table says "partly" here and 504 remains the only error that is certainly billed.
 A backup therefore does not apply, just as with the 504.
 
 A `code` is not guaranteed: measured, `ECONNREFUSED` supplies one, an invalid port does not.
+
+### Without a code: `no response within` - the local brake
+
+Recorded in `test/retry.test.js`.
+
+Not an API error but this server giving up on a silent line: no answer, no error, nothing.
+It fires 30 seconds after the deadline, so whenever the line is alive Google's 504 arrives first:
+
+```text
+no response within 330 s - aborted locally (deadline 300 s + 30 s margin)
+```
+
+**Not retried**, and **no backup** applies: the request may well have reached Google, and a second model would run over the same line.
+Whether it costs anything depends on whether Google ever received the request - hence "partly", as with `fetch failed`.
+With the deadline switched off there is no brake either, and a silent line waits until Claude Code's MCP client gives up after 1800 seconds.
 
 ## Where this lives in the code
 
@@ -217,7 +232,8 @@ A `code` is not guaranteed: measured, `ECONNREFUSED` supplies one, an invalid po
 | --- | --- |
 | Retry list including why codes are left out | `RETRY_OPTIONS` in `gemini.js` |
 | Exceptions to the backup model | `NO_FALLBACK_STATUS` in `gemini.js` |
-| The server's own deadline and its derivation | `SERVER_DEADLINE_SECONDS` in `gemini.js` |
+| The server's own deadline | `DEFAULT_DEADLINE_SECONDS` in `config.js` |
+| The local brake and the derivation of both | `LOCAL_BRAKE_MARGIN_SECONDS` in `gemini.js` |
 | Preparing the message for the client | `describeError()` in `gemini.js` |
 | Verified retry behaviour per code | `test/retry.test.js` |
 | Verified backup behaviour per code | `test/fallback.test.js` |

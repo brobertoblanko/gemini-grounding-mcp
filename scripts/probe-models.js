@@ -160,6 +160,9 @@ async function probe(ai, id, { attempts, thinkingLevel }) {
         config: {
           tools: SEARCH_TOOLS,
           thinkingConfig: { thinkingLevel },
+          // As in generate() in gemini.js, so the probe asks no less than the
+          // server does and logs nothing at Google either.
+          store: false,
         },
       });
       const metadata = response.candidates?.[0]?.groundingMetadata;
@@ -316,9 +319,10 @@ async function main() {
     apiKey,
     httpOptions: {
       retryOptions: RETRY_OPTIONS,
-      // Shorter than SERVER_DEADLINE_SECONDS: this query needs seconds, and the
-      // probe runs sequentially over dozens of models. A model that still runs
-      // into it is reported as "slow" rather than unusable.
+      // Shorter than DEFAULT_DEADLINE_SECONDS in config.js: this query needs
+      // seconds, and the probe runs sequentially over dozens of models. A model
+      // that still runs into it is reported as "slow" rather than unusable. No
+      // local brake: the probe is watched by a human at the terminal.
       headers: { "X-Server-Timeout": values.deadline },
     },
   });
