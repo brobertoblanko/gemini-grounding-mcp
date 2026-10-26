@@ -329,14 +329,17 @@ test("shows a runtime error as one line, and its stack only on --debug", () => {
   const blocker = path.join(freshConfigHome(), "not-a-directory");
   writeFileSync(blocker, "");
 
+  // Matched at the end, not the start: on Linux the read fails first with
+  // ENOTDIR and prints the unreadable-file warning, on Windows it fails with
+  // ENOENT and stays silent.
   const plain = runCli(["set-model", "gemini-x"], { configHome: blocker });
   assert.equal(plain.status, 1);
-  assert.match(plain.stderr, /^Error: .+\nRun again with --debug for the full stack trace\.\n$/);
+  assert.match(plain.stderr, /^Error: .+\nRun again with --debug for the full stack trace\.\n$/m);
   assert.doesNotMatch(plain.stderr, /^\s+at /m);
 
   const debug = runCli(["set-model", "gemini-x", "--debug"], { configHome: blocker });
   assert.equal(debug.status, 1);
-  assert.match(debug.stderr, /^Error: /);
+  assert.match(debug.stderr, /^Error: /m);
   assert.match(debug.stderr, /^\s+at /m);
 });
 
