@@ -53,7 +53,7 @@ Implemented as flat modules without a `src/` layout and without a build step
   comes out - no `getClient()`, no configuration, no randomness. Tested against
   a stored real response in `test/citations.test.js` (`npm test`, via Node's
   built-in test runner, without an additional dependency).
-- `config.js` - reads and writes the persistent model choice in a `config.json`
+- `config.js` - reads and writes the persistent model choice and deadline in a `config.json`
   at the platform's conventional location for user state (see "Configuration
   file location" below). `resolveCallConfig` also lives here, the single answer
   to what a given call actually runs with, and so do `formatSavedValues` and
@@ -244,6 +244,7 @@ const response = await genAI.models.generateContent({
     systemInstruction: `Today's date is ${new Date().toLocaleDateString("en-CA")}.`,
     tools: [{ googleSearch: {} }, { urlContext: {} }, { codeExecution: {} }],
     thinkingConfig: { thinkingLevel: "high" },
+    store: false,
   },
 });
 
@@ -278,6 +279,22 @@ Three decisions behind that one line:
 
 Verified after the change: the query `Which Node.js version is currently LTS?` produced the search `nodejs current lts version 2026` instead of the earlier `2025 2026`, and asked directly, the model names the correct date.
 The effect is real but not absolute - for broad questions the model still hedges with two years in some searches.
+
+### Logging at Google: store
+
+```javascript
+store: false,
+```
+
+Since 2026-10-26 the Generate Content API stores requests and responses by default for **newly created** projects; for older ones it does so only if logging was switched on in AI Studio ([Logs and datasets](https://ai.google.dev/gemini-api/docs/logs-datasets), as of 2026-10-26).
+Logs exist for paid-tier projects only and are kept for 55 days by default.
+The request-level `store` takes precedence over the project setting, so `false` keeps every request out of those logs, however and whenever the project was set up.
+That matters here because research queries regularly carry context from the work they were asked in.
+
+`store` is not invariant I4: I4 is about this server's disk, `store` about Google's logs.
+The 30-day storage for grounding under the terms is unaffected by it.
+
+`scripts/probe-models.js` sends the field as well, so the probe asks no less than the server does.
 
 ## Response: source list and token footer
 
@@ -509,6 +526,7 @@ const footer =
   `| 🔍 ${sources.length} sources | 🤖 ${model}${served} (thinking: ${thinkingLevel})` +
   `${droppedNote}${skippedNote}` +
   formatSearchQueries(searchQueries) +
+  formatContinuationNote(usageMetadata) +
   formatFallbackNote(fallback);
 
 const sourcesBlock = sourceList ? `\n\nSources:\n${sourceList}` : "";
@@ -544,6 +562,7 @@ That matches the purpose of the footer, which is to make the actual state of eac
 `formatFallbackNote` follows the same pattern as `formatSearchQueries`: with no fallback it returns an empty string, so the line disappears entirely.
 It uses 🔁 rather than ⚠️, because a successful fallback is not a degraded answer - the warning sign stays reserved for cases where something is wrong with the answer itself.
 Details in "The optional backup model" below.
+`formatContinuationNote` follows the same pattern for an answer that took more than one request - see "Automatic continuation" below.
 
 ### The search queries line
 
@@ -561,10 +580,42 @@ Format and capping:
 - **Capped at 300 characters**, with `(+n more)` for the remainder. Measured: usually 2 to 6 queries totalling 73 to 270 characters, a single query 29 to 84 characters - but 11 queries and over 500 characters for a deliberately overbroad question. The API documents no upper bound, hence the cap.
 - **The query that breaks the budget is still written in full** rather than truncated mid-word: half a search query carries no information, and the overshoot is bounded by the length of one query.
 - **An empty array produces no line at all**, following the same rule as the dropped-marker note: the normal case must not lengthen the footer. That no search happened is already visible as `🔍 0 sources`.
+- **Identical queries appear once.** After a continuation the SDK concatenates the query lists of all hops, and a hop may repeat a search of the one before. Unlike the source list, this line falls under no invariant - it reports what was searched, and a repetition adds nothing to that.
 
 Actually implemented in `gemini.js` (`buildText`, `formatNotice`, `buildSourceList`, `formatSourcesBlock`, `formatFooter`, `formatSearchQueries`) and `citations.js` (`insertCitations`).
 `buildSourceList`, `formatSourcesBlock`, `formatFooter` and `formatSearchQueries` are exported and, like `insertCitations`, testable without an API key (`test/sources.test.js`, `test/search-queries.test.js`).
 `gemini.js` can be imported without `GEMINI_API_KEY` because `getClient()` is only called inside `runSearch` and `listModels`, not at module load.
+
+### Automatic continuation
+
+Since `@google/genai` 2.26/2.29, `generateContent()` resends a request whose response ends with `finishReason: "CONTINUATION"`, carrying the response's `continuationToken`, and merges the answers (`generateContentWithContinuation`).
+It is on by default; `automaticContinuation: false` would turn it off.
+The server leaves it on: a truncated answer is worse than a long one.
+
+What the merge does, read from the SDK source (`mergeContinuationResponses`):
+
+- the parts are concatenated, and `segment.partIndex` and `groundingChunkIndices` of later hops are shifted, so `buildText` places the markers per part as before
+- `groundingChunks` are concatenated; `buildSourceList` deduplicates identical URIs, which I1 allows
+- `usageMetadata` is summed, the prompt included, because every hop resends and bills it; `initialPromptTokenCount` keeps the first hop's figure
+- `webSearchQueries` are concatenated, so `formatSearchQueries` writes identical queries once
+- `finishReason` is the last hop's
+- there is no limit on the number of hops, and timeouts, retries and billing apply to each request (SDK documentation of `automaticContinuation`)
+
+The token line shows the sums, because that is what is billed.
+A line below it says why the input figure can be a multiple of what the question cost on its own:
+
+```text
+↪ Continued in further requests - input tokens summed over all of them (first request: 2405)
+```
+
+The SDK records no hop count, so `promptTokenCount > initialPromptTokenCount` is the one trace a continuation leaves (`formatContinuationNote`).
+It is a `↪` and not a `⚠️`: the answer is complete, it only cost more.
+
+The local brake covers all hops together (see "The deadline this server does send").
+A late hop can therefore be cut off while Google still computes and bills it.
+
+Not measured: whether the Gemini API returns `CONTINUATION` for this server's requests at all - no real response has carried it so far, and it cannot be provoked on purpose.
+`test/continuation.test.js` covers the path with two stubbed hops through the real SDK.
 
 ## Terms compliance
 
@@ -580,7 +631,7 @@ They are met today, and they are binding from here on: **anyone considering a ch
 | I1 | No link is ever omitted | Every `groundingChunk` with a URI appears in the list, even when no marker points at it. No cap, no selection, no deduplication by domain |
 | I2 | No link is altered, URI **and** title | Redirect URLs go out byte for byte; the title counts as part of the link |
 | I3 | No redirect is resolved | The only outgoing traffic is the SDK call to the Gemini API |
-| I4 | Nothing is cached | Grounded Results never touch the disk; `config.json` holds model names and thinking levels, nothing else |
+| I4 | Nothing is cached | Grounded Results never touch the disk; `config.json` holds model names, thinking levels and the deadline, nothing else |
 
 Deduplicating by identical URI violates none of them, because no destination is lost in the process.
 Deduplicating by domain would violate I1.
@@ -643,7 +694,7 @@ This is a genuine gap, not a solved problem, and it is recorded here rather than
 
 ## Configurable model and thinking level
 
-The MCP server offers two additional tools for setting the default model and the default thinking level persistently, without having to edit the code.
+The MCP server offers two additional tools for setting the default model, thinking level, backup model and deadline persistently, without having to edit the code.
 
 ### gemini-list-models
 
@@ -678,7 +729,7 @@ If the filter yields no model at all - because the API no longer provides the fi
 
 `models-excluded.js` holds the models that pass `isUsableModel` and still do not belong in a list somebody picks a research model from.
 It is applied on top of that filter and only in the default view; `all: true` bypasses it entirely and gives each entry the kind of its exclusion as its status - `400 INVALID_ARGUMENT`, `404 NOT_FOUND`, `deprecated`, `no sources` or `unsuitable` - so the exclusion moves the information rather than losing it.
-It shapes the display and nothing else: `gemini-set-model` and a per-call `model` accept any id, an excluded one included.
+It shapes the display and nothing else: `gemini-set-config` and a per-call `model` accept any id, an excluded one included.
 
 Measured on 2026-10-26 with `scripts/probe-models.js` against a single API key: 60 models in total, 33 past `isUsableModel`, 25 excluded, 8 offered.
 
@@ -709,7 +760,7 @@ A threshold on `inputTokenLimit` was considered and rejected for the same reason
 It separated the measurement perfectly - the usable text models reach 1M, the image, robotics, TTS and Gemma models sit at 256k or below - but it would hide a good text model with a smaller context window without a word. The two robotics models show this is not hypothetical: they reach 128k, ground correctly, and are excluded here for a documented reason rather than for their size.
 
 **In code, not in `config.json`.**
-The list is a project decision, not user state, and `config.json` is fixed to model names and thinking levels.
+The list is a project decision, not user state, and `config.json` is fixed to model names, thinking levels and the deadline.
 In code it is versioned, testable, and carries its reason in the comment.
 
 **What keeps it honest.**
@@ -740,20 +791,25 @@ The tool description costs context permanently and is the price for a notice tha
 Neither field is used as an automatic filter - that would be the same name pattern one field further right, with the same silent failure once a future text model carries one of the keywords.
 As a hint for whoever assesses a new entry by hand, `description` is the only usable source for a code name.
 
-### gemini-set-model
+### gemini-set-config
 
-Stores the model ID, thinking level and/or backup model persistently in a `config.json` (location see below).
+Stores the model ID, thinking level, backup model and/or deadline persistently in a `config.json` (location see below).
 The values can be set independently of one another - a merge makes sure that setting one does not overwrite the others already stored.
 This choice survives server restarts until it is changed again.
 
-Two of the four parameters have a state beyond "a value":
+Up to 1.x the tool was called `gemini-set-model`.
+The name stopped fitting once it set a deadline as well, and it is named for the file it writes rather than for one of its values.
+The rename is a breaking change: permission rules and instructions naming the old tool no longer match anything.
+
+Three of the five parameters have a state beyond "a value":
 
 | Parameter | `undefined` | A value | Special |
 | --- | --- | --- | --- |
 | `backupModel` | leave untouched | model ID | `false` switches the fallback off, and records that this was deliberate |
 | `backupThinkingLevel` | leave untouched, **except** alongside a `backupModel`, where it resets | thinking level | `null` deletes the key, so the backup inherits the level of the call again |
+| `deadlineSeconds` | leave untouched | whole seconds | `false` sends no deadline; see "The deadline this server does send" |
 
-`null` deletes for all four keys, not just for `backupThinkingLevel` - a special rule for exactly one field is not explainable later.
+`null` deletes for all five keys, not just for `backupThinkingLevel` - a special rule for exactly one field is not explainable later.
 `false` for `backupModel` is deliberately stored rather than deleted: for behaviour, "never configured" and "switched off" are the same thing, but for the reader of `gemini-grounding config` they are two different statements.
 
 The exception in that table is the unit rule described under "Implementation": a `backupModel` arriving without a level of its own resets the stored one, so a level chosen for the previous backup does not silently carry over to the new model.
@@ -763,7 +819,7 @@ That requires a stored backup that is switched on: a level without its model has
 `findBackupLevelProblem` in `config.js` rejects both cases before anything is written - `null` stays exempt, because the way back to "inherits from the call" must remain open even when no backup is left.
 
 That check and `findModelCollision` below are the same shape for the same reason, and both guard both interfaces.
-The rule used to live in `cli.js` alone, where `gemini-set-model` did not pass it: a model told to store a backup level has no reason to read the stored state first.
+The rule used to live in `cli.js` alone, where `gemini-set-config` did not pass it: a model told to store a backup level has no reason to read the stored state first.
 
 **Default and backup may not become the same model**, and `findModelCollision` in `config.js` rejects that before anything is written.
 Were they equal, no fallback would take place at all: `runSearch` refuses it with "it is the same model as the default" - a safety net that only fires on the next failing call, leaving the backup silently dead until then.
@@ -778,7 +834,7 @@ Without the `catch`, a write error would escape the handler uncaught instead of 
 
 ```javascript
 server.registerTool(
-  "gemini-set-model",
+  "gemini-set-config",
   {
     inputSchema: {
       model: z
@@ -800,13 +856,23 @@ server.registerTool(
         .nullable()
         .optional()
         .describe("Reasoning depth of the backup model"),
+      deadlineSeconds: z
+        .union([z.number().int().positive(), z.literal(false)])
+        .optional()
+        .describe("Seconds after which Google aborts a search; false sends none"),
     },
   },
-  async ({ model, thinkingLevel, backupModel, backupThinkingLevel }) => {
+  async ({ model, thinkingLevel, backupModel, backupThinkingLevel, deadlineSeconds }) => {
     // at least one parameter is required, otherwise an error
     // findModelCollision and findBackupLevelProblem before writing - see config.js
     // merge instead of overwrite, except for the backup unit - see config.js
-    const saved = setSavedConfig({ model, thinkingLevel, backupModel, backupThinkingLevel });
+    const saved = setSavedConfig({
+      model,
+      thinkingLevel,
+      backupModel,
+      backupThinkingLevel,
+      deadlineSeconds,
+    });
     return {
       content: [
         {
@@ -826,8 +892,9 @@ Every save answers two different questions, and both are needed:
 ```text
 Saved - Backup: gemini-3.5-flash, Backup thinking level: inherited from the call
 
-Primary: gemini-flash-latest · high
-Backup:  gemini-3.5-flash · high (inherited)
+Primary:  gemini-flash-latest · high
+Backup:   gemini-3.5-flash · high (inherited)
+Deadline: 300 s
 ```
 
 `formatSavedValues` names each value that was written.
@@ -872,10 +939,10 @@ An additional environment variable of our own for the path was rejected - `XDG_C
 
 The directory is created exclusively on the write path (`mkdirSync` with `recursive` immediately before the `writeFileSync`).
 That way the package creates nothing unasked: as long as nobody sets a model, neither the directory nor the file comes into existence, and `readConfig()` already handles the missing file.
-Discoverability comes from the output rather than from the location - which is why `CONFIG_PATH` is exported, the confirmation from `gemini-set-model` names it, and `gemini-grounding config` displays it too.
+Discoverability comes from the output rather than from the location - which is why `CONFIG_PATH` is exported, the confirmation from `gemini-set-config` names it, and `gemini-grounding config` displays it too.
 
 Also rejected: being able to specify the model and thinking level **additionally** via `GEMINI_MODEL`/`GEMINI_THINKING_LEVEL`.
-The code would have been two lines, but the price lies elsewhere - a second configuration source creates a precedence order that has to be explained, plus three surprising behaviours: a single `gemini-set-model` would have rendered the variable permanently ineffective, mixed states would arise (model from the file, level from the environment), and resetting would only work by deleting the file.
+The code would have been two lines, but the price lies elsewhere - a second configuration source creates a precedence order that has to be explained, plus three surprising behaviours: a single `gemini-set-config` would have rendered the variable permanently ineffective, mixed states would arise (model from the file, level from the environment), and resetting would only work by deleting the file.
 One source of truth it is: what the file says applies - otherwise the default.
 
 An old, script-relative `config.json` is **not** migrated automatically.
@@ -886,7 +953,7 @@ The way there is described in the README, and resetting costs a single call.
 ### Resolving the defaults per call
 
 The `gemini-search` tool uses the stored values as defaults, provided nothing is passed explicitly on the call.
-Resolution deliberately happens **at call time** rather than as a Zod `.default()` in the `inputSchema`: a schema default would be evaluated once when the tool is registered and then frozen, so `gemini-set-model` would only take effect after a server restart.
+Resolution deliberately happens **at call time** rather than as a Zod `.default()` in the `inputSchema`: a schema default would be evaluated once when the tool is registered and then frozen, so `gemini-set-config` would only take effect after a server restart.
 `model` and `thinkingLevel` are therefore `optional()` in the schema.
 
 `resolveCallConfig` in `config.js` answers the question for the MCP handler and the CLI alike, so both give the same answer:
@@ -899,6 +966,7 @@ export function resolveCallConfig({ model, thinkingLevel } = {}) {
     thinkingLevel: thinkingLevel ?? getSavedThinkingLevel(), // "medium" without config.json
     backupModel: backup.model,
     backupThinkingLevel: backup.thinkingLevel,
+    deadlineSeconds: getSavedDeadline(), // 300 without config.json, no per-call override
   };
 }
 ```
@@ -922,7 +990,7 @@ Everything else - broken JSON after an interrupted write, missing read permissio
 Such a case therefore produces one warning naming the path and the original message.
 
 It goes to **stderr**, never to stdout: the MCP server speaks JSON-RPC over stdout, where a single stray line breaks the connection to the client.
-A module-level flag limits it to one occurrence, because `readConfig()` runs three times per call - once for the model, once for the thinking level, once for the backup. Without the flag the same warning would stand there three times over and look like three separate faults.
+A module-level flag limits it to one occurrence, because `readConfig()` runs four times per call - once for the model, once for the thinking level, once for the backup, once for the deadline. Without the flag the same warning would stand there four times over and look like four separate faults.
 
 ## Transient errors and retries
 
@@ -994,38 +1062,61 @@ The configuration reduces how often a transient error reaches the client; it doe
 
 ### The deadline this server does send
 
-Three limits apply to a request, and only one of them decides. All three are measured, not estimated:
+Three limits apply to a request, and since `@google/genai` 2.29 one of them is gone:
 
 | Limit | Value | Effect |
 | --- | --- | --- |
-| Node (`headersTimeout`) | **306.8 s** measured | Severs the connection - **cuts in first** |
-| MCP client (Claude Code 2.1.224) | **1800 s** measured | Six times more patient, never reached |
-| Google without a deadline | none | Generates to the end regardless |
+| Node (`headersTimeout`) | **306.8 s** measured, up to `@google/genai` 2.28 | Severed a silent connection and cut in first. Since 2.29 the SDK passes its own undici dispatcher with `headersTimeout: 0` and `bodyTimeout: 0` (`createUndiciNoTimeoutDispatcher`) |
+| MCP client (Claude Code 2.1.224) | **1800 s** measured | Now the first limit on this side |
+| Google without a deadline | 10 min for a unary request, per the SDK comment on `createUndiciNoTimeoutDispatcher` | Generates to that limit regardless |
 
-Node cuts first, so everything Google produces beyond that point can no longer be received by anyone.
-Billed it is all the same: input tokens in full once processing starts, output tokens up to the actual end of the run.
+Everything Google produces is billed whether or not anyone still receives it: input tokens in full once processing starts, output tokens up to the actual end of the run.
 Only rejections before execution (`400`, `401`, `403`, `429`) are free.
 
-`gemini.js` therefore tells the gateway a deadline of its own, as an ordinary header:
+`gemini.js` therefore tells the gateway a deadline of its own, as an ordinary header, 300 s unless configured:
 
 ```javascript
-export const SERVER_DEADLINE_SECONDS = 290;
+export const DEFAULT_DEADLINE_SECONDS = 300; // config.js
 ```
 
-290 s sits just below Node's limit, so Google stops before the line is cut - and the failure arrives as a `504` with a reason instead of a bare connection abort.
+300 s sits below Google's own limit, so the header decides, and the failure arrives as a `504` with a reason.
 Google honours the header as an execution deadline and does abort the generation server-side; the value goes out in whole seconds.
+Up to `@google/genai` 2.28 the value was 290 s, just below Node's limit; with that limit gone, there is nothing left to stay under, and the round number applies.
+
+**Configurable.** `deadlineSeconds` in `config.json` holds a positive whole number of seconds, or `false` for no header at all - Google's own limit applies then.
+It is set via `gemini-set-config` or `gemini-grounding set-deadline <seconds|off>`, and `false` is stored rather than deleted for the same reason as `backupModel: false`: deleting would bring back the default, the opposite of "off".
+There is deliberately no per-call parameter: a call that could raise the deadline turns a `504` into an invitation to retry longer, and the deadline is an operating setting rather than part of a question.
+For the same reason the tool description and the server instructions tell an agent to report a `504` instead of raising the deadline on its own.
+An unusable value in a hand-edited file produces one warning on stderr and the default applies - unlike an unknown model, which comes back from the API as an error, a deadline nobody applies would show nowhere.
+
+**The local brake.** Without Node's limit, a request that runs into nothing - a silent line, no answer, no error - waited until the MCP client gave up after 1800 s.
+`generate()` therefore arms an `AbortController` at the deadline plus `LOCAL_BRAKE_MARGIN_SECONDS` (30 s) and passes its signal as `config.abortSignal`.
+The error then reads:
+
+```text
+Error in gemini-search: no response within 330 s - aborted locally (deadline 300 s + 30 s margin)
+```
+
+The SDK's retry stops on an aborted signal (`onFailedAttempt` in `apiCall()` rethrows), and the backup is not tried (`backup not tried: no response within 330 s`): the request may well have reached the API, and nothing says the line is any better for a second model.
+A backup that steps in after a different error gets a brake of its own rather than what the default left over.
+Without a deadline there is no brake either; whoever switched the deadline off waits for Google's own limit.
+
+The brake covers one `generate()` call as a whole, because the SDK passes `config.abortSignal` to every continuation hop and every retry.
+A late hop of a continued answer can therefore be cut off while Google still computes and bills it (see "Automatic continuation").
+Arming one brake per hop would mean steering the continuation in this server instead of the SDK, including the merge, and it would leave the total duration unbounded.
+`AbortController` plus `setTimeout` rather than `AbortSignal.timeout()`, because the tests advance `setTimeout` with `mock.timers` instead of waiting 330 real seconds.
 
 **Deliberately not via `httpOptions.timeout`**, even though the SDK builds the same header from it.
-That option produces a client-side `AbortController` from the same value - a second clock, racing Google's answer.
+That option produces a client-side `AbortController` from the **same** value - a second clock, racing Google's answer.
 Which one wins is chance, and when the local one wins, what surfaces is `This operation was aborted` instead of the reason.
-A header alone has no second moving part.
+The local brake does not bring that race back: 30 s apart, Google's `504` arrives first whenever the line is alive, and the brake catches only the line that is not.
 
-The measured timer, incidentally, does not meter what its name suggests: `headersTimeout` is the wait for the response headers, not the total duration.
-Since `generateContent` does not stream, both amount to the same thing here - Google answers in one piece once generation is done.
+The 306.8 s measured up to 2.28 were undici's `headersTimeout` of 300 s plus connection setup - the wait for the response headers, not the total duration.
+Since `generateContent` does not stream, both amounted to the same thing - Google answers in one piece once generation is done.
 
 Setting `httpOptions.headers` does not replace the SDK's own headers: `patchHttpOptions()` merges both objects with `Object.assign`, so `User-Agent` and `Content-Type` survive.
 `test/retry.test.js` asserts that in the same case as the deadline itself - if the merge were a replacement, the requests would fail at the server and no test would have noticed.
-A hang is therefore accepted rather than paid for with three moving parts. What was kept from the attempt is the error message - see below.
+Up to 2.28 a hang was accepted rather than paid for with a second clock; since Node's limit is gone, the brake above takes its place.
 
 ### What reaches the client when a request fails
 
@@ -1040,7 +1131,8 @@ A network error is the opposite case. In Node every one of them is called `fetch
 Error in gemini-search: fetch failed (UND_ERR_HEADERS_TIMEOUT: Headers Timeout Error)
 ```
 
-That example is the measured one, not an invented illustration: it is exactly what the 306.8 s abort above produces.
+That example is the measured one, not an invented illustration: it is what the 306.8 s abort above produced up to `@google/genai` 2.28.
+Since 2.29 a silent request ends at the local brake instead, whose message needs no cause.
 
 `test/errors.test.js` checks this against a **real** `fetch` error rather than a hand-built one - the shape of `error.cause` is an assumption about the runtime and is best verified against it.
 
@@ -1078,7 +1170,7 @@ export const NO_FALLBACK_STATUS = [401, 403, 504];
 
 The three exceptions come from two different reasons.
 `401` and `403` are **hopeless**: both hang on the API key, and the second call uses the same one, so the model cannot possibly be the cause.
-`504` is **too expensive**: on this server it is usually the server's own deadline, hence a generation that ran in full and is billed. A fallback would double it and add up to another 290 seconds of waiting.
+`504` is **too expensive**: on this server it is usually the server's own deadline, hence a generation that ran in full and is billed. A fallback would double it and add the whole deadline again - 300 seconds by default.
 
 Deliberately **not** the same list as `RETRY_OPTIONS`.
 The two answer different questions - the retry "does waiting help?", the fallback "can a different model be the difference?".
@@ -1120,7 +1212,7 @@ Without it, the unanswerable question "why did my backup not kick in?" is what r
 
 - **both failed** - both errors, each with its model in front of it. With only the second one there, you would go looking at the wrong model. Built through the existing `describeError()` on both, so the `cause` of a network error survives
 - **fallback deliberately skipped** - `backup not tried: …` plus the reason, for the exceptions above
-- **backup identical to the default** - a configuration mistake; every write path rejects it beforehand (`findModelCollision`, see "gemini-set-model"), and `runSearch` catches it a second time, because a hand-edited `config.json` reaches no write path at all
+- **backup identical to the default** - a configuration mistake; every write path rejects it beforehand (`findModelCollision`, see "gemini-set-config"), and `runSearch` catches it a second time, because a hand-edited `config.json` reaches no write path at all
 
 A model named explicitly on the call is **not** among these cases and gets no note.
 `resolveCallConfig` then simply passes no backup, and that a self-named model is not replaced comes as no surprise to the caller.

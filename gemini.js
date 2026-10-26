@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { insertCitations } from "./citations.js";
+import { DEFAULT_DEADLINE_SECONDS } from "./config.js";
 import { EXCLUDED_MODELS } from "./models-excluded.js";
 
 /**
@@ -22,7 +23,7 @@ import { EXCLUDED_MODELS } from "./models-excluded.js";
  * immediately.
  *
  * 504: since this server sends a deadline of its own (see
- * SERVER_DEADLINE_SECONDS), a 504 is usually that deadline rather than Google's
+ * DEFAULT_DEADLINE_SECONDS in config.js), a 504 is usually that deadline rather than Google's
  * overloaded gateway. Repeating it runs the same generation to the deadline
  * three more times and pays for each, because an aborted generation is billed
  * all the same. The two causes cannot be told apart here: the retry decision is
@@ -31,9 +32,9 @@ import { EXCLUDED_MODELS } from "./models-excluded.js";
  *
  * For 500, 502, 503 and 408 no server-supplied hint exists, so blind backoff is
  * the only option. 408 is in the list for completeness: an expired deadline
- * comes back as 504, and a request that runs into nothing is aborted by Node
- * without any HTTP status (measured after 306.8 seconds). A genuine 408 would
- * have to come from an intermediary.
+ * comes back as 504, and a request that runs into nothing is ended by the local
+ * brake without any HTTP status (see LOCAL_BRAKE_MARGIN_SECONDS). A genuine 408
+ * would have to come from an intermediary.
  *
  * attempts counts the initial call, so four attempts mean three repeats and,
  * with the SDK defaults (initialDelay 1s, expBase 2, jitter), 7 to 14 seconds of
@@ -47,34 +48,30 @@ export const RETRY_OPTIONS = {
 };
 
 /**
- * The deadline Google's gateway is told about: after this time it should abort
- * the generation instead of computing on. The SDK sends it as the header
- * X-Server-Timeout in whole seconds.
+ * How long after the deadline the server stops waiting by itself. The deadline
+ * (DEFAULT_DEADLINE_SECONDS in config.js, configurable) goes to Google's gateway
+ * as the header X-Server-Timeout: after it, Google aborts the generation and
+ * answers 504 with a reason. Everything generated up to then is billed all the
+ * same - input tokens in full, output tokens up to the actual end of the run.
  *
- * The value derives from the shortest link in the chain, and all three numbers
- * are measured, not estimated:
- * - Node severs a silent connection after 306.8 s (undici's headersTimeout of
- *   300 s plus connection setup)
- * - the MCP client of Claude Code waits 1800 s, six times longer
- * - Google itself knows no deadline at all without this header
+ * The brake exists because nothing else on this side ends a silent connection
+ * any more. Up to @google/genai 2.28 Node severed one after 306.8 s (measured);
+ * since 2.29 the SDK passes its own undici dispatcher with headersTimeout: 0,
+ * and the next limit is the MCP client of Claude Code at 1800 s (measured).
  *
- * Node therefore cuts first. Everything Google generates beyond that point can
- * no longer be received by anyone - billed it is all the same: input tokens in
- * full, output tokens up to the actual end of the run. Only rejections before
- * execution (400, 401, 403, 429) are free. 290 seconds sits just below Node's
- * limit, so Google stops before the line is cut - and the failure arrives as a
- * 504 with a reason instead of a bare connection abort.
+ * Deliberately NOT httpOptions.timeout, although the SDK builds the same header
+ * from it: that option arms a client-side clock with the SAME value, racing
+ * Google's answer, and when the local one wins, "This operation was aborted"
+ * arrives instead of the reason. 30 s apart there is no race: Google's 504
+ * arrives first whenever the line is alive, and the brake catches only the one
+ * that is not.
  *
- * Deliberately NOT set via httpOptions.timeout, although the SDK builds the same
- * header from it: that option also produced a client-side AbortController, a
- * second clock racing Google's answer. Which one wins is chance, and when the
- * local one wins, "This operation was aborted" arrives instead of the reason.
- *
- * The SDK's own headers stay untouched: patchHttpOptions() merges both objects
- * with Object.assign, so User-Agent and Content-Type are not lost.
+ * The brake covers one generate() call as a whole, every continuation hop and
+ * every retry included (the SDK passes config.abortSignal to each). A late hop
+ * can therefore be cut off while Google still computes and bills it.
  * Full derivation: docs/specs.md, "The deadline this server does send".
  */
-export const SERVER_DEADLINE_SECONDS = 290;
+export const LOCAL_BRAKE_MARGIN_SECONDS = 30;
 
 /**
  * Errors that do NOT fall back to the backup model. Everything else triggers the
@@ -91,9 +88,9 @@ export const SERVER_DEADLINE_SECONDS = 290;
  * The three exceptions come from two different reasons. 401 and 403 are
  * hopeless: both hang on the API key, and the second call uses the same one, so
  * the model cannot possibly be the cause. 504 is too expensive: on this server
- * it is usually the server's own deadline (see SERVER_DEADLINE_SECONDS), hence a
- * generation that ran in full and is billed, and a fallback would double it and
- * add up to another 290 seconds of waiting.
+ * it is usually the server's own deadline (see LOCAL_BRAKE_MARGIN_SECONDS), hence
+ * a generation that ran in full and is billed, and a fallback would double it
+ * and add the whole deadline again - 300 seconds by default.
  *
  * A network error is not in the list and does not need to be: it carries no
  * status at all and drops out by itself.
@@ -131,7 +128,13 @@ export const API_KEY_MISSING_MESSAGE =
   "GEMINI_API_KEY is not set. The API key must be provided via environment " +
   "variable (never hardcoded).";
 
-function getClient() {
+/**
+ * deadlineSeconds false sends no header, and Google then runs to its own limit
+ * of 10 minutes for a unary request. The SDK's own headers stay untouched:
+ * patchHttpOptions() merges both objects with Object.assign, so User-Agent and
+ * Content-Type are not lost.
+ */
+function getClient({ deadlineSeconds = false } = {}) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error(API_KEY_MISSING_MESSAGE);
@@ -140,7 +143,7 @@ function getClient() {
     apiKey,
     httpOptions: {
       retryOptions: RETRY_OPTIONS,
-      headers: { "X-Server-Timeout": String(SERVER_DEADLINE_SECONDS) },
+      headers: deadlineSeconds === false ? {} : { "X-Server-Timeout": String(deadlineSeconds) },
     },
   });
 }
@@ -346,6 +349,11 @@ const SEARCH_QUERY_BUDGET = 300;
  * Full derivation: docs/specs.md, "The search queries line".
  */
 export function formatSearchQueries(queries = []) {
+  // Identical queries once: the SDK concatenates the lists of all continuation
+  // hops, and a hop may repeat a search of the one before. Unlike the source
+  // list this line falls under no invariant - it reports what was searched,
+  // and a repetition adds nothing to that.
+  queries = [...new Set(queries)];
   if (queries.length === 0) return "";
 
   // The query that breaks the budget is still written IN FULL - a search query
@@ -403,6 +411,28 @@ export function formatFallbackNote(fallback) {
   }
 }
 
+/**
+ * The line about an answer that took more than one request. Without a
+ * continuation an empty string and therefore no line.
+ *
+ * Since @google/genai 2.29 generateContent() resends the request with the
+ * continuationToken on finishReason "CONTINUATION" and merges the answers. The
+ * token counts are summed over all hops, the prompt included, because each hop
+ * resends and bills it - so the input figure in the line above can be a
+ * multiple of what the question cost on its own. This line says why, with the
+ * first request's figure for comparison.
+ *
+ * The SDK records no hop count; that the prompt grew is the one trace a
+ * continuation leaves. Not a ⚠️: the answer is complete, it only cost more.
+ * Full derivation: docs/specs.md, "Automatic continuation".
+ */
+export function formatContinuationNote(usageMetadata) {
+  const total = usageMetadata?.promptTokenCount;
+  const initial = usageMetadata?.initialPromptTokenCount;
+  if (typeof total !== "number" || typeof initial !== "number" || total <= initial) return "";
+  return `\n↪ Continued in further requests - input tokens summed over all of them (first request: ${initial})`;
+}
+
 export function formatFooter({
   usageMetadata,
   model,
@@ -441,6 +471,7 @@ export function formatFooter({
     `| 🔍 ${sourceCount} sources | 🤖 ${model}${served} (thinking: ${thinkingLevel})` +
     `${droppedNote}${skippedNote}` +
     formatSearchQueries(searchQueries) +
+    formatContinuationNote(usageMetadata) +
     formatFallbackNote(fallback)
   );
 }
@@ -477,6 +508,12 @@ export function readErrorBody(error) {
 function fallbackRefusal({ error, model, backupModel, reason }) {
   if (backupModel === model) {
     return "backup not tried: it is the same model as the default";
+  }
+  // Before the status check, which would call it "never reached the API": the
+  // request may well have reached it, and nothing says the line is any better
+  // for a second model.
+  if (error instanceof LocalDeadlineError) {
+    return `backup not tried: no response within ${error.limitSeconds} s`;
   }
   // Measured: an unusable key does NOT arrive as 401 or 403 but as a
   // 400 INVALID_ARGUMENT with "API key not valid", so the status code alone is
@@ -527,12 +564,63 @@ export const SEARCH_TOOLS = Object.freeze([
   Object.freeze({ codeExecution: {} }),
 ]);
 
-/** One call to the API. Everything that stays the same per attempt lives here. */
-function generate(ai, { query, model, thinkingLevel }) {
+/**
+ * The error the local brake turns into. Its own class, so fallbackRefusal() and
+ * the tests recognise it without parsing text.
+ */
+export class LocalDeadlineError extends Error {
+  constructor(deadlineSeconds) {
+    const limit = deadlineSeconds + LOCAL_BRAKE_MARGIN_SECONDS;
+    super(
+      `no response within ${limit} s - aborted locally ` +
+        `(deadline ${deadlineSeconds} s + ${LOCAL_BRAKE_MARGIN_SECONDS} s margin)`,
+    );
+    this.limitSeconds = limit;
+  }
+}
+
+/**
+ * One call to the API, continuation hops and retries included. Everything that
+ * stays the same per attempt lives here.
+ *
+ * The brake is armed per call, so a backup gets a budget of its own instead of
+ * what the failed default left over. AbortController plus setTimeout rather
+ * than AbortSignal.timeout(): the tests advance setTimeout with mock.timers and
+ * would otherwise have to wait 330 real seconds. Without a deadline there is no
+ * brake either - whoever switched the deadline off waits for Google's own limit.
+ */
+async function generate(ai, { query, model, thinkingLevel, deadlineSeconds }) {
+  const brake = new AbortController();
+  const timer =
+    deadlineSeconds === false
+      ? undefined
+      : setTimeout(() => brake.abort(), (deadlineSeconds + LOCAL_BRAKE_MARGIN_SECONDS) * 1000);
+  try {
+    return await requestContent(ai, { query, model, thinkingLevel, signal: brake.signal });
+  } catch (error) {
+    // Checked on the signal, not on the error: what fetch throws on an abort
+    // differs between runtimes, the signal's state does not.
+    if (brake.signal.aborted) throw new LocalDeadlineError(deadlineSeconds);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function requestContent(ai, { query, model, thinkingLevel, signal }) {
   return ai.models.generateContent({
     model,
     contents: query,
     config: {
+      abortSignal: signal,
+      // Without it Google may keep request and response in its API logs for up
+      // to 55 days: since 2026-10-26 generateContent logs by default for newly
+      // created projects on the paid tier, and the field takes precedence over
+      // the project setting. Research queries carry context from the user's
+      // work. Not INVARIANT I4, which is about this server's disk - and the
+      // 30-day storage for grounding under the terms stays regardless.
+      // Full derivation: docs/specs.md, "Logging at Google: store".
+      store: false,
       // The current date, nothing else. Without it the model reads "the latest
       // version" against its own training cutoff rather than against today -
       // measured, it searched for "2025 2026" in four out of six cases, because
@@ -574,8 +662,9 @@ export async function runSearch({
   thinkingLevel,
   backupModel,
   backupThinkingLevel,
+  deadlineSeconds = DEFAULT_DEADLINE_SECONDS,
 }) {
-  const ai = getClient();
+  const ai = getClient({ deadlineSeconds });
 
   let response;
   // Stays undefined when the first attempt goes through, which drops the footer
@@ -583,7 +672,7 @@ export async function runSearch({
   let fallback;
 
   try {
-    response = await generate(ai, { query, model, thinkingLevel });
+    response = await generate(ai, { query, model, thinkingLevel, deadlineSeconds });
   } catch (error) {
     // Without a configured backup nothing changes: the error goes out unaltered,
     // as it did before this feature.
@@ -601,7 +690,7 @@ export async function runSearch({
     thinkingLevel = backupThinkingLevel ?? thinkingLevel;
 
     try {
-      response = await generate(ai, { query, model, thinkingLevel });
+      response = await generate(ai, { query, model, thinkingLevel, deadlineSeconds });
     } catch (backupError) {
       // Both errors, each with its model in front of it. With only the second
       // one here, you would go looking at the wrong model; describeError() on

@@ -44,6 +44,7 @@ Ein Fehler **ohne** HTTP-Code ist kein API-Fehler, sondern ein Netzwerkfehler: s
 | 503 | `UNAVAILABLE` | Modell überlastet | **ja** | **ja** | nein |
 | 504 | `DEADLINE_EXCEEDED` | unsere eigene Frist | nein | nein | **ja** |
 | - | `fetch failed` | Verbindung tot | nein | nein | teilweise |
+| - | `no response within` | stille Leitung, von der lokalen Notbremse beendet | nein | nein | teilweise |
 
 "Retry?" meint die vier Versuche aus `RETRY_OPTIONS` in `gemini.js`, die das SDK selbst abarbeitet.
 
@@ -178,8 +179,8 @@ Genau daraus entsteht das Backup-Modell: Dieselbe Anfrage geht nach den erschöp
 
 Dokumentiert und in `test/retry.test.js` als nicht wiederholbar festgehalten.
 
-Bei diesem Server ist ein 504 im Regelfall **nicht** Googles überlastetes Gateway, sondern die Frist, die er selbst mitschickt: `X-Server-Timeout: 290` (siehe `SERVER_DEADLINE_SECONDS` in `gemini.js`).
-Nach 290 Sekunden bricht Googles Gateway die Generierung ab, statt weiterzurechnen.
+Bei diesem Server ist ein 504 im Regelfall **nicht** Googles überlastetes Gateway, sondern die Frist, die er selbst mitschickt: `X-Server-Timeout: 300`, sofern nichts anderes eingestellt ist (siehe `DEFAULT_DEADLINE_SECONDS` in `config.js`).
+Nach 300 Sekunden bricht Googles Gateway die Generierung ab, statt weiterzurechnen.
 
 Wird **absichtlich nicht wiederholt**, und es greift auch **kein Backup**.
 Beides wäre eine weitere volle Generierung bis zum Fristende, und abgerechnet wird sie trotzdem.
@@ -201,15 +202,29 @@ Was tatsächlich geschah, steht ausschließlich in `error.cause`, und genau die 
 fetch failed (UND_ERR_HEADERS_TIMEOUT: Headers Timeout Error)
 ```
 
-Der wichtigste Fall dahinter ist `UND_ERR_HEADERS_TIMEOUT`: Node bricht eine schweigende Verbindung nach **306,8 Sekunden** ab (Undicis `headersTimeout` von 300 Sekunden plus Verbindungsaufbau).
-Das ist das kürzeste Glied der Kette, kürzer als die 1800 Sekunden, die der MCP-Client von Claude Code wartet, und Google kennt ohne den Frist-Header überhaupt keine Grenze.
-Genau deshalb liegen die 290 Sekunden knapp darunter: damit Google aufhört, bevor die Leitung gekappt wird, und ein 504 mit Begründung ankommt statt ein bloßer Verbindungsabbruch.
+Bis `@google/genai` 2.28 war der wichtigste Fall dahinter `UND_ERR_HEADERS_TIMEOUT`: Node brach eine schweigende Verbindung nach **306,8 Sekunden** ab (Undicis `headersTimeout` von 300 Sekunden plus Verbindungsaufbau), und die Frist von 290 Sekunden lag knapp darunter.
+Seit 2.29 schaltet das SDK dieses Timeout ab, und eine schweigende Verbindung endet stattdessen an der lokalen Notbremse - siehe unten.
 
-Was jenseits dieser Grenze noch generiert wird, kann niemand mehr entgegennehmen, bezahlt wird es trotzdem.
+Was nach dem Abbruch der Verbindung noch generiert wird, kann niemand mehr entgegennehmen, bezahlt wird es trotzdem.
 Eine Verbindung, die Google nie erreicht hat - abgelehnt, unbekannter Host, falscher Port -, kostet dagegen nichts; deshalb steht in der Tabelle "teilweise" und der 504 bleibt der einzige Fehler, der sicher abgerechnet wird.
 Ein Backup greift deshalb nicht, wie beim 504 auch.
 
 Ein `code` ist nicht garantiert: Gemessen liefert `ECONNREFUSED` einen, ein unzulässiger Port dagegen nicht.
+
+### Ohne Code: `no response within` - die lokale Notbremse
+
+In `test/retry.test.js` festgehalten.
+
+Kein API-Fehler, sondern dieser Server, der eine stille Leitung aufgibt: keine Antwort, kein Fehler, nichts.
+Sie greift 30 Sekunden nach der Frist, solange die Leitung lebt, kommt Googles 504 also immer zuerst:
+
+```text
+no response within 330 s - aborted locally (deadline 300 s + 30 s margin)
+```
+
+**Nicht wiederholt**, und es greift **kein Backup**: Die Anfrage kann Google durchaus erreicht haben, und ein zweites Modell liefe über dieselbe Leitung.
+Ob sie etwas kostet, hängt davon ab, ob Google die Anfrage je erhalten hat - deshalb "teilweise", wie bei `fetch failed`.
+Ist die Frist abgeschaltet, gibt es auch keine Bremse, und eine stille Leitung wartet, bis der MCP-Client von Claude Code nach 1800 Sekunden aufgibt.
 
 ## Wo das im Code steht
 
@@ -217,7 +232,8 @@ Ein `code` ist nicht garantiert: Gemessen liefert `ECONNREFUSED` einen, ein unzu
 | --- | --- |
 | Retry-Liste samt Begründung der Auslassungen | `RETRY_OPTIONS` in `gemini.js` |
 | Ausnahmen vom Backup-Modell | `NO_FALLBACK_STATUS` in `gemini.js` |
-| Die eigene Frist und ihre Herleitung | `SERVER_DEADLINE_SECONDS` in `gemini.js` |
+| Die eigene Frist | `DEFAULT_DEADLINE_SECONDS` in `config.js` |
+| Die lokale Notbremse und die Herleitung beider | `LOCAL_BRAKE_MARGIN_SECONDS` in `gemini.js` |
 | Aufbereitung für den Client | `describeError()` in `gemini.js` |
 | Geprüftes Retry-Verhalten pro Code | `test/retry.test.js` |
 | Geprüftes Backup-Verhalten pro Code | `test/fallback.test.js` |

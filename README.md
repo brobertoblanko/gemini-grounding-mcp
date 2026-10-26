@@ -147,10 +147,11 @@ Google, which is a different problem from a broken installation. That one is
 worth simply retrying: 503 is temporary overload on Google's side, and the
 server already tries such a request up to four times on its own before reporting
 it - which is also why an answer can take some ten seconds longer than usual
-when the service is busy. A call that is still running after 290 seconds is
+when the service is busy. A call that is still running after 300 seconds is
 ended on purpose: the server gives Google that deadline, so an overlong run
 comes back as a `504` naming a reason instead of a connection that drops without
-one.
+one. `set-deadline` changes it. Should the line go silent altogether, the
+server stops waiting 30 seconds later and says so.
 
 </details>
 
@@ -188,10 +189,12 @@ individual call visible.
   their token limits. By default a hand-picked shortlist of those suited to
   research here; `all: true` shows every model with a status column saying why
   it is off the list.
-- **`gemini-set-model`** - persists the default model, the default thinking
-  level and/or the backup model (only those values, never the API key). The
-  answer names what was written and the resulting configuration in full, so
-  which models are in force is never something to be guessed at.
+- **`gemini-set-config`** - persists the default model, the default thinking
+  level, the backup model and/or the search deadline (only those values, never
+  the API key). The answer names what was written and the resulting
+  configuration in full, so which models are in force is never something to be
+  guessed at. Up to 1.x this tool was called `gemini-set-model`; permission
+  rules naming the old name need updating.
 
 <details>
 <summary>Why the model list is shorter than your key allows</summary>
@@ -287,11 +290,12 @@ CLI - it then waits silently on stdio, which looks like a hang.
 | Command                                 | Effect                                                                                                                                                     |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `gemini-grounding "<query>"`            | Search using the saved defaults; `--model <id>` and `--thinking <level>` apply to this call only                                                           |
-| `gemini-grounding config`               | Shows the saved default and backup model with their thinking levels, whether an API key is present, where the config file lives, and the installed version |
+| `gemini-grounding config`               | Shows the saved models with their thinking levels and the deadline, whether an API key is present, where the config file lives, and the installed version  |
 | `gemini-grounding models [--all]`       | Lists the models suggested for use here with their token limits; `--all` lists every one with a status column                                              |
 | `gemini-grounding set-model <id>`       | Persists the default model; add `--thinking <level>` to save both in one call                                                                              |
 | `gemini-grounding set-thinking <level>` | Persists the default thinking level (`minimal`, `low`, `medium`, `high`); `--model <id>` saves both                                                        |
 | `gemini-grounding set-backup <id\|off>` | Persists a model to retry a failed request with; `--thinking <level>` gives it its own level, on its own it changes only that level                        |
+| `gemini-grounding set-deadline <s>`     | Persists after how many seconds Google aborts a search (default 300); `off` instead of a number sends no deadline                                          |
 | `gemini-grounding help`                 | Short help                                                                                                                                                 |
 | `gemini-grounding version`              | Prints the installed version                                                                                                                               |
 
@@ -303,11 +307,12 @@ has to be followed by `config`:
 $ gemini-grounding set-backup gemini-3.5-flash
 Saved - Backup: gemini-3.5-flash, Backup thinking level: inherited from the call
 
-Primary: gemini-flash-latest · high
-Backup:  gemini-3.5-flash · high (inherited)
+Primary:  gemini-flash-latest · high
+Backup:   gemini-3.5-flash · high (inherited)
+Deadline: 300 s
 ```
 
-The MCP server's `gemini-set-model` answers with the same two lines.
+The MCP server's `gemini-set-config` answers with the same three lines.
 
 **Shared configuration.** The CLI and the MCP server read and write the same
 config file. A `set-model` in the terminal therefore also changes what the MCP
@@ -435,10 +440,16 @@ This server adds no anonymization and no enterprise data isolation. Do not use
 it with confidential, personal or regulated data unless you have verified that
 the service terms and your configuration are appropriate for it.
 
+Every request is sent with `store: false`, which keeps it out of the request
+logs Google keeps for paid-tier projects - since 26 October 2026 those are on
+by default for newly created projects, for up to 55 days. The setting on the
+request takes precedence over the project's. It does not affect the storage
+that Google's terms provide for Grounding with Google Search itself.
+
 ## Where settings are stored
 
-`gemini-set-model` and the CLI's `set-*` commands write the default model,
-thinking level and backup model to:
+`gemini-set-config` and the CLI's `set-*` commands write the default model,
+thinking level, backup model and deadline to:
 
 | Platform                         | Location                                            |
 | -------------------------------- | --------------------------------------------------- |
@@ -448,9 +459,10 @@ thinking level and backup model to:
 
 Neither the file nor its directory is created until you save a setting for the
 first time. Delete the file to return to the built-in defaults
-(`gemini-flash-latest`, thinking level `medium`, no backup model). It holds
-nothing but model names and thinking levels - **never the API key**. Run
-`gemini-grounding config` to see the exact path on your machine.
+(`gemini-flash-latest`, thinking level `medium`, no backup model, a deadline
+of 300 seconds). It holds nothing but model names, thinking levels and the
+deadline - **never the API key**. Run `gemini-grounding config` to see the
+exact path on your machine.
 
 ## Documentation
 

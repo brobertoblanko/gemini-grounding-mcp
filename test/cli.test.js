@@ -173,7 +173,7 @@ test("shows all three backup states in config", () => {
 });
 
 test("names the complete state after every save", () => {
-  // The confirmation line says what changed; only these two lines say what the
+  // The confirmation line says what changed; only these lines say what the
   // next search runs with. Without them every set command needs a "config" sent
   // after it.
   const { configHome } = runCli(["set-model", "gemini-x", "--thinking", "high"]);
@@ -181,8 +181,9 @@ test("names the complete state after every save", () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /^Saved - /m, "what was written");
-  assert.match(result.stdout, /^Primary: gemini-x · high$/m, "and what it runs with from now on");
-  assert.match(result.stdout, /^Backup:  gemini-y · high \(inherited\)$/m);
+  assert.match(result.stdout, /^Primary:  gemini-x · high$/m, "and what it runs with from now on");
+  assert.match(result.stdout, /^Backup:   gemini-y · high \(inherited\)$/m);
+  assert.match(result.stdout, /^Deadline: 300 s$/m, "the deadline is part of the state");
 });
 
 test("changes the saved backup's level without naming the model", () => {
@@ -214,7 +215,7 @@ test("names the same missing key in config", () => {
   const result = runCli(["config"], { apiKey: null });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /API key: NOT SET/);
+  assert.match(result.stdout, /API key:  NOT SET/);
 });
 
 test("reports the version under all three spellings", () => {
@@ -233,13 +234,13 @@ test("names the version in config", () => {
   const result = runCli(["config"]);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, new RegExp(`Version: ${version}$`, "m"));
+  assert.match(result.stdout, new RegExp(`Version:  ${version}$`, "m"));
 });
 
 test("requires a backup model before its level can be set", () => {
   // A level without a model has nothing to refer to, and "off" no longer has one.
   // Both messages come from config.js and read the same over MCP; the check used
-  // to sit here in the CLI, and gemini-set-model let the same input through.
+  // to sit here in the CLI, and gemini-set-config let the same input through.
   const bare = runCli(["set-backup", "--thinking", "low"]);
   assert.equal(bare.status, 1);
   assert.match(bare.stderr, /no backup model is set/);
@@ -250,4 +251,48 @@ test("requires a backup model before its level can be set", () => {
   assert.equal(disabled.status, 1);
   assert.match(disabled.stderr, /switched off/, "switched off differs from never set");
   assert.deepEqual(disabled.savedConfig(), { backupModel: false });
+});
+
+test("saves a deadline and reports it", () => {
+  const result = runCli(["set-deadline", "120"]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.savedConfig(), { deadlineSeconds: 120 });
+  assert.match(result.stdout, /^Saved - Deadline: 120 s$/m);
+  assert.match(result.stdout, /^Deadline: 120 s$/m);
+});
+
+test("switches the deadline off with false, not by deleting it", () => {
+  // Deleting would bring back the default of 300 s - the opposite of "off".
+  const result = runCli(["set-deadline", "off"]);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.savedConfig(), { deadlineSeconds: false });
+  assert.match(result.stdout, /^Deadline: none \(Google's own limit applies\)$/m);
+});
+
+test("rejects a deadline that is not a positive whole number", () => {
+  // "1e3" and "300.5" are numbers to Number(), and " 300" is one after
+  // trimming - each would be stored as something nobody typed.
+  for (const value of ["0", "-5", "300.5", "1e3", " 300", "abc", "false"]) {
+    const result = runCli(["set-deadline", value]);
+
+    assert.equal(result.status, 1, `"${value}" must be rejected`);
+    assert.match(result.stderr, /Invalid deadline/);
+    assert.deepEqual(result.savedConfig(), {}, "nothing is written on an error");
+  }
+});
+
+test("warns about an unusable deadline in a hand-edited file", () => {
+  // Unlike an unknown model, a deadline nobody applies shows nowhere: the search
+  // would simply run under a different limit than the one in the file.
+  const configHome = freshConfigHome();
+  mkdirSync(path.dirname(configFile(configHome)), { recursive: true });
+  writeFileSync(configFile(configHome), JSON.stringify({ deadlineSeconds: "600" }));
+
+  const result = runCli(["config"], { configHome });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /deadlineSeconds .* must be a positive whole number or false/);
+  assert.match(result.stdout, /^Deadline: 300 s$/m, "the default applies instead");
 });

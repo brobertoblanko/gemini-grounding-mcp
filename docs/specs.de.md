@@ -64,7 +64,7 @@ Umgesetzt in flachen Modulen ohne `src/`-Layout und ohne Build-Step
   kein `getClient()`, keine Konfiguration, kein Zufall. Getestet gegen eine
   gespeicherte echte Antwort in `test/citations.test.js` (`npm test`, über
   Nodes eingebauten Test-Runner, ohne zusätzliche Abhängigkeit).
-- `config.js` - liest/schreibt die dauerhafte Modellwahl in einer `config.json`
+- `config.js` - liest/schreibt die dauerhafte Modellwahl und Frist in einer `config.json`
   am plattformüblichen Ort für Nutzer-State (siehe „Speicherort der
   Konfiguration" unten). Hier liegt auch `resolveCallConfig`, die einzige
   Antwort darauf, womit ein einzelner Aufruf tatsächlich läuft, und ebenso
@@ -290,6 +290,7 @@ const response = await genAI.models.generateContent({
     systemInstruction: `Today's date is ${new Date().toLocaleDateString("en-CA")}.`,
     tools: [{ googleSearch: {} }, { urlContext: {} }, { codeExecution: {} }],
     thinkingConfig: { thinkingLevel: "high" },
+    store: false,
   },
 });
 
@@ -325,6 +326,22 @@ Drei Entscheidungen hinter dieser einen Zeile:
 
 Nach der Änderung verifiziert: Die Anfrage `Welche Node.js-Version ist aktuell LTS?` erzeugte die Suchanfrage `nodejs current lts version 2026` statt des vorherigen `2025 2026`, und direkt gefragt nennt das Modell das korrekte Datum.
 Die Wirkung ist real, aber nicht absolut - bei breiten Fragen hedgt das Modell in einzelnen Suchanfragen weiterhin mit zwei Jahreszahlen.
+
+### Logging bei Google: store
+
+```javascript
+store: false,
+```
+
+Seit dem 26.10.2026 speichert die Generate Content API Anfragen und Antworten bei **neu angelegten** Projekten standardmäßig; bei älteren nur, wenn das Logging in AI Studio eingeschaltet wurde ([Logs and datasets](https://ai.google.dev/gemini-api/docs/logs-datasets), Stand 26.10.2026).
+Logs gibt es nur bei Projekten im Paid Tier, aufbewahrt werden sie standardmäßig 55 Tage.
+Das Feld `store` auf Anfrage-Ebene hat Vorrang vor der Projekteinstellung, `false` hält also jede Anfrage aus diesen Logs heraus, egal wie und wann das Projekt eingerichtet wurde.
+Das zählt hier, weil Rechercheanfragen regelmäßig Kontext aus der Arbeit tragen, in der sie gestellt wurden.
+
+`store` ist nicht Invariante I4: I4 betrifft die Festplatte dieses Servers, `store` die Logs bei Google.
+Die 30-tägige Speicherung für Grounding laut den Terms bleibt davon unberührt.
+
+`scripts/probe-models.js` sendet das Feld ebenfalls, damit die Probe nicht weniger fragt als der Server.
 
 ## Antwort: Quellenliste und Token-Footer
 
@@ -614,6 +631,7 @@ const footer =
   `| 🔍 ${sources.length} sources | 🤖 ${model}${served} (thinking: ${thinkingLevel})` +
   `${droppedNote}${skippedNote}` +
   formatSearchQueries(searchQueries) +
+  formatContinuationNote(usageMetadata) +
   formatFallbackNote(fallback);
 
 const sourcesBlock = sourceList ? `\n\nSources:\n${sourceList}` : "";
@@ -653,6 +671,7 @@ zu machen.
 `formatFallbackNote` folgt demselben Muster wie `formatSearchQueries`: Ohne Fallback liefert es einen leeren String, und damit entfällt die Zeile ganz.
 Es nutzt 🔁 und nicht ⚠️, weil ein geglückter Fallback keine beeinträchtigte Antwort ist - das Warnzeichen bleibt den Fällen vorbehalten, in denen mit der Antwort selbst etwas nicht stimmt.
 Einzelheiten unten in „Das optionale Backup-Modell".
+`formatContinuationNote` folgt demselben Muster für eine Antwort, die mehr als eine Anfrage gebraucht hat - siehe „Automatische Fortsetzung" unten.
 
 ### Die Zeile mit den Suchanfragen
 
@@ -670,6 +689,7 @@ Format und Kappung:
 - **Kappung bei 300 Zeichen**, der Rest als `(+n more)`. Gemessen: üblich 2 bis 6 Anfragen mit zusammen 73 bis 270 Zeichen, die einzelne Anfrage 29 bis 84 Zeichen - bei einer bewusst überbreiten Frage aber 11 Anfragen mit über 500 Zeichen. Eine Obergrenze nennt die API nicht, daher die Kappung.
 - **Die Anfrage, die das Budget reißt, wird noch vollständig ausgeschrieben** statt mitten im Wort abgeschnitten: Eine halbe Suchanfrage trägt keine Information, und der Überhang ist durch die Länge einer einzelnen Anfrage begrenzt.
 - **Ein leeres Array erzeugt gar keine Zeile**, nach derselben Regel wie der Hinweis auf verworfene Marker: Der Normalfall soll den Footer nicht verlängern. Dass nicht gesucht wurde, ist über `🔍 0 sources` bereits sichtbar.
+- **Identische Anfragen erscheinen einmal.** Nach einer Fortsetzung hängt das SDK die Anfragelisten aller Etappen aneinander, und eine Etappe kann eine Suche der vorigen wiederholen. Anders als für die Quellenliste gilt für diese Zeile keine Invariante - sie meldet, wonach gesucht wurde, und eine Wiederholung fügt dem nichts hinzu.
 
 Tatsächlich implementiert in `gemini.js` (`buildText`, `formatNotice`,
 `buildSourceList`, `formatSourcesBlock`, `formatFooter`, `formatSearchQueries`)
@@ -680,6 +700,37 @@ prüfbar (`test/sources.test.js`, `test/search-queries.test.js`).
 `gemini.js` lässt sich ohne `GEMINI_API_KEY` importieren, weil `getClient()`
 erst in `runSearch` und `listModels` aufgerufen wird, nicht beim Laden des
 Moduls.
+
+### Automatische Fortsetzung
+
+Seit `@google/genai` 2.26/2.29 schickt `generateContent()` eine Anfrage, deren Antwort mit `finishReason: "CONTINUATION"` endet, mit dem `continuationToken` der Antwort erneut und verschmilzt die Antworten (`generateContentWithContinuation`).
+Das ist standardmäßig an; `automaticContinuation: false` schaltete es ab.
+Der Server lässt es an: Eine abgeschnittene Antwort ist schlimmer als eine lange.
+
+Was das Verschmelzen tut, gelesen im SDK-Quelltext (`mergeContinuationResponses`):
+
+- die Parts werden aneinandergehängt, und `segment.partIndex` und `groundingChunkIndices` späterer Etappen werden verschoben, sodass `buildText` die Marker wie bisher pro Part setzt
+- `groundingChunks` werden aneinandergehängt; `buildSourceList` dedupliziert identische URIs, was I1 erlaubt
+- `usageMetadata` wird summiert, der Prompt eingeschlossen, weil jede Etappe ihn erneut sendet und abrechnet; `initialPromptTokenCount` behält den Wert der ersten Etappe
+- `webSearchQueries` werden aneinandergehängt, `formatSearchQueries` schreibt identische Anfragen deshalb einmal
+- `finishReason` ist der der letzten Etappe
+- eine Obergrenze für die Zahl der Etappen gibt es nicht, und Fristen, Retries und Abrechnung gelten pro Anfrage (SDK-Doku zu `automaticContinuation`)
+
+Die Token-Zeile zeigt die Summen, denn die werden abgerechnet.
+Eine Zeile darunter sagt, warum die Input-Zahl ein Vielfaches dessen sein kann, was die Frage für sich gekostet hat:
+
+```text
+↪ Continued in further requests - input tokens summed over all of them (first request: 2405)
+```
+
+Das SDK zählt die Etappen nicht, `promptTokenCount > initialPromptTokenCount` ist die einzige Spur, die eine Fortsetzung hinterlässt (`formatContinuationNote`).
+Es ist ein `↪` und kein `⚠️`: Die Antwort ist vollständig, sie hat nur mehr gekostet.
+
+Die lokale Notbremse gilt für alle Etappen zusammen (siehe „Die Frist, die dieser Server mitschickt").
+Eine späte Etappe kann deshalb abgeschnitten werden, während Google noch rechnet und abrechnet.
+
+Nicht gemessen: ob das Gemini API für die Anfragen dieses Servers überhaupt `CONTINUATION` liefert - keine echte Antwort hat das bisher getan, und gezielt auslösen lässt es sich nicht.
+`test/continuation.test.js` deckt den Pfad mit zwei nachgebauten Etappen durch das echte SDK ab.
 
 ## Terms-Konformität
 
@@ -702,7 +753,7 @@ dann, wenn die Änderung als Aufräumen, Kürzen oder Optimieren daherkommt.
 | I1 | Kein Link wird je weggelassen | Jeder `groundingChunk` mit URI erscheint in der Liste, auch ohne Marker darauf. Keine Obergrenze, keine Auswahl, keine Deduplizierung nach Domain |
 | I2 | Kein Link wird verändert, URI **und** Titel | Redirect-URLs gehen byteidentisch hinaus; der Titel zählt als Bestandteil des Links |
 | I3 | Kein Redirect wird aufgelöst | Einziger ausgehender Verkehr ist der SDK-Aufruf an die Gemini-API |
-| I4 | Nichts wird zwischengespeichert | Grounded Results berühren nie die Festplatte; `config.json` enthält Modellnamen und Thinking-Level, sonst nichts |
+| I4 | Nichts wird zwischengespeichert | Grounded Results berühren nie die Festplatte; `config.json` enthält Modellnamen, Thinking-Level und Frist, sonst nichts |
 
 Deduplizieren nach identischer URI verstößt gegen keine davon, weil dabei kein
 Ziel verlorengeht.
@@ -839,7 +890,7 @@ Standardansicht; `all: true` umgeht sie vollständig und trägt bei jedem Eintra
 die Sorte seines Ausschlusses als Status ein - `400 INVALID_ARGUMENT`,
 `404 NOT_FOUND`, `deprecated`, `no sources` oder `unsuitable` -, der Ausschluss verlagert die
 Information also, statt sie zu verlieren. Sie steuert die Anzeige und sonst
-nichts: `gemini-set-model` und ein `model` pro Aufruf nehmen jede ID an, auch
+nichts: `gemini-set-config` und ein `model` pro Aufruf nehmen jede ID an, auch
 eine ausgeschlossene.
 
 Gemessen am 26.10.2026 mit `scripts/probe-models.js` gegen einen einzelnen
@@ -885,8 +936,8 @@ beiden Robotikmodelle zeigen, dass das nicht hypothetisch ist: Sie erreichen
 ausgeschlossen, nicht wegen ihrer Größe.
 
 **Im Code, nicht in `config.json`.** Die Liste ist eine Projektentscheidung,
-kein Nutzerzustand, und `config.json` ist auf Modellnamen und Thinking-Level
-festgelegt. Im Code ist sie versioniert, testbar und trägt ihre Begründung im
+kein Nutzerzustand, und `config.json` ist auf Modellnamen, Thinking-Level und
+Frist festgelegt. Im Code ist sie versioniert, testbar und trägt ihre Begründung im
 Kommentar.
 
 **Was sie ehrlich hält.** Eine ID mit Tippfehler wirkt nie, und nichts weist
@@ -951,22 +1002,27 @@ künftiges Textmodell eines der Stichwörter trägt. Als Hinweis für den
 Menschen, der einen neuen Eintrag von Hand beurteilt, ist `description` bei
 einem Codenamen die einzige verwertbare Quelle.
 
-### gemini-set-model
+### gemini-set-config
 
-Speichert Modell-ID, Thinking-Level und/oder Backup-Modell dauerhaft in einer
-`config.json` (Ort siehe unten). Die Werte lassen sich unabhängig voneinander
+Speichert Modell-ID, Thinking-Level, Backup-Modell und/oder Frist dauerhaft in
+einer `config.json` (Ort siehe unten). Die Werte lassen sich unabhängig voneinander
 setzen - ein Merge sorgt dafür, dass das Setzen des einen Werts die bereits
 gespeicherten anderen nicht überschreibt. Diese Wahl bleibt über
 Server-Neustarts hinweg bestehen, bis sie erneut geändert wird.
 
-Zwei der vier Parameter kennen einen Zustand jenseits von „ein Wert":
+Bis 1.x hieß das Tool `gemini-set-model`.
+Der Name passte nicht mehr, seit es auch eine Frist setzt, und es heißt nach der Datei, die es schreibt, statt nach einem ihrer Werte.
+Die Umbenennung ist ein Breaking Change: Berechtigungsregeln und Anweisungen, die das alte Tool nennen, greifen ins Leere.
+
+Drei der fünf Parameter kennen einen Zustand jenseits von „ein Wert":
 
 | Parameter | `undefined` | Ein Wert | Besonderheit |
 | --- | --- | --- | --- |
 | `backupModel` | unangetastet lassen | Modell-ID | `false` schaltet den Fallback ab und hält fest, dass das Absicht war |
 | `backupThinkingLevel` | unangetastet lassen, **außer** neben einem `backupModel`, dort wird es zurückgesetzt | Thinking-Level | `null` löscht den Schlüssel, das Backup erbt wieder das Level des Aufrufs |
+| `deadlineSeconds` | unangetastet lassen | ganze Sekunden | `false` sendet keine Frist; siehe „Die Frist, die dieser Server mitschickt" |
 
-`null` löscht bei allen vier Schlüsseln, nicht nur bei `backupThinkingLevel` - eine Sonderregel für genau ein Feld kann später niemand mehr erklären.
+`null` löscht bei allen fünf Schlüsseln, nicht nur bei `backupThinkingLevel` - eine Sonderregel für genau ein Feld kann später niemand mehr erklären.
 `false` bei `backupModel` wird bewusst gespeichert statt gelöscht: Für das Verhalten sind „nie eingestellt" und „abgeschaltet" dasselbe, für den Leser von `gemini-grounding config` sind es zwei verschiedene Auskünfte.
 
 Die Ausnahme in dieser Tabelle ist die Einheits-Regel aus dem Abschnitt „Implementierung": Ein `backupModel`, das ohne eigenes Level ankommt, setzt das gespeicherte zurück, damit ein für das vorherige Backup gewähltes Level nicht stillschweigend auf das neue Modell übergeht.
@@ -976,7 +1032,7 @@ Dafür braucht es ein gespeichertes, eingeschaltetes Backup: Ein Level ohne sein
 `findBackupLevelProblem` in `config.js` weist beide Fälle ab, bevor irgendetwas geschrieben wird - `null` bleibt ausgenommen, denn der Weg zurück auf „erbt vom Aufruf" muss auch dann offenstehen, wenn kein Backup mehr da ist.
 
 Diese Prüfung und `findModelCollision` weiter unten haben aus demselben Grund dieselbe Bauform, und beide sichern beide Schnittstellen ab.
-Die Regel lag zuerst allein in `cli.js`, wo `gemini-set-model` nicht vorbeikam: Ein Modell, das ein Backup-Level speichern soll, hat keinen Anlass, vorher den gespeicherten Zustand zu lesen.
+Die Regel lag zuerst allein in `cli.js`, wo `gemini-set-config` nicht vorbeikam: Ein Modell, das ein Backup-Level speichern soll, hat keinen Anlass, vorher den gespeicherten Zustand zu lesen.
 
 **Standard und Backup dürfen nicht dasselbe Modell werden**, und `findModelCollision` in `config.js` weist das ab, bevor irgendetwas geschrieben wird.
 Wären beide gleich, fände überhaupt kein Fallback mehr statt: `runSearch` lehnt ihn mit „it is the same model as the default" ab - ein Fangnetz, das erst beim nächsten fehlgeschlagenen Aufruf greift und das Backup bis dahin lautlos tot liegen lässt.
@@ -994,7 +1050,7 @@ beim Client anzukommen.
 
 ```javascript
 server.registerTool(
-  "gemini-set-model",
+  "gemini-set-config",
   {
     inputSchema: {
       model: z
@@ -1016,13 +1072,23 @@ server.registerTool(
         .nullable()
         .optional()
         .describe("Denktiefe des Backup-Modells"),
+      deadlineSeconds: z
+        .union([z.number().int().positive(), z.literal(false)])
+        .optional()
+        .describe("Sekunden, nach denen Google eine Suche abbricht; false sendet keine"),
     },
   },
-  async ({ model, thinkingLevel, backupModel, backupThinkingLevel }) => {
+  async ({ model, thinkingLevel, backupModel, backupThinkingLevel, deadlineSeconds }) => {
     // mindestens ein Parameter ist Pflicht, sonst Fehler
     // findModelCollision und findBackupLevelProblem vor dem Schreiben - siehe config.js
     // Merge statt Ueberschreiben, ausser bei der Backup-Einheit - siehe config.js
-    const saved = setSavedConfig({ model, thinkingLevel, backupModel, backupThinkingLevel });
+    const saved = setSavedConfig({
+      model,
+      thinkingLevel,
+      backupModel,
+      backupThinkingLevel,
+      deadlineSeconds,
+    });
     return {
       content: [
         {
@@ -1042,8 +1108,9 @@ Jedes Speichern beantwortet zwei verschiedene Fragen, und beide werden gebraucht
 ```text
 Saved - Backup: gemini-3.5-flash, Backup thinking level: inherited from the call
 
-Primary: gemini-flash-latest · high
-Backup:  gemini-3.5-flash · high (inherited)
+Primary:  gemini-flash-latest · high
+Backup:   gemini-3.5-flash · high (inherited)
+Deadline: 300 s
 ```
 
 `formatSavedValues` nennt jeden geschriebenen Wert.
@@ -1099,14 +1166,14 @@ Das Verzeichnis wird ausschließlich im Schreibpfad angelegt (`mkdirSync` mit
 ungefragt: Solange niemand ein Modell setzt, entsteht weder Verzeichnis noch
 Datei, und `readConfig()` fängt die fehlende Datei bereits ab. Auffindbarkeit
 entsteht über die Ausgabe, nicht über den Ort - `CONFIG_PATH` ist deshalb
-exportiert, die Bestätigung von `gemini-set-model` nennt ihn, und
+exportiert, die Bestätigung von `gemini-set-config` nennt ihn, und
 `gemini-grounding config` zeigt ihn ebenfalls an.
 
 Ebenfalls verworfen: Modell und Thinking-Level **zusätzlich** über
 `GEMINI_MODEL`/`GEMINI_THINKING_LEVEL` vorgeben zu können. Der Code wären zwei
 Zeilen gewesen, der Preis liegt woanders - eine zweite Konfigurationsquelle
 erzeugt eine Rangfolge, die erklärt werden muss, und drei überraschende
-Verhaltensweisen: ein einmaliges `gemini-set-model` hätte die Variable dauerhaft
+Verhaltensweisen: ein einmaliges `gemini-set-config` hätte die Variable dauerhaft
 wirkungslos gemacht, es wären Mischzustände entstanden (Modell aus der Datei,
 Level aus der Umgebung), und Zurücksetzen ginge nur über das Löschen der Datei.
 Es bleibt bei einer Quelle der Wahrheit: Was in der Datei steht, gilt - sonst
@@ -1125,7 +1192,7 @@ Das Tool `gemini-search` nutzt die gespeicherten Werte als Standard, sofern
 beim jeweiligen Aufruf nichts explizit angegeben wird. Die Auflösung passiert
 bewusst **zur Aufrufzeit**, nicht als Zod-`.default()` im `inputSchema`: ein
 Schema-Default würde einmal beim Registrieren des Tools ausgewertet und
-eingefroren, sodass `gemini-set-model` erst nach einem Serverneustart wirken
+eingefroren, sodass `gemini-set-config` erst nach einem Serverneustart wirken
 würde. `model` und `thinkingLevel` sind im Schema deshalb `optional()`.
 
 `resolveCallConfig` in `config.js` beantwortet die Frage für den MCP-Handler und die CLI gemeinsam, damit beide zu derselben Antwort kommen:
@@ -1138,6 +1205,7 @@ export function resolveCallConfig({ model, thinkingLevel } = {}) {
     thinkingLevel: thinkingLevel ?? getSavedThinkingLevel(), // "medium" ohne config.json
     backupModel: backup.model,
     backupThinkingLevel: backup.thinkingLevel,
+    deadlineSeconds: getSavedDeadline(), // 300 ohne config.json, kein Wert pro Aufruf
   };
 }
 ```
@@ -1161,7 +1229,7 @@ Alles andere - kaputtes JSON nach einem abgebrochenen Schreibvorgang, fehlende L
 Ein solcher Fall erzeugt deshalb eine Warnung, die den Pfad und die Originalmeldung nennt.
 
 Sie geht nach **stderr**, nie nach stdout: Der MCP-Server spricht über stdout JSON-RPC, wo eine einzelne verirrte Zeile die Verbindung zum Client zerstört.
-Ein Flag auf Modulebene begrenzt sie auf ein Vorkommen, denn `readConfig()` läuft pro Aufruf dreimal - einmal für das Modell, einmal für das Thinking-Level, einmal für das Backup. Ohne das Flag stünde dieselbe Warnung dreimal da und sähe nach drei Fehlern aus.
+Ein Flag auf Modulebene begrenzt sie auf ein Vorkommen, denn `readConfig()` läuft pro Aufruf viermal - einmal für das Modell, einmal für das Thinking-Level, einmal für das Backup, einmal für die Frist. Ohne das Flag stünde dieselbe Warnung viermal da und sähe nach vier Fehlern aus.
 
 ## Vorübergehende Fehler und Wiederholungen
 
@@ -1233,38 +1301,61 @@ Die Konfiguration verringert, wie oft ein vorübergehender Fehler den Client err
 
 ### Die Frist, die dieser Server mitschickt
 
-Für eine Anfrage gelten drei Grenzen, und nur eine davon entscheidet. Alle drei sind gemessen, nicht geschätzt:
+Für eine Anfrage gelten drei Grenzen, und seit `@google/genai` 2.29 ist eine davon weggefallen:
 
 | Grenze | Wert | Wirkung |
 | --- | --- | --- |
-| Node (`headersTimeout`) | **306,8 s** gemessen | Kappt die Verbindung - **greift zuerst** |
-| MCP-Client (Claude Code 2.1.224) | **1800 s** gemessen | Sechsmal geduldiger, wird nie erreicht |
-| Google ohne Frist | keine | Generiert unabhängig davon zu Ende |
+| Node (`headersTimeout`) | **306,8 s** gemessen, bis `@google/genai` 2.28 | Kappte eine stille Verbindung und griff zuerst. Seit 2.29 übergibt das SDK einen eigenen Undici-Dispatcher mit `headersTimeout: 0` und `bodyTimeout: 0` (`createUndiciNoTimeoutDispatcher`) |
+| MCP-Client (Claude Code 2.1.224) | **1800 s** gemessen | Jetzt die erste Grenze auf dieser Seite |
+| Google ohne Frist | 10 min für eine unäre Anfrage, laut SDK-Kommentar an `createUndiciNoTimeoutDispatcher` | Generiert unabhängig davon bis zu dieser Grenze |
 
-Node kappt zuerst, alles was Google darüber hinaus erzeugt, kann niemand mehr entgegennehmen.
-Bezahlt wird es trotzdem: Input-Tokens voll, sobald die Verarbeitung beginnt, Output-Tokens bis zum tatsächlichen Ende des Laufs.
+Alles, was Google erzeugt, wird bezahlt, ob es noch jemand entgegennimmt oder nicht: Input-Tokens voll, sobald die Verarbeitung beginnt, Output-Tokens bis zum tatsächlichen Ende des Laufs.
 Kostenlos sind nur Ablehnungen vor der Ausführung (`400`, `401`, `403`, `429`).
 
-`gemini.js` nennt dem Gateway deshalb eine eigene Frist, als gewöhnlichen Header:
+`gemini.js` nennt dem Gateway deshalb eine eigene Frist, als gewöhnlichen Header, 300 s, sofern nichts anderes eingestellt ist:
 
 ```javascript
-export const SERVER_DEADLINE_SECONDS = 290;
+export const DEFAULT_DEADLINE_SECONDS = 300; // config.js
 ```
 
-290 s liegen knapp unter Nodes Grenze, damit Google aufhört, bevor die Leitung gekappt wird - und der Fehler als `504` mit Begründung ankommt statt als bloßer Verbindungsabbruch.
+300 s liegen unter Googles eigener Grenze, der Header entscheidet also, und der Fehler kommt als `504` mit Begründung an.
 Google übernimmt den Header als Ausführungsfrist und bricht die Generierung tatsächlich serverseitig ab; der Wert geht in ganzen Sekunden hinaus.
+Bis `@google/genai` 2.28 lag der Wert bei 290 s, knapp unter Nodes Grenze; seit diese Grenze weg ist, gibt es nichts mehr zu unterbieten, und es gilt die runde Zahl.
+
+**Einstellbar.** `deadlineSeconds` in der `config.json` enthält eine positive ganze Zahl von Sekunden oder `false` für gar keinen Header - dann gilt Googles eigene Grenze.
+Gesetzt wird sie über `gemini-set-config` oder `gemini-grounding set-deadline <seconds|off>`, und `false` wird aus demselben Grund gespeichert statt gelöscht wie bei `backupModel: false`: Löschen brächte den Standard zurück, das Gegenteil von „aus".
+Einen Parameter pro Aufruf gibt es bewusst nicht: Ein Aufruf, der die Frist anheben kann, macht aus einem `504` eine Einladung, es länger zu versuchen, und die Frist ist eine Betriebseinstellung, kein Teil einer Frage.
+Aus demselben Grund sagen Tool-Beschreibung und Server-Instructions einem Agenten, einen `504` zu melden, statt die Frist eigenständig anzuheben.
+Ein unbrauchbarer Wert in einer von Hand bearbeiteten Datei erzeugt eine Warnung auf stderr, und es gilt der Standard - anders als ein unbekanntes Modell, das von der API als Fehler zurückkommt, zeigte sich eine Frist, die niemand anwendet, nirgends.
+
+**Die lokale Notbremse.** Ohne Nodes Grenze wartete eine Anfrage, die ins Leere läuft - stille Leitung, keine Antwort, kein Fehler -, bis der MCP-Client nach 1800 s aufgab.
+`generate()` setzt deshalb einen `AbortController` auf Frist plus `LOCAL_BRAKE_MARGIN_SECONDS` (30 s) und übergibt sein Signal als `config.abortSignal`.
+Der Fehler lautet dann:
+
+```text
+Error in gemini-search: no response within 330 s - aborted locally (deadline 300 s + 30 s margin)
+```
+
+Der Retry des SDK hört bei einem abgebrochenen Signal auf (`onFailedAttempt` in `apiCall()` wirft weiter), und das Backup wird nicht versucht (`backup not tried: no response within 330 s`): Die Anfrage kann die API durchaus erreicht haben, und nichts spricht dafür, dass die Leitung für ein zweites Modell besser ist.
+Ein Backup, das nach einem anderen Fehler einspringt, bekommt eine eigene Bremse statt dessen, was das Standardmodell übrig gelassen hat.
+Ohne Frist gibt es auch keine Bremse; wer die Frist abgeschaltet hat, wartet auf Googles eigene Grenze.
+
+Die Bremse gilt für einen `generate()`-Aufruf als Ganzes, weil das SDK `config.abortSignal` an jede Fortsetzungs-Etappe und jeden Retry weitergibt.
+Eine späte Etappe einer fortgesetzten Antwort kann deshalb abgeschnitten werden, während Google noch rechnet und abrechnet (siehe „Automatische Fortsetzung").
+Eine Bremse pro Etappe hieße, die Fortsetzung in diesem Server statt im SDK zu steuern, samt Verschmelzen, und ließe die Gesamtdauer unbegrenzt.
+`AbortController` plus `setTimeout` statt `AbortSignal.timeout()`, weil die Tests `setTimeout` mit `mock.timers` vorspulen, statt 330 echte Sekunden zu warten.
 
 **Bewusst nicht über `httpOptions.timeout`**, obwohl das SDK denselben Header daraus baut.
-Diese Option erzeugt aus demselben Wert zusätzlich einen clientseitigen `AbortController` - eine zweite Uhr, die mit Googles Antwort um die Wette läuft.
+Diese Option erzeugt aus **demselben** Wert zusätzlich einen clientseitigen `AbortController` - eine zweite Uhr, die mit Googles Antwort um die Wette läuft.
 Wer gewinnt, ist Zufall, und gewinnt die eigene Uhr, kommt `This operation was aborted` an statt der Begründung.
-Ein Header allein hat kein zweites bewegliches Teil.
+Die lokale Notbremse bringt dieses Wettrennen nicht zurück: Mit 30 s Abstand kommt Googles `504` immer zuerst, solange die Leitung lebt, und die Bremse fängt nur die Leitung, die es nicht tut.
 
-Der gemessene Timer misst übrigens nicht das, was sein Name nahelegt: `headersTimeout` ist die Wartezeit auf die Antwort-Kopfzeilen, nicht die Gesamtdauer.
-Da `generateContent` nicht streamt, läuft hier beides aufs Gleiche hinaus - Google antwortet in einem Stück, sobald die Generierung fertig ist.
+Die bis 2.28 gemessenen 306,8 s waren Undicis `headersTimeout` von 300 s plus Verbindungsaufbau - die Wartezeit auf die Antwort-Kopfzeilen, nicht die Gesamtdauer.
+Da `generateContent` nicht streamt, lief beides aufs Gleiche hinaus - Google antwortet in einem Stück, sobald die Generierung fertig ist.
 
 `httpOptions.headers` ersetzt die Header des SDK nicht: `patchHttpOptions()` mischt beide Objekte per `Object.assign`, `User-Agent` und `Content-Type` bleiben erhalten.
 `test/retry.test.js` prüft das im selben Fall wie die Frist selbst - wäre das Mischen ein Ersetzen, schlügen die Anfragen am Server fehl, ohne dass ein Test es bemerkt hätte.
-Ein Hänger wird deshalb in Kauf genommen, statt ihn mit drei beweglichen Teilen zu erkaufen. Geblieben ist aus dem Versuch die Fehlermeldung - siehe unten.
+Bis 2.28 wurde ein Hänger in Kauf genommen, statt ihn mit einer zweiten Uhr zu erkaufen; seit Nodes Grenze weg ist, tritt die Bremse oben an ihre Stelle.
 
 ### Was beim Client ankommt, wenn eine Anfrage scheitert
 
@@ -1279,7 +1370,8 @@ Ein Netzwerkfehler ist der umgekehrte Fall. Bei Node heißt jeder von ihnen `fet
 Error in gemini-search: fetch failed (UND_ERR_HEADERS_TIMEOUT: Headers Timeout Error)
 ```
 
-Dieses Beispiel ist das gemessene und keine erfundene Veranschaulichung: Genau das erzeugt der oben genannte Abbruch nach 306,8 s.
+Dieses Beispiel ist das gemessene und keine erfundene Veranschaulichung: Genau das erzeugte der oben genannte Abbruch nach 306,8 s bis `@google/genai` 2.28.
+Seit 2.29 endet eine stille Anfrage stattdessen an der lokalen Notbremse, deren Meldung keine Ursache braucht.
 
 `test/errors.test.js` prüft das gegen einen **echten** `fetch`-Fehler statt gegen einen nachgebauten - die Form von `error.cause` ist eine Annahme über die Laufzeitumgebung, und die prüft man besser an ihr selbst.
 
@@ -1317,7 +1409,7 @@ export const NO_FALLBACK_STATUS = [401, 403, 504];
 
 Die drei Ausnahmen haben zwei verschiedene Gründe.
 `401` und `403` sind **aussichtslos**: Beide hängen am API-Schlüssel, und der zweite Aufruf nutzt denselben - das Modell kann die Ursache gar nicht sein.
-`504` ist **zu teuer**: Bei diesem Server ist das im Regelfall die eigene Frist, also eine vollständig gelaufene und abgerechnete Generierung. Ein Fallback verdoppelt sie und legt bis zu 290 weitere Sekunden Wartezeit drauf.
+`504` ist **zu teuer**: Bei diesem Server ist das im Regelfall die eigene Frist, also eine vollständig gelaufene und abgerechnete Generierung. Ein Fallback verdoppelt sie und legt die ganze Frist noch einmal drauf - standardmäßig 300 Sekunden.
 
 Bewusst **nicht** dieselbe Liste wie `RETRY_OPTIONS`.
 Die beiden beantworten verschiedene Fragen - der Retry „hilft Warten?", der Fallback „kann ein anderes Modell der Unterschied sein?".
@@ -1359,7 +1451,7 @@ Ohne ihn bleibt die unbeantwortbare Frage „warum hat mein Backup nicht gegriff
 
 - **beide gescheitert** - beide Fehler, jeweils mit dem Modell davor. Stünde dort nur der zweite, suchte man am falschen Modell. Gebaut über das vorhandene `describeError()` auf beiden, damit die `cause` eines Netzwerkfehlers erhalten bleibt
 - **Fallback bewusst ausgelassen** - `backup not tried: …` samt Grund, für die Ausnahmen oben
-- **Backup identisch zum Standard** - ein Konfigurationsfehler; jeder Schreibpfad weist ihn vorher ab (`findModelCollision`, siehe „gemini-set-model"), und `runSearch` fängt ihn ein zweites Mal, weil eine von Hand bearbeitete `config.json` gar keinen Schreibpfad durchläuft
+- **Backup identisch zum Standard** - ein Konfigurationsfehler; jeder Schreibpfad weist ihn vorher ab (`findModelCollision`, siehe „gemini-set-config"), und `runSearch` fängt ihn ein zweites Mal, weil eine von Hand bearbeitete `config.json` gar keinen Schreibpfad durchläuft
 
 Ein beim Aufruf ausdrücklich genanntes Modell gehört **nicht** zu diesen Fällen und bekommt keinen Hinweis.
 `resolveCallConfig` übergibt dann schlicht kein Backup, und dass ein selbst genanntes Modell nicht ersetzt wird, ist für den Aufrufer keine Überraschung.

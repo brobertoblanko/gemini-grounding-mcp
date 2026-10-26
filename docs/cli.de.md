@@ -67,6 +67,7 @@ Eine Option ohne Bedeutung für den gewählten Befehl bricht mit Exit-Code 1 ab 
 | `set-backup --thinking <level>` | Ändert nur das Level des bereits gespeicherten Backups |
 | `set-backup off --thinking <level>` | Fehler - ein abgeschaltetes Backup hat kein Thinking-Level |
 | `set-model <id> --model <id2>` | Fehler - zwei Modelle, und welches gemeint ist, wissen nur Sie |
+| `set-deadline <seconds\|off>` | Speichert, nach wie vielen Sekunden Google eine Suche abbricht; nimmt keine Option |
 | `models --all` | Listet alle Modelle mit Statusspalte, an der Vorauswahl der Standardansicht vorbei |
 | `config`, `help`, `version`, `models` mit `--model` / `--thinking` | Fehler |
 
@@ -76,12 +77,13 @@ Jedes Speichern antwortet zweimal - was sich geändert hat, und was ab jetzt gil
 $ gemini-grounding set-model gemini-flash-latest --thinking low
 Saved - Model: gemini-flash-latest, Thinking level: low
 
-Primary: gemini-flash-latest · low
-Backup:  gemini-3.5-flash · low (inherited)
+Primary:  gemini-flash-latest · low
+Backup:   gemini-3.5-flash · low (inherited)
+Deadline: 300 s
 ```
 
 Die erste Zeile nennt jeden Wert, der tatsächlich geschrieben wurde; was dort nicht steht, ist auch nicht in der Datei gelandet.
-Die beiden darunter nennen den vollständigen gespeicherten Zustand, sodass auf eine Änderung nie ein `config` folgen muss, um zu sehen, womit die nächste Anfrage tatsächlich läuft.
+Die Zeilen darunter nennen den vollständigen gespeicherten Zustand, sodass auf eine Änderung nie ein `config` folgen muss, um zu sehen, womit die nächste Anfrage tatsächlich läuft.
 
 Beim Backup steht dabei der Wert und nicht bloß das Wort „inherited": Womit das Backup liefe, wenn es jetzt einspränge, ist die Auskunft, um die es geht.
 Der Zusatz sagt dazu, dass der Wert nicht ihm gehört, sondern mitwandert - bekommt ein Aufruf sein eigenes `--thinking`, erbt das Backup dieses.
@@ -95,7 +97,7 @@ Welche Fehler es auslösen: [google_errors.de.md](./google_errors.de.md).
 Anders als das Standardmodell und sein Level wird das Backup **als Einheit** geschrieben.
 Ein Backup-Modell ohne `--thinking` zu nennen entfernt ein zuvor gespeichertes Backup-Level, und das Backup erbt das Level des Aufrufs, für den es einspringt.
 Das Level gehört zu diesem einen Modell - bliebe es beim Wechsel des Backups liegen, gälte es stillschweigend für ein Modell, für das es nie gewählt wurde.
-Die Regel steht in `setSavedConfig` und nicht in der CLI, damit `gemini-set-model` auf dem MCP-Server ihr ebenfalls folgt.
+Die Regel steht in `setSavedConfig` und nicht in der CLI, damit `gemini-set-config` auf dem MCP-Server ihr ebenfalls folgt.
 
 Um nur das Level zu ändern, lassen Sie das Modell weg:
 
@@ -103,8 +105,9 @@ Um nur das Level zu ändern, lassen Sie das Modell weg:
 $ gemini-grounding set-backup --thinking minimal
 Saved - Backup thinking level: minimal
 
-Primary: gemini-flash-latest · low
-Backup:  gemini-3.5-flash · minimal
+Primary:  gemini-flash-latest · low
+Backup:   gemini-3.5-flash · minimal
+Deadline: 300 s
 ```
 
 Dafür muss bereits ein Backup gespeichert und eingeschaltet sein - ein Level ohne sein Modell hat keinen Bezug:
@@ -134,6 +137,27 @@ Ein Modell zu nennen heißt meist, genau dieses Modell prüfen zu wollen, und ei
 `gemini-grounding config` zeigt alle drei Zustände - ein Modell, `disabled` oder `not set`.
 Die letzten beiden verhalten sich gleich; der Unterschied hält fest, ob die Entscheidung je getroffen wurde.
 
+## Die Frist
+
+`set-deadline <seconds>` legt fest, nach wie vielen Sekunden Google eine Suche abbricht und mit `504` antwortet - 300, sofern Sie nichts anderes einstellen.
+`set-deadline off` sendet gar keine Frist, dann gilt Googles eigene Grenze.
+
+```console
+$ gemini-grounding set-deadline 600
+Saved - Deadline: 600 s
+
+Primary:  gemini-flash-latest · low
+Backup:   gemini-3.5-flash · low (inherited)
+Deadline: 600 s
+```
+
+Angenommen werden nur Ziffern: `300.5`, `1e3` oder `0` brechen mit `Invalid deadline` ab, weil sonst jeweils etwas gespeichert würde, das niemand eingegeben hat.
+Eine Option pro Aufruf gibt es nicht - die Frist ist eine Betriebseinstellung, und sie nach einem `504` anzuheben kostet eine zweite volle Generierung.
+
+Dreißig Sekunden nach der Frist hört der Server von sich aus auf zu warten, falls die Leitung verstummt ist, statt dass Google antwortet.
+Ohne Frist gibt es auch diese Bremse nicht.
+Warum es beides gibt und was es kostet: [specs.de.md, „Die Frist, die dieser Server mitschickt"](./specs.de.md#die-frist-die-dieser-server-mitschickt).
+
 ## Fehler bleiben vollständig sichtbar
 
 Anders als der MCP-Server gibt die CLI den vollständigen Stacktrace samt Original-Fehlermeldung der Google-API aus und endet mit Exit-Code 1.
@@ -151,14 +175,15 @@ Zu diesem Zeitpunkt ist noch nichts abgeschickt, die Zeile sagt bereits, was zu 
 
 ```console
 $ gemini-grounding config
-Primary: gemini-flash-latest · medium
-Backup:  gemini-3.5-flash · medium (inherited)
-API key: set (39 chars)
-Config:  /home/sie/.config/gemini-grounding-mcp/config.json
-Version: 1.3.0
+Primary:  gemini-flash-latest · medium
+Backup:   gemini-3.5-flash · medium (inherited)
+Deadline: 300 s
+API key:  set (39 chars)
+Config:   /home/sie/.config/gemini-grounding-mcp/config.json
+Version:  1.3.0
 ```
 
-Die ersten beiden Zeilen sind dieselben, die jedes Speichern ausgibt - es gibt damit nur eine Darstellung von „womit arbeite ich gerade", die man kennen muss.
+Die ersten drei Zeilen sind dieselben, die jedes Speichern ausgibt - es gibt damit nur eine Darstellung von „womit arbeite ich gerade", die man kennen muss.
 `config` ergänzt die drei Angaben, die nur hier interessieren - Key-Status, Konfigurationspfad und die installierte Version, sodass ein Bugreport ohne zweiten Befehl auskommt.
 
 Beim Key wird nur geprüft, ob überhaupt einer in der Umgebung ankommt; ausgegeben wird seine Länge - **niemals der Wert selbst**, auch nicht gekürzt.
