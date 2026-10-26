@@ -501,9 +501,13 @@ const droppedNote = dropped > 0 ? ` | ⚠️ ${dropped} markers dropped` : "";
 const skippedNote =
   skipped > 0 ? ` | ⚠️ ${skipped} sources omitted (unknown chunk type)` : "";
 
+// The model that answered, where it is not the one requested.
+const served = modelVersion && modelVersion !== model ? ` → ${modelVersion}` : "";
+
 const footer =
   `\n\n---\n🔢 ${inputTokens} input / ${outputTokens} output / ${thinkingTokens} thinking tokens ` +
-  `| 🔍 ${sources.length} sources | 🤖 ${model} (thinking: ${thinkingLevel})${droppedNote}${skippedNote}` +
+  `| 🔍 ${sources.length} sources | 🤖 ${model}${served} (thinking: ${thinkingLevel})` +
+  `${droppedNote}${skippedNote}` +
   formatSearchQueries(searchQueries) +
   formatFallbackNote(fallback);
 
@@ -524,9 +528,15 @@ Sources:
 [2] Google Gen AI SDK - https://googleapis.github.io/js-genai/
 
 ---
-🔢 245 input / 89 output / 40 thinking tokens | 🔍 2 sources | 🤖 gemini-flash-latest (thinking: high)
+🔢 245 input / 89 output / 40 thinking tokens | 🔍 2 sources | 🤖 gemini-flash-latest → gemini-3.8-flash (thinking: high)
 🔎 Searched: gemini api models list · google genai sdk models.list pagination
 ```
+
+The `🤖` field names the requested model and, after an arrow, the one that actually answered, taken from `response.modelVersion`.
+The two differ in two cases, measured on 2026-10-26: an alias resolves to a concrete model (`gemini-flash-latest` answers as `gemini-3.8-flash`, `gemini-pro-latest` as `gemini-3.1-pro-preview`), and a deprecated id is routed to its successor without an error (`gemini-3.7-flash` answers as `gemini-3.8-flash`).
+Without the arrow the footer would name a model that never ran, and the rule that the model actually used is always visible would hold only for concrete, current ids.
+The comparison is exact string equality; where the two names match, or the response carries no `modelVersion`, the field looks as before.
+After a fallback, `model` already holds the backup, so the arrow compares against the model that was actually asked.
 
 The number of dropped markers belongs in the footer because it changes how much the response can be relied on: if a marker is missing, the passage may be ungrounded - or the verification discarded it.
 That matches the purpose of the footer, which is to make the actual state of each individual call visible.
@@ -641,7 +651,7 @@ Fetches the models available to the current API key, including token limits, via
 The SDK's pager fetches further pages on its own; `pageSize` only determines the size of the individual request, not the total count.
 
 **Filtered by default.**
-The key exposes considerably more models than work here - 53 in total in the measurement below, 31 of them usable.
+The key exposes considerably more models than work here - 60 in total in the measurement below, 33 of them usable.
 Filtering goes through two pieces of information that every model reports itself:
 
 | Field | Condition | Otherwise |
@@ -667,21 +677,26 @@ If the filter yields no model at all - because the API no longer provides the fi
 ### The exclusion list
 
 `models-excluded.js` holds the models that pass `isUsableModel` and still do not belong in a list somebody picks a research model from.
-It is applied on top of that filter and only in the default view; `all: true` bypasses it entirely and gives each entry the kind of its exclusion as its status - `400 INVALID_ARGUMENT`, `404 NOT_FOUND`, `no sources` or `unsuitable` - so the exclusion moves the information rather than losing it.
+It is applied on top of that filter and only in the default view; `all: true` bypasses it entirely and gives each entry the kind of its exclusion as its status - `400 INVALID_ARGUMENT`, `404 NOT_FOUND`, `deprecated`, `no sources` or `unsuitable` - so the exclusion moves the information rather than losing it.
 It shapes the display and nothing else: `gemini-set-model` and a per-call `model` accept any id, an excluded one included.
 
-Measured on 2026-08-13 with `scripts/probe-models.js` against a single API key: 53 models in total, 31 past `isUsableModel`, 23 excluded, 8 offered.
+Measured on 2026-10-26 with `scripts/probe-models.js` against a single API key: 60 models in total, 33 past `isUsableModel`, 25 excluded, 8 offered.
 
-**Three kinds of entry, ordered by how solid they are.**
+**Four kinds of entry, ordered by how solid they are.**
 Every reason states its kind, because they age differently:
 
 | Kind | Basis | Count |
 | --- | --- | --- |
-| `400`/`404` | the API's own refusal, verbatim | 17 |
+| `400`/`404` | the API's own refusal, verbatim | 18 |
+| `deprecated` | the vendor routes the id to its successor, and `modelVersion` names that successor | 2 |
 | `no sources` | the model answers and returns no grounding chunk | 3 |
-| `unsuitable` | the vendor documents the model as built for something else | 3 |
+| `unsuitable` | the vendor documents the model as built for something else | 2 |
 
-The first kind is the strongest and needs no judgement: `Code execution is not enabled for this model` from the image models, `Thinking level is not supported for this model.` from TTS and Gemma, `This model only supports Interactions API` from the Deep Research models and `gemini-omni-flash-preview`, and `no longer available to new users` from `gemini-2.5-flash`, `-flash-lite` and `-pro`.
+The first kind is the strongest and needs no judgement: `Code execution is not enabled for this model` from the image models, `Thinking level is not supported for this model.` from Gemma, `This model only supports Interactions API` from the Deep Research and Omni models, and `no longer available to new users` from `gemini-2.5-flash`, `-flash-lite` and `-pro`.
+`deprecated` covers ids Google retires without an error: since 2026-10-08 `gemini-3.7-flash` is routed server-side to `gemini-3.8-flash` and `gemini-3.5-flash` to `gemini-3.6-flash`, according to the [changelog](https://ai.google.dev/gemini-api/docs/changelog).
+Both answer and ground, so neither the probe nor a status code catches them; what gives them away is `response.modelVersion`, which names the successor.
+Offering them would put a name in the list that no call ever runs under.
+The entry hides them from the list only - a call that names one still works, and the footer then shows both names (see "Footer format in the tool result").
 The last kind is the weakest and is the first thing to recheck on review: a model is unsuitable only for as long as its documentation says so.
 
 **Exact ids, no wildcards.**
