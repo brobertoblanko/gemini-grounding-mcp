@@ -6,11 +6,11 @@ npm-debug.log*
 .DS_Store
 config.json
 
-# Lokale, nicht zu veroeffentlichende Projektnotizen fuer Claude Code
+# Local project notes for Claude Code, never published
 CLAUDE.local.md
 google_terms.md
 
-# Lokale Planungsnotizen, nicht Teil des veroeffentlichten Repos
+# Local plans, analyses and reviews, not part of the published repo
 plans/
 issues/
 review/

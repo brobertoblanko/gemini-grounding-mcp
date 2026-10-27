@@ -13,8 +13,8 @@
       "allowed_elements": ["details", "summary"]
     }
   },
-  // plans/ and issues/ are in .gitignore: local notes that are not part of the
-  // published repo and must not turn the lint red.
+  // plans/, issues/ and review/ are in .gitignore: local notes that are not part
+  // of the published repo and must not turn the lint red.
   //
   // google_terms.md as well, but for a different reason: it is a verbatim working
   // copy of Google's terms of service. The lint flags six places in it, all of
@@ -26,6 +26,7 @@
     "!node_modules",
     "!**/plans",
     "!**/issues",
+    "!**/review",
     "!**/google_terms.md"
   ]
 }
