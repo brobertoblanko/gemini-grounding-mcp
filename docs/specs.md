@@ -404,7 +404,9 @@ Whether and when that happens is an open question - so far only the favourable c
   syntactically valid, factually wrong, and inconspicuous. Fenced blocks and
   inline code are determined as intervals in a single pass (the fences come
   first in the alternation and therefore swallow everything inside them); if the
-  target position falls into one, the marker is discarded. Indented code blocks
+  target position falls into one, the marker is discarded. A fence that is
+  never closed runs to the end of the text, as in CommonMark - an answer cut
+  off by `MAX_TOKENS` often ends inside a block. Indented code blocks
   (four spaces) are not detected - the only known gap.
 - **Numbers via `chunkNumbers`, never via `index + 1`.** See "Building the
   source list" below.

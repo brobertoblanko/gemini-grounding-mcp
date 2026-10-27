@@ -480,7 +480,10 @@ Regel angenommen.
   syntaktisch gültig, inhaltlich falsch, und unauffällig. Umzäunte Blöcke und
   Inline-Code werden in einem Durchlauf als Intervalle bestimmt (die Zäune
   stehen in der Alternation vorn und schlucken damit alles, was in ihnen steht);
-  fällt die Zielposition hinein, wird der Marker verworfen. Nicht erkannt werden eingerückte Codeblöcke (vier Leerzeichen) -
+  fällt die Zielposition hinein, wird der Marker verworfen. Ein Zaun, der nie
+  geschlossen wird, reicht bis zum Ende des Textes, wie in CommonMark - eine
+  durch `MAX_TOKENS` abgeschnittene Antwort endet oft mitten in einem Block.
+  Nicht erkannt werden eingerückte Codeblöcke (vier Leerzeichen) -
   die einzige bekannte Lücke.
 - **Nummern über `chunkNumbers`, nie über `index + 1`.** Siehe „Quellenliste
   erzeugen" unten.

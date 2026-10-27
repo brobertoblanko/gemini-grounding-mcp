@@ -138,6 +138,22 @@ test("drops a marker inside a fenced block", () => {
   assert.equal(result.dropped, 1);
 });
 
+test("drops a marker inside a fenced block that is never closed", () => {
+  // An answer cut off by MAX_TOKENS, or a forgotten fence, leaves the block open
+  // until the end of the text.
+  const text = "Use this:\n```js\nconst x = copy.replace(obj, y);\n";
+  const end = Buffer.byteLength("Use this:\n```js\nconst x = copy.replace(obj", "utf8");
+
+  const result = insertCitations({
+    text,
+    supports: [support(0, end, "Use this:\n```js\nconst x = copy.replace(obj", [0])],
+    chunkNumbers: new Map([[0, 1]]),
+  });
+
+  assert.equal(result.text, text);
+  assert.equal(result.dropped, 1);
+});
+
 test("places a marker directly after a code span", () => {
   // The most frequent position, measured: the segment ends at the closing
   // backtick. That position is harmless and must not be dropped along.
