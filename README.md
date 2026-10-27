@@ -299,6 +299,7 @@ CLI - it then waits silently on stdio, which looks like a hang.
 | `gemini-grounding set-thinking <level>` | Persists the default thinking level (`minimal`, `low`, `medium`, `high`); `--model <id>` saves both                                                        |
 | `gemini-grounding set-backup <id\|off>` | Persists a model to retry a failed request with; `--thinking <level>` gives it its own level, on its own it changes only that level                        |
 | `gemini-grounding set-deadline <s>`     | Persists after how many seconds Google aborts a search (default 300); `off` instead of a number sends no deadline                                          |
+| `gemini-grounding reset <value>`        | Returns `model`, `thinking`, `backup` or `deadline` to its built-in default; `all` deletes the config file                                                 |
 | `gemini-grounding help`                 | Short help                                                                                                                                                 |
 | `gemini-grounding version`              | Prints the installed version                                                                                                                               |
 

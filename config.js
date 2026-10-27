@@ -118,7 +118,7 @@ function readConfig({ strict = false } = {}) {
   } catch (error) {
     if (strict && error.code !== "ENOENT") {
       throw new Error(
-        `${CONFIG_PATH} could not be read (${error.message}) - fix or delete it; nothing was saved.`,
+        `${CONFIG_PATH} could not be read (${error.message}) - fix it, or delete it with "gemini-grounding reset all"; nothing was saved.`,
       );
     }
     // The missing file is the normal case and no error: before the first stored
@@ -285,7 +285,8 @@ export function resolveCallConfig({ model, thinkingLevel } = {}) {
 export function findModelCollision({ model, backupModel } = {}) {
   if (model === undefined && backupModel === undefined) return undefined;
 
-  const resultingModel = model ?? getSavedModel();
+  // null is a reset and leaves the built-in default, not what is saved now.
+  const resultingModel = model === null ? DEFAULT_MODEL : (model ?? getSavedModel());
   // false (switched off) and undefined (never configured) are both harmless and
   // drop out through the truthiness check below.
   const resultingBackup = backupModel === undefined ? getSavedBackup().model : backupModel;
@@ -346,9 +347,9 @@ export function findBackupLevelProblem({ backupModel, backupThinkingLevel } = {}
  * data or anything from a response - INVARIANT I4 (see CLAUDE.md and
  * docs/specs.md, "Terms compliance"): Grounded Results never touch the disk.
  *
- * null deletes the key. Today only backupThinkingLevel needs that, to fall back
- * to "inherits from the primary call" - the rule applies to all five all the
- * same, because a special rule for exactly one field is not explainable later.
+ * null deletes the key: "reset" in cli.js uses it to return any of the five to
+ * its built-in default, and backupThinkingLevel to fall back to "inherits from
+ * the primary call".
  *
  * THE ONE EXCEPTION TO THE MERGE RULE: the backup is written as a UNIT. A
  * backupModel arriving without a backupThinkingLevel of its own expires a
@@ -389,6 +390,11 @@ export function setSavedConfig({
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 
   return { model, thinkingLevel, backupModel, backupThinkingLevel, deadlineSeconds };
+}
+
+/** Removes the whole file; a missing one is no error. */
+export function deleteSavedConfig() {
+  fs.rmSync(CONFIG_PATH, { force: true });
 }
 
 /** "300 s", or what false means, for the confirmation and the state block. */

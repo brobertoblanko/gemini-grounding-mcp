@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { configFile, freshConfigHome, runCli } from "./helpers.js";
@@ -410,5 +410,52 @@ test('reads the query from stdin when it is "-"', () => {
     const empty = runCli(["-"], { input });
     assert.equal(empty.status, 1, JSON.stringify(input));
     assert.equal(empty.stderr, "Error: The query is empty.\n");
+  }
+});
+
+test("resets each saved value to its built-in default", () => {
+  const configHome = freshConfigHome();
+  const cli = (...args) => runCli(args, { configHome });
+  cli("set-model", "gemini-x", "--thinking", "high");
+  cli("set-backup", "gemini-y", "--thinking", "low");
+  cli("set-deadline", "120");
+
+  assert.equal(cli("reset", "model").status, 0);
+  assert.equal(cli("reset", "thinking").status, 0);
+  assert.equal(cli("reset", "deadline").status, 0);
+  const backup = cli("reset", "backup");
+  assert.equal(backup.status, 0);
+  assert.match(backup.stdout, /^Reset - backup is back to its built-in default\n/);
+  assert.match(backup.stdout, /Backup: {3}not set/);
+  // Every key removed rather than written with a default value.
+  assert.deepEqual(backup.savedConfig(), {});
+});
+
+test("reset all deletes the config file, even a broken one", () => {
+  const configHome = freshConfigHome();
+  mkdirSync(path.dirname(configFile(configHome)), { recursive: true });
+  writeFileSync(configFile(configHome), "{broken");
+
+  const result = runCli(["reset", "all"], { configHome });
+  assert.equal(result.status, 0);
+  assert.equal(existsSync(configFile(configHome)), false);
+});
+
+test("reset refuses to make the default model the backup", () => {
+  const configHome = freshConfigHome();
+  runCli(["set-model", "gemini-x"], { configHome });
+  runCli(["set-backup", "gemini-flash-latest"], { configHome });
+
+  const result = runCli(["reset", "model"], { configHome });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /"gemini-flash-latest" is currently the backup model/);
+  assert.equal(result.savedConfig().model, "gemini-x");
+});
+
+test("reset takes exactly one known target", () => {
+  for (const args of [["reset"], ["reset", "foo"], ["reset", "model", "thinking"]]) {
+    const result = runCli(args);
+    assert.equal(result.status, 1, args.join(" "));
+    assert.match(result.stderr, /^Error: "reset" takes exactly one of/);
   }
 });

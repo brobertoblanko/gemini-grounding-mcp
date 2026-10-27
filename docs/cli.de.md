@@ -181,6 +181,24 @@ Dreißig Sekunden nach der Frist hört der Server von sich aus auf zu warten, fa
 Ohne Frist gibt es auch diese Bremse nicht.
 Warum es beides gibt und was es kostet: [specs.de.md, „Die Frist, die dieser Server mitschickt"](./specs.de.md#die-frist-die-dieser-server-mitschickt).
 
+## Zurück zu den Standardwerten
+
+`reset` setzt einen gespeicherten Wert auf seinen eingebauten Standard zurück, indem es ihn aus der `config.json` entfernt:
+
+```console
+$ gemini-grounding reset backup
+Reset - backup is back to its built-in default
+
+Default:  gemini-flash-latest · medium
+Backup:   not set
+Deadline: 300 s
+```
+
+Die Ziele sind `model`, `thinking`, `backup` (Modell und Level gemeinsam, wie bei `set-backup`) und `deadline`.
+`reset all` löscht die Datei, was auch dann funktioniert, wenn sie kaputt ist und jeder andere Schreibvorgang verweigert.
+Ein Zurücksetzen, das das eingebaute Standardmodell zum gespeicherten Backup machen würde, wird abgewiesen, wie dieselbe Kollision bei `set-model`.
+Ein Gegenstück über MCP gibt es nicht; ein Zurücksetzen ist selten, und `gemini-set-config` bräuchte dafür eine weitere Art von Parameter.
+
 ## Fehler in einer lesbaren Zeile
 
 Scheitert eine Anfrage, gibt die CLI Googles Statuscode, Statusnamen und Meldung in einer Zeile aus und endet mit Exit-Code 1:

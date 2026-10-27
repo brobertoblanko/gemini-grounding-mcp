@@ -181,6 +181,24 @@ Thirty seconds after the deadline the server stops waiting by itself, in case th
 Without a deadline there is no such brake either.
 Why both exist and what they cost: [specs.md, "The deadline this server does send"](./specs.md#the-deadline-this-server-does-send).
 
+## Back to the defaults
+
+`reset` returns a saved value to its built-in default by removing it from `config.json`:
+
+```console
+$ gemini-grounding reset backup
+Reset - backup is back to its built-in default
+
+Default:  gemini-flash-latest · medium
+Backup:   not set
+Deadline: 300 s
+```
+
+The targets are `model`, `thinking`, `backup` (model and level together, as with `set-backup`) and `deadline`.
+`reset all` deletes the file, which also works when it is broken and every other write refuses.
+A reset that would make the built-in default model the saved backup is refused, like the same collision on `set-model`.
+There is no MCP counterpart; a reset is rare, and `gemini-set-config` would need another kind of parameter for it.
+
 ## Errors in one readable line
 
 When a request fails, the CLI prints Google's status code, status name and message on one line and exits with code 1:

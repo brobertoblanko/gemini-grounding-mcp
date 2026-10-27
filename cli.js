@@ -11,6 +11,7 @@ import { runSearch, listModels, formatRuntimeError, API_KEY_MISSING_MESSAGE } fr
 import {
   CONFIG_PATH,
   DEFAULT_DEADLINE_SECONDS,
+  deleteSavedConfig,
   findBackupLevelProblem,
   findModelCollision,
   formatConfigState,
@@ -43,6 +44,9 @@ Commands:
   set-backup --thinking <level>  Change only the backup's thinking level
   set-deadline <seconds|off>     Save after how many seconds Google aborts a
                                  search (default ${DEFAULT_DEADLINE_SECONDS}); "off" sends none
+  reset <model|thinking|backup|deadline|all>
+                                 Return a saved value to its built-in default;
+                                 "all" deletes the config file
   help                           Show this help
   version                        Show the installed version
 
@@ -352,6 +356,39 @@ async function main() {
         );
       }
       saveAndReport({ deadlineSeconds });
+      break;
+    }
+
+    // Back to the built-in default through the null of setSavedConfig(), not
+    // through saveAndReport(): its confirmation would print "Model: null".
+    case "reset": {
+      allowFlags("debug");
+      const targets = {
+        model: { model: null },
+        thinking: { thinkingLevel: null },
+        // Model and level as a unit, like set-backup.
+        backup: { backupModel: null, backupThinkingLevel: null },
+        deadline: { deadlineSeconds: null },
+      };
+      const target = rest[0];
+      if (rest.length !== 1 || (target !== "all" && !Object.hasOwn(targets, target))) {
+        fail(
+          '"reset" takes exactly one of model, thinking, backup, deadline or all.',
+          "Usage: gemini-grounding reset <model|thinking|backup|deadline|all>",
+        );
+      }
+      if (target === "all") {
+        // Deleting works on a broken file too, where every other write refuses.
+        deleteSavedConfig();
+        console.log("Reset - config file deleted, every value is back to its built-in default");
+      } else {
+        // The built-in default model may be the saved backup.
+        const collision = findModelCollision(targets[target]);
+        if (collision) fail(collision);
+        setSavedConfig(targets[target]);
+        console.log(`Reset - ${target} is back to its built-in default`);
+      }
+      console.log(`\n${formatConfigState()}`);
       break;
     }
 
