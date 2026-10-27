@@ -59,6 +59,9 @@ Umgesetzt in flachen Modulen ohne `src/`-Layout und ohne Build-Step
   an `serveStdio` (siehe „Beide Protokollrevisionen bedienen").
 - `gemini.js` - kapselt den `GoogleGenAI`-Aufruf inkl. der drei kombinierten
   Built-in-Tools, baut Quellenliste und Footer aus der API-Antwort.
+- `models.js` - alles zur Modellliste des Keys: die Filter hinter
+  `gemini-list-models`, der Hinweis nach einem gespeicherten Modell und der
+  Drift-Check.
 - `citations.js` - setzt die Belegmarker in den Antworttext. Eigene Datei, weil
   dieser Code als einziger im Projekt **ohne Netzwerk und ohne API-Key
   vollständig prüfbar** ist: Rein gehen Text und Metadaten, heraus kommt Text -
@@ -712,9 +715,9 @@ und `citations.js` (`insertCitations`).
 `buildSourceList`, `formatSourcesBlock`, `formatFooter` und
 `formatSearchQueries` sind exportiert und wie `insertCitations` ohne API-Key
 prüfbar (`test/sources.test.js`, `test/search-queries.test.js`).
-`gemini.js` lässt sich ohne `GEMINI_API_KEY` importieren, weil `getClient()`
-erst in `runSearch` und `listModels` aufgerufen wird, nicht beim Laden des
-Moduls.
+`gemini.js` und `models.js` lassen sich ohne `GEMINI_API_KEY` importieren,
+weil `getClient()` erst in `runSearch` und `fetchModels` aufgerufen wird, nicht
+beim Laden des Moduls.
 
 ### Automatische Fortsetzung
 
@@ -1153,7 +1156,7 @@ Der Mittelpunkt trennt wie in `formatSearchQueries`: Modellnamen enthalten selbs
 
 #### Ein zweifelhaftes Modell warnt nach dem Speichern
 
-Nach jedem Schreiben eines Standard- oder Backup-Modells sucht `checkModelIds()` in `gemini.js` die ID in `models.list`, das kostenlos ist:
+Nach jedem Schreiben eines Standard- oder Backup-Modells sucht `checkModelIds()` in `models.js` die ID in `models.list`, das kostenlos ist:
 
 - nicht in der Liste - `"<id>" is not in the model list of this API key - a search with it will most likely fail.`
 - in der Liste, aber nicht nutzbar - `"<id>" cannot run here: <Status>`, derselbe Status wie in `gemini-list-models` mit `all: true`
@@ -1657,7 +1660,7 @@ Derselbe Workflow prüft jede Woche die Modellliste des Keys, unabhängig von de
 Das kostet nichts: `models.list` wird nicht abgerechnet.
 Der vollständige Probe-Lauf, der über die Ausschlussliste entscheidet, kostet etwa 33 abgerechnete Anfragen und bleibt ein manueller Lauf von `scripts/probe-models.js`; diese Prüfung sagt nur, wann einer fällig ist.
 
-Sie meldet zweierlei, beides aus `findModelDrift()` in `gemini.js`:
+Sie meldet zweierlei, beides aus `findModelDrift()` in `models.js`:
 
 - **stale** - Einträge der Ausschlussliste, deren Modell nicht mehr in `models.list` steht (`staleEntries()`, gemeinsam mit `probe-models.js`)
 - **unprobed** - hier angebotene Modelle, die `test/fixtures/models-list.json` nicht enthält. Ein neues Modell besteht `isUsableModel()` und wird sofort angeboten, ungeprüft - so kamen im August 2026 zwei Modelle auf die Kurzliste, die mit `400` scheitern

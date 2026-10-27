@@ -1,20 +1,14 @@
 #!/usr/bin/env node
-// Command line frontend on the same core index.js uses: gemini.js for the API
-// calls, config.js for the stored defaults. Relative imports in ES modules
-// resolve against THIS file and not against the working directory, so the CLI
-// works from any folder.
+// Command line frontend on the same core index.js uses: gemini.js and models.js
+// for the API calls, config.js for the stored defaults. Relative imports in ES
+// modules resolve against THIS file and not against the working directory, so
+// the CLI works from any folder.
 // Full derivation: docs/specs.md, "Implementation".
 
 import { createRequire } from "node:module";
 
-import {
-  runSearch,
-  listModels,
-  fetchModels,
-  checkModelIds,
-  formatRuntimeError,
-  API_KEY_MISSING_MESSAGE,
-} from "./gemini.js";
+import { runSearch, formatRuntimeError, API_KEY_MISSING_MESSAGE } from "./gemini.js";
+import { listModels, fetchModels, checkModelIds } from "./models.js";
 import {
   CONFIG_PATH,
   configProblems,

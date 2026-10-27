@@ -49,7 +49,7 @@ function describe({ stale, unprobed }) {
 
 async function check(output) {
   // Imported here and not at the top: "report" runs without npm ci.
-  const { fetchModels, findModelDrift, modelId } = await import("../gemini.js");
+  const { fetchModels, findModelDrift, modelId } = await import("../models.js");
   const known = new Set(JSON.parse(readFileSync(FIXTURE, "utf8")).models.map(modelId));
   const drift = findModelDrift(await fetchModels(), known);
   writeFileSync(output, JSON.stringify(drift));

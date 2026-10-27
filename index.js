@@ -8,7 +8,8 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
-import { runSearch, listModels, describeError, checkModelIds } from "./gemini.js";
+import { runSearch, describeError } from "./gemini.js";
+import { listModels, checkModelIds } from "./models.js";
 import {
   CONFIG_PATH,
   findBackupLevelProblem,

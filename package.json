@@ -38,6 +38,7 @@
     "cli.js",
     "config.js",
     "gemini.js",
+    "models.js",
     "citations.js",
     "models-excluded.js",
     "README.md",

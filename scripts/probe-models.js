@@ -31,14 +31,8 @@
 import { parseArgs } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
 import { GoogleGenAI } from "@google/genai";
-import {
-  RETRY_OPTIONS,
-  SEARCH_TOOLS,
-  describeError,
-  isUsableModel,
-  readErrorBody,
-  staleEntries,
-} from "../gemini.js";
+import { RETRY_OPTIONS, SEARCH_TOOLS, describeError, readErrorBody } from "../gemini.js";
+import { isUsableModel, staleEntries } from "../models.js";
 import { THINKING_LEVELS } from "../config.js";
 
 /**
