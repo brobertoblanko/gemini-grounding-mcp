@@ -147,21 +147,13 @@ function takeSwitch(args, name) {
 }
 
 /**
- * Writes and reports in one: first what changed, then what applies from now on.
- * Both lines come from config.js so that the MCP handler gives the same
- * information.
- *
- * The second half is the reason for this function: without it every set command
- * would need a "config" behind it to see what the next search actually runs
- * with. A model written here is then checked against the key's model list, and
- * a doubtful one warns after the save rather than blocking it.
+ * Writes and reports in one: what changed, then what the next search runs with,
+ * both from config.js like the MCP handler. A model written here is then checked
+ * against the key's model list and warns rather than blocks.
  */
 async function saveAndReport(values) {
-  // Default and backup must not become the same model - silently there would be
-  // nothing left to fall back to. The check sits here and not in the individual
-  // branches so it cannot miss a write path: "set-model x", "set-thinking low
-  // --model x" and "set-backup x" all write a model, and the second one used to
-  // skip it.
+  // Here and not in the branches, so no write path can miss it: "set-thinking low
+  // --model x" writes a model too, and used to skip the check.
   const collision = findModelCollision(values);
   if (collision) fail(collision);
 
@@ -214,12 +206,8 @@ async function main() {
   if (allFlag) givenFlags.push("all");
   if (debug) givenFlags.push("debug");
 
-  // Counterpart to requireNoArgs for the options: every branch names the ones
-  // that mean something to it, everything else aborts. Without this check
-  // "config --thinking low" accepted the option without comment and did nothing
-  // with it.
-  //
-  // An allowlist and not a denylist, so an option added later is not
+  // Counterpart to requireNoArgs for the options: without it "config --thinking
+  // low" was accepted and ignored. An allowlist, so an option added later is not
   // accidentally permitted everywhere.
   const allowFlags = (...allowed) => {
     const unexpected = givenFlags.find((name) => !allowed.includes(name));
@@ -317,14 +305,9 @@ async function main() {
     case "set-backup": {
       allowFlags("thinking", "debug");
 
-      // Without a model argument the command applies to the backup already
-      // stored and changes only its level. Without this branch the model would
-      // have to be typed out again to adjust its level, and a typo while doing so
-      // would silently hit a different model.
-      //
-      // A switch only, no check: that this needs a stored, enabled backup is
-      // rejected by findBackupLevelProblem() in saveAndReport, in the same
-      // wording as for the MCP handler, which does not run through this branch.
+      // Without a model argument only the stored backup's level changes, so a
+      // typo in a retyped model cannot hit a different one. Whether a backup is
+      // stored and on is checked by findBackupLevelProblem() in saveAndReport.
       if (rest.length === 0 && thinkingFlag !== undefined) {
         await saveAndReport({ backupThinkingLevel: thinkingFlag });
         break;
