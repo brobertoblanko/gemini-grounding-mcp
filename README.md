@@ -453,11 +453,11 @@ that Google's terms provide for Grounding with Google Search itself.
 `gemini-set-config` and the CLI's `set-*` commands write the default model,
 thinking level, backup model and deadline to:
 
-| Platform                         | Location                                            |
-| -------------------------------- | --------------------------------------------------- |
-| Linux, macOS                     | `~/.config/gemini-grounding-mcp/config.json`        |
-| Windows                          | `%APPDATA%\gemini-grounding-mcp\config.json`        |
-| Any, if `XDG_CONFIG_HOME` is set | `$XDG_CONFIG_HOME/gemini-grounding-mcp/config.json` |
+| Platform                                        | Location                                            |
+| ----------------------------------------------- | --------------------------------------------------- |
+| Linux, macOS                                    | `~/.config/gemini-grounding-mcp/config.json`        |
+| Windows                                         | `%APPDATA%\gemini-grounding-mcp\config.json`        |
+| Any, if `XDG_CONFIG_HOME` is an absolute path   | `$XDG_CONFIG_HOME/gemini-grounding-mcp/config.json` |
 
 Neither the file nor its directory is created until you save a setting for the
 first time. Delete the file to return to the built-in defaults

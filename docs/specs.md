@@ -945,6 +945,7 @@ Instead, the platform's conventional location for user state, resolved in this o
 3. Otherwise `~/.config`.
 
 With `gemini-grounding-mcp/config.json` underneath, in each case.
+An empty or relative `XDG_CONFIG_HOME` or `%APPDATA%` counts as unset, as the XDG Base Directory Specification demands: taken as it is, the file would move with the working directory, and every place the MCP server is started from would get its own configuration.
 
 macOS is deliberately treated like Linux, even though the Apple standard would be `~/Library/Application Support/`: this is a terminal tool, and in the terminal nobody goes looking in a folder that Finder hides.
 A separate `darwin` branch is explicitly not built in.

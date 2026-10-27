@@ -72,12 +72,18 @@ export function configFile(configHome) {
  * case would write into this machine's real configuration. The API key is
  * replaced by a placeholder so that no case can reach the API by accident;
  * apiKey: null removes the variable instead, for the cases about a missing key.
+ * env overrides any of these last.
  */
 export function runCli(
   args,
-  { configHome = freshConfigHome(), apiKey = "test-key-never-sent" } = {},
+  { configHome = freshConfigHome(), apiKey = "test-key-never-sent", env: extraEnv = {} } = {},
 ) {
-  const env = { ...process.env, XDG_CONFIG_HOME: configHome, GEMINI_API_KEY: apiKey };
+  const env = {
+    ...process.env,
+    XDG_CONFIG_HOME: configHome,
+    GEMINI_API_KEY: apiKey,
+    ...extraEnv,
+  };
   // Deleting and not setting to "": spawnSync turns every value into a string,
   // so null would reach the CLI as the four characters "null" and pass the check.
   if (apiKey === null) delete env.GEMINI_API_KEY;

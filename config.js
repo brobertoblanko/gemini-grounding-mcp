@@ -15,11 +15,15 @@ import path from "path";
 // macOS is deliberately treated like Linux although the Apple standard would be
 // ~/Library/Application Support/: this is a terminal tool, and in the terminal
 // nobody goes looking in a folder that Finder hides.
+//
+// An empty or relative value counts as unset, as the XDG spec demands: taken as
+// it is, the file would move with the working directory.
 // Full derivation: docs/specs.md, "Configuration file location".
+const absolute = (value) => (value && path.isAbsolute(value) ? value : undefined);
 const CONFIG_DIR = path.join(
-  process.env.XDG_CONFIG_HOME ??
+  absolute(process.env.XDG_CONFIG_HOME) ??
     (process.platform === "win32"
-      ? (process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"))
+      ? (absolute(process.env.APPDATA) ?? path.join(os.homedir(), "AppData", "Roaming"))
       : path.join(os.homedir(), ".config")),
   "gemini-grounding-mcp",
 );

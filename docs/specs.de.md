@@ -1173,6 +1173,7 @@ Reihenfolge:
 3. Sonst `~/.config`.
 
 Darunter jeweils `gemini-grounding-mcp/config.json`.
+Ein leeres oder relatives `XDG_CONFIG_HOME` oder `%APPDATA%` gilt als nicht gesetzt, wie es die XDG Base Directory Specification verlangt: So übernommen, würde die Datei mit dem Arbeitsverzeichnis wandern, und jeder Ort, von dem aus der MCP-Server startet, bekäme seine eigene Konfiguration.
 
 macOS wird bewusst wie Linux behandelt, obwohl der Apple-Standard
 `~/Library/Application Support/` wäre: Dies ist ein Terminal-Werkzeug, und im

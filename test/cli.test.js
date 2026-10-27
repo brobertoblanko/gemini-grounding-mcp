@@ -349,3 +349,15 @@ test("accepts --debug only where a runtime error can occur", () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /"config" takes no --debug option/);
 });
+
+test("ignores an empty or relative XDG_CONFIG_HOME and APPDATA", () => {
+  // The XDG spec says to ignore such values. Taken as they are, the file would
+  // move with the working directory, and every place the server is started
+  // from would get its own configuration.
+  for (const value of ["", "relative/dir"]) {
+    const result = runCli(["config"], { env: { XDG_CONFIG_HOME: value, APPDATA: value } });
+    const configPath = result.stdout.match(/^Config: +(.+)$/m)?.[1];
+
+    assert.ok(path.isAbsolute(configPath), `"${value}" gave ${configPath}`);
+  }
+});
