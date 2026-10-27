@@ -11,7 +11,13 @@
 
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { NO_FALLBACK_STATUS, formatFallbackNote, runSearch } from "../gemini.js";
+import {
+  NO_FALLBACK_STATUS,
+  describeError,
+  formatFallbackNote,
+  formatRuntimeError,
+  runSearch,
+} from "../gemini.js";
 import { errorResponse, mockFetch, okResponse } from "./helpers.js";
 
 process.env.GEMINI_API_KEY = "test-key-never-sent";
@@ -257,4 +263,33 @@ test("formats the fallback line differently per error class", () => {
   // Without a status name the bare number remains - no empty parentheses.
   assert.match(note(502), /failed \(502\)/);
   assert.equal(formatFallbackNote(undefined), "", "no line without a fallback");
+});
+
+test("keeps a refused fallback readable on the command line", async () => {
+  // The refusal used to be a plain Error built from text, which lost the
+  // status and printed the raw JSON body in the CLI as soon as a backup was set.
+  mockFetch(() => errorResponse(401, "UNAUTHENTICATED"));
+
+  const error = await runSearch(withBackup()).catch((e) => e);
+
+  assert.equal(
+    formatRuntimeError(error),
+    "401 UNAUTHENTICATED - test (backup not tried: 401 applies to the API key, not to the model)",
+  );
+  assert.match(describeError(error), /^\{"error":.*\(backup not tried: 401/);
+});
+
+test("keeps both failed attempts readable on the command line", async () => {
+  mockFetch(
+    () => errorResponse(404, "NOT_FOUND"),
+    () => errorResponse(400, "INVALID_ARGUMENT"),
+  );
+
+  const error = await runSearch(withBackup()).catch((e) => e);
+
+  assert.equal(
+    formatRuntimeError(error),
+    "gemini-primary: 404 NOT_FOUND - test | backup gemini-backup: 400 INVALID_ARGUMENT - test",
+  );
+  assert.match(describeError(error), /^gemini-primary: \{"error":.* \| backup gemini-backup: \{"error":/);
 });
