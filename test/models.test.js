@@ -4,6 +4,7 @@ import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   checkModelIds,
+  findModelDrift,
   isExcludedModel,
   isUsableModel,
   listModels,
@@ -182,4 +183,17 @@ test("gives no advice when the model list cannot be fetched", async () => {
     throw new TypeError("fetch failed");
   };
   assert.deepEqual(await checkModelIds(["gemini-typo"]), []);
+});
+
+test("finds retired exclusions and offered models nobody has probed", () => {
+  const known = new Set(ids);
+  const sdkModels = FIXTURE.models.map(asSdkModel);
+  assert.deepEqual(findModelDrift(sdkModels, known), { stale: [], unprobed: [] });
+
+  // A new usable model appears, and an excluded one is retired.
+  const template = FIXTURE.models.find((model) => modelId(model) === "gemini-flash-latest");
+  const newcomer = { ...asSdkModel(template), name: "models/gemini-9-flash" };
+  const retired = "gemma-4-31b-it";
+  const live = [...sdkModels.filter((model) => modelId(model) !== retired), newcomer];
+  assert.deepEqual(findModelDrift(live, known), { stale: [retired], unprobed: ["gemini-9-flash"] });
 });

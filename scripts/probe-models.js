@@ -37,9 +37,9 @@ import {
   describeError,
   isUsableModel,
   readErrorBody,
+  staleEntries,
 } from "../gemini.js";
 import { THINKING_LEVELS } from "../config.js";
-import { EXCLUDED_MODELS } from "../models-excluded.js";
 
 /**
  * Needs a real search to be answerable, so a model that ignores the tool shows
@@ -205,23 +205,6 @@ async function probe(ai, id, { attempts, thinkingLevel }) {
 
 function pad(value, width) {
   return String(value).padEnd(width);
-}
-
-/**
- * Entries of the negative list that no model in models.list matches any more,
- * because Google retired it. Harmless at runtime - nothing ever looks an entry
- * up unless the API named the model first - but the reason is dead weight, and a
- * reused id would attach it to something else.
- *
- * Reported here because nothing else can: the test in test/models.test.js reads
- * the stored response, which keeps a retired model until somebody renews the
- * file, and a test may not call the live API. Needs the full models.list, so a
- * run narrowed to --model skips the check rather than guessing from ids the
- * command line supplied.
- */
-function staleEntries(liveIds) {
-  if (!liveIds) return [];
-  return Object.keys(EXCLUDED_MODELS).filter((id) => !liveIds.has(id));
 }
 
 /** The table, plus the entries ready to paste into the negative list. */

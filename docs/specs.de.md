@@ -1651,6 +1651,26 @@ Der Plan stammt aus dem Job, der den getesteten Code ausgeführt hat, deshalb pr
 Jeder Eintrag muss ein offener Pull Request von Dependabot sein, dessen Head noch der getestete Commit ist.
 Schlimmstenfalls mergt ein manipulierter Plan ein echtes Dependabot-Update ungetestet, und die Branch-Protection verlangt trotzdem den eigenen grünen `Tests`-Check dieses Pull Requests.
 
+### Drift der Modellliste
+
+Derselbe Workflow prüft jede Woche die Modellliste des Keys, unabhängig von den Updates, über `scripts/model-drift.js`.
+Das kostet nichts: `models.list` wird nicht abgerechnet.
+Der vollständige Probe-Lauf, der über die Ausschlussliste entscheidet, kostet etwa 33 abgerechnete Anfragen und bleibt ein manueller Lauf von `scripts/probe-models.js`; diese Prüfung sagt nur, wann einer fällig ist.
+
+Sie meldet zweierlei, beides aus `findModelDrift()` in `gemini.js`:
+
+- **stale** - Einträge der Ausschlussliste, deren Modell nicht mehr in `models.list` steht (`staleEntries()`, gemeinsam mit `probe-models.js`)
+- **unprobed** - hier angebotene Modelle, die `test/fixtures/models-list.json` nicht enthält. Ein neues Modell besteht `isUsableModel()` und wird sofort angeboten, ungeprüft - so kamen im August 2026 zwei Modelle auf die Kurzliste, die mit `400` scheitern
+
+Die Aufteilung folgt der Grenze oben.
+`drift` führt `npm ci --ignore-scripts` und das SDK mit dem Gemini-Key und einem Token nur zum Lesen aus und gibt sein Ergebnis als Job-Output weiter.
+`drift-report` hält `issues: write`, führt keinen Code aus Abhängigkeiten aus und prüft das Ergebnis, statt ihm zu vertrauen: nur Modell-IDs, nichts, was Markup oder Erwähnungen in das Issue tragen könnte.
+Danach schreibt es in ein einziges Issue mit dem Titel "Model list drift" und ändert sonst nichts; ohne Drift und bei einem Probelauf tut es nichts.
+Ist ein Issue mit diesem Titel offen, kommt der neue Befund als Kommentar dazu, sodass frühere Wochen lesbar bleiben; sonst entsteht ein neues Issue.
+Ein geschlossenes Issue gilt als erledigt und wird nie wieder geöffnet.
+
+Das offene Issue wird gefunden, indem die offenen Issues gelistet und nach Titel gefiltert werden, nicht über `--search`: Der Suchindex hinkt hinterher, und gemessen wurde ein drei Sekunden zuvor angelegtes Issue nicht gefunden, sodass ein zweites daneben entstand.
+
 ### Branch-Protection
 
 Der Pflicht-Check heißt `Tests`, ein Job in `test.yml`, der von der Node-Matrix und dem Markdown-Lint abhängt.

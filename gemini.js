@@ -842,6 +842,43 @@ function isOfferedModel(model) {
 }
 
 /**
+ * Entries of the exclusion list that no model in models.list matches any more,
+ * because Google retired it. Harmless at runtime - nothing ever looks an entry
+ * up unless the API named the model first - but the reason is dead weight, and a
+ * reused id would attach it to something else.
+ *
+ * Reported by scripts/probe-models.js and scripts/model-drift.js because nothing
+ * else can: the test in test/models.test.js reads the stored response, which
+ * keeps a retired model until somebody renews the file, and a test may not call
+ * the live API. Needs the full models.list: without liveIds it reports nothing
+ * rather than guessing from a partial list.
+ */
+export function staleEntries(liveIds) {
+  if (!liveIds) return [];
+  return Object.keys(EXCLUDED_MODELS).filter((id) => !liveIds.has(id));
+}
+
+/**
+ * What changed in the key's model list since knownIds was recorded, for the
+ * weekly check in scripts/model-drift.js:
+ * - stale: exclusion entries whose model is gone (see staleEntries)
+ * - unprobed: models offered here that knownIds does not contain - a new model
+ *   passes isUsableModel() and is offered at once, untried, which is how two
+ *   models that fail with 400 reached the short list in August 2026
+ */
+export function findModelDrift(models, knownIds) {
+  const liveIds = new Set(models.map(modelId));
+  return {
+    stale: staleEntries(liveIds),
+    unprobed: models
+      .filter(isOfferedModel)
+      .map(modelId)
+      .filter((id) => !knownIds.has(id))
+      .sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+/**
  * Why a model is not in the default list - for the --all view only. An excluded
  * model shows the kind of its exclusion, everything before the first dash of its
  * reason: the reason itself runs to three lines for the "unsuitable" entries,

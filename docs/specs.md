@@ -1403,6 +1403,26 @@ The plan comes from the job that ran the code under test, so `merge` checks it r
 Each entry must be an open pull request by Dependabot whose head is still the tested commit.
 At worst a tampered plan merges a genuine Dependabot update untested, and branch protection still demands that pull request's own green `Tests` check.
 
+### Model list drift
+
+The same workflow checks the key's model list every week, independently of the updates, through `scripts/model-drift.js`.
+It costs nothing: `models.list` is not billed.
+The full probe that decides what goes on the exclusion list costs about 33 billed requests and stays a manual run of `scripts/probe-models.js`; this check only says when one is due.
+
+It reports two things, both from `findModelDrift()` in `gemini.js`:
+
+- **stale** - exclusion entries whose model is no longer in `models.list` (`staleEntries()`, shared with `probe-models.js`)
+- **unprobed** - models offered here that `test/fixtures/models-list.json` does not contain. A new model passes `isUsableModel()` and is offered at once, untried, which is how two models that fail with `400` reached the short list in August 2026
+
+The split follows the boundary above.
+`drift` runs `npm ci --ignore-scripts` and the SDK with the Gemini key and a read-only token, and passes its result on as a job output.
+`drift-report` holds `issues: write`, runs no dependency code and checks the result rather than trusting it: model ids only, nothing that could carry markup or mentions into the issue.
+It then writes into a single issue titled "Model list drift" and changes nothing else; without drift, and on a dry run, it does nothing.
+If an issue with that title is open, the new finding is added to it as a comment, so earlier weeks stay readable; otherwise a new issue is opened.
+A closed issue counts as done and is never reopened.
+
+The open issue is found by listing the open issues and filtering by title, not through `--search`: the search index lags behind, and measured, an issue opened three seconds earlier was not found, so a second one was opened next to it.
+
 ### Branch protection
 
 The required check is `Tests`, a job in `test.yml` that depends on the Node matrix and the Markdown lint.
