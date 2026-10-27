@@ -1,0 +1,49 @@
+name: Publish
+
+# Staging happens here rather than on a developer machine, so npmjs.com can
+# show which commit and workflow built each version. The package runs with the
+# user's GEMINI_API_KEY in its environment, and the provenance lets anyone check
+# that the published code is the code in this repository.
+on:
+  push:
+    tags: ["v*"]
+
+# id-token: write lets npm verify this workflow through OIDC (Trusted
+# Publishing), so no npm token is stored anywhere. npmjs.com must name this
+# file, publish.yml, as the package's trusted publisher; a different file name
+# fails at publish time, not when saving the setting.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # No dependency cache: a publish job builds only from what package-lock.json
+      # pins, never from a cache another run could have filled.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      # The npm bundled with Node may predate npm stage, which needs a newer CLI
+      # than Trusted Publishing alone (11.5.1).
+      - run: npm install -g npm@11.21.1
+
+      # A tag on the wrong commit would otherwise publish whatever version that
+      # commit's package.json names.
+      - run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+
+      - run: npm ci
+      - run: npm test
+
+      # Staged, not published: the version stays invisible until a maintainer runs
+      # npm stage approve with 2FA, so a compromised workflow alone cannot release
+      # anything. Provenance is attached automatically with Trusted Publishing
+      # from a public repository; --provenance is not needed.
+      - run: npm stage publish
