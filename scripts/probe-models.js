@@ -32,7 +32,7 @@ import { parseArgs } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
 import { GoogleGenAI } from "@google/genai";
 import { RETRY_OPTIONS, SEARCH_TOOLS, describeError, readErrorBody } from "../gemini.js";
-import { isUsableModel, staleEntries } from "../models.js";
+import { isUsableModel, modelId, staleEntries } from "../models.js";
 import { THINKING_LEVELS } from "../config.js";
 
 /**
@@ -93,21 +93,6 @@ function retryDelayMs(error, attempt) {
     return Math.min(seconds * 1000 + 1000, MAX_RETRY_DELAY_MS);
   }
   return Math.min(5000 * 2 ** (attempt - 1), MAX_RETRY_DELAY_MS);
-}
-
-/**
- * The API's own sentence about what went wrong. readErrorBody() deliberately
- * reads only the machine-readable fields; here the prose is what carries the
- * information, because the status is the same 400 INVALID_ARGUMENT for
- * "Code execution is not enabled for this model" and "Thinking level is not
- * supported for this model." - two entirely different exclusions.
- */
-function apiMessage(error) {
-  try {
-    return JSON.parse(error.message)?.error?.message;
-  } catch {
-    return undefined;
-  }
 }
 
 /** Turns a failed attempt into a verdict plus the fields that go into the report. */
@@ -173,7 +158,10 @@ async function probe(ai, id, { attempts, thinkingLevel }) {
         status,
         statusName: statusName ?? "",
         reason,
-        apiMessage: apiMessage(error),
+        // The prose, not the status, tells the exclusions apart: "Code execution
+        // is not enabled for this model" and "Thinking level is not supported for
+        // this model." are both 400 INVALID_ARGUMENT.
+        apiMessage: readErrorBody(error).message,
         grounded: false,
         ms: Date.now() - startedAt,
         attempts: attempt,
@@ -330,11 +318,10 @@ async function main() {
     const pager = await ai.models.list({ config: { pageSize: 50 } });
     const models = [];
     for await (const model of pager) models.push(model);
-    const nameOf = (model) => (model.name ?? "").replace(/^models\//, "");
-    liveIds = new Set(models.map(nameOf).filter(Boolean));
-    ids = (values.all ? models : models.filter(isUsableModel))
-      .map(nameOf)
-      .filter(Boolean)
+    const named = models.filter((model) => model.name);
+    liveIds = new Set(named.map(modelId));
+    ids = (values.all ? named : named.filter(isUsableModel))
+      .map(modelId)
       .sort((a, b) => a.localeCompare(b));
   }
 
