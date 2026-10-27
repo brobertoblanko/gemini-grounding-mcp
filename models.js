@@ -10,19 +10,14 @@ function formatTokenLimit(limit) {
 }
 
 /**
- * Whether a model CAN run here at all. Two conditions, both taken from what the
- * API reports itself rather than from the model name or from displayName and
- * description, although those two do carry information: "nano-banana-pro-preview"
- * is described as "Gemini 3 Pro Image Preview". Reading them would be the same
- * name pattern one field further right, and it would go stale just as silently
- * once a future text model carries one of the keywords.
+ * Whether a model CAN run here at all, from two fields the API reports itself
+ * rather than from name, displayName or description - any pattern there goes
+ * stale with the next model family:
  * - generateContent: produces text at all (excludes embeddings, Imagen, Veo and
  *   the Live/Audio models)
  * - thinking: accepts a thinking level. runSearch always sends one, otherwise
  *   the API answers 400 "Thinking level is not supported for this model."
- *
- * What the conditions cannot decide is whether a model SHOULD run here - a TTS
- * model with 8k input passes both. That is what EXCLUDED_MODELS is for.
+ * Whether a model SHOULD run here is what EXCLUDED_MODELS decides.
  * Full derivation: docs/specs.md, "gemini-list-models".
  */
 export function isUsableModel(model) {
@@ -53,12 +48,8 @@ function isOfferedModel(model) {
  * Entries of the exclusion list that no model in models.list matches any more,
  * because Google retired it. Harmless at runtime - nothing ever looks an entry
  * up unless the API named the model first - but the reason is dead weight, and a
- * reused id would attach it to something else.
- *
- * Reported by scripts/probe-models.js and scripts/model-drift.js because nothing
- * else can: the test in test/models.test.js reads the stored response, which
- * keeps a retired model until somebody renews the file, and a test may not call
- * the live API. Needs the full models.list: without liveIds it reports nothing
+ * reused id would attach it to something else. Only the live list can tell, so
+ * the scripts report it, not the tests. Without liveIds it reports nothing
  * rather than guessing from a partial list.
  */
 export function staleEntries(liveIds) {
@@ -117,14 +108,12 @@ export async function fetchModels() {
 }
 
 /**
- * Why each of the given model ids is unlikely to work here, as plain text - an
- * empty list when all of them look fine. Advice after a save, never a refusal:
- * the short list decides what is shown, not what is allowed, and an id the key
- * does not list today may be listed tomorrow.
- *
- * A failed models.list (offline, no key) yields no advice rather than an error,
- * so a save never fails on it. Pass models when they are already fetched.
- * No command name in the text: the CLI and gemini-set-config share it.
+ * Why each of the given model ids is unlikely to work here, as plain text without
+ * a command name, because the CLI and gemini-set-config share it. Advice after a
+ * save, never a refusal: an id the key does not list today may be listed
+ * tomorrow. A failed models.list yields no advice, so a save never fails on it.
+ * Pass models when they are already fetched.
+ * Full derivation: docs/specs.md, "A doubtful model warns after the save".
  */
 export async function checkModelIds(ids, models) {
   if (!models) {
@@ -149,24 +138,16 @@ export async function checkModelIds(ids, models) {
 }
 
 /**
- * Lists the models available to the current API key, with token limits. By
- * default only those this server offers - usable and not excluded; with
- * all=true the complete list including a status column.
+ * Lists the models available to the current API key, with token limits: by
+ * default only those this server offers, with all=true every model plus a
+ * status column. The closing note counts both filters, so the exclusion list
+ * stays visible, in a single line under 80 columns with every number taken from
+ * the response. Being listed says nothing about availability: deprecated models
+ * stay in the response and answer with 404.
  *
- * Two filters run in the default view, and the closing note counts both: leaving
- * EXCLUDED_MODELS unmentioned would make it as invisible to the user as the
- * shortened choice that issue #15 started from. The note stays a single line
- * under 80 columns, so a terminal does not wrap it mid-word, and takes every
- * number from the response, so no wording needs revising when models come and
- * go. Full derivation: docs/specs.md, "The notice names the list".
- *
- * allOption is how the caller's own frontend spells that switch, because the
- * note names it and the two spell it differently: "--all" on the command line,
- * "all: true" over MCP. Both pass it explicitly; the default only keeps the
- * note readable for a caller that does not.
- *
- * Being listed says nothing about availability: deprecated models stay in the
- * response and answer with 404. A field indicating that does not exist.
+ * allOption is how the caller spells that switch in the note: "--all" on the
+ * command line, "all: true" over MCP.
+ * Full derivation: docs/specs.md, "The notice names the list".
  */
 export async function listModels({ all = false, allOption = "--all" } = {}) {
   const models = await fetchModels();
