@@ -175,6 +175,7 @@ Deadline: 600 s
 
 Only digits are accepted: `300.5`, `1e3` or `0` abort with `Invalid deadline`, because each would otherwise be stored as something nobody typed.
 The largest value is 600, Google's own limit for a request; anything above it would promise a deadline that does not exist.
+The smallest is 10: Google rejects a shorter deadline on every request with `400 INVALID_ARGUMENT`, the backup included.
 There is no per-call option - the deadline is an operating setting, and raising it after a `504` costs a second full generation.
 
 Thirty seconds after the deadline the server stops waiting by itself, in case the line went silent rather than Google answering.

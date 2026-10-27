@@ -17,6 +17,7 @@ import {
   formatConfigState,
   formatSavedValues,
   MAX_DEADLINE_SECONDS,
+  MIN_DEADLINE_SECONDS,
   resolveCallConfig,
   setSavedConfig,
   THINKING_LEVELS,
@@ -194,10 +195,14 @@ function createServer() {
               "backup already saved, leaving the model as it is.",
           ),
         deadlineSeconds: z
-          .union([z.number().int().positive().max(MAX_DEADLINE_SECONDS), z.literal(false)])
+          .union([
+            z.number().int().min(MIN_DEADLINE_SECONDS).max(MAX_DEADLINE_SECONDS),
+            z.literal(false),
+          ])
           .optional()
           .describe(
-            `Seconds after which Google aborts a search (504) - 300 unless set, at most ${MAX_DEADLINE_SECONDS}. Pass ` +
+            `Seconds after which Google aborts a search (504) - 300 unless set, from ` +
+              `${MIN_DEADLINE_SECONDS} to ${MAX_DEADLINE_SECONDS}. Pass ` +
               "false to send no deadline, so Google's own limit applies. Never raise it " +
               "on your own after a search hit the deadline: report the error instead.",
           ),

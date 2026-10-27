@@ -66,6 +66,9 @@ A field is missing, a value is invalid, the format is wrong.
 The most common case on this server is a model without thinking support: `Thinking level is not supported for this model.`
 `runSearch()` always sends a thinking level, which is exactly what `gemini-list-models` filters on.
 
+Measured as well: a deadline below 10 seconds, `Manually set deadline 1s is too short. Minimum allowed deadline is 10s.`
+The server no longer lets one be saved (`MIN_DEADLINE_SECONDS` in `config.js`); before that, the backup failed on the same header.
+
 The second attempt fails identically.
 Google's own advice: "Do not retry on client errors (like 400 or 403)."
 

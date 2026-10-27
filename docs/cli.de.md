@@ -175,6 +175,7 @@ Deadline: 600 s
 
 Angenommen werden nur Ziffern: `300.5`, `1e3` oder `0` brechen mit `Invalid deadline` ab, weil sonst jeweils etwas gespeichert würde, das niemand eingegeben hat.
 Der größte Wert ist 600, Googles eigene Grenze für eine Anfrage; alles darüber verspräche eine Frist, die es nicht gibt.
+Der kleinste ist 10: Eine kürzere Frist lehnt Google bei jeder Anfrage mit `400 INVALID_ARGUMENT` ab, das Backup eingeschlossen.
 Eine Option pro Aufruf gibt es nicht - die Frist ist eine Betriebseinstellung, und sie nach einem `504` anzuheben kostet eine zweite volle Generierung.
 
 Dreißig Sekunden nach der Frist hört der Server von sich aus auf zu warten, falls die Leitung verstummt ist, statt dass Google antwortet.

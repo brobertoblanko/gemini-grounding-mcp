@@ -293,7 +293,7 @@ test("warns about an unusable deadline in a hand-edited file", () => {
   const result = runCli(["config"], { configHome });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stderr, /deadlineSeconds .* must be a whole number from 1 to 600 or false/);
+  assert.match(result.stderr, /deadlineSeconds .* must be a whole number from 10 to 600 or false/);
   assert.match(result.stdout, /^Deadline: 300 s$/m, "the default applies instead");
 });
 
@@ -377,12 +377,37 @@ test("caps the deadline at Google's own limit of 600 s", () => {
   // unary request after 10 minutes regardless.
   const tooLong = runCli(["set-deadline", "601"]);
   assert.equal(tooLong.status, 1);
-  assert.match(tooLong.stderr, /from 1 to 600 \(Google's own limit\)/);
+  assert.match(tooLong.stderr, /from 10 to 600 \(Google's own limits\)/);
   assert.deepEqual(tooLong.savedConfig(), {});
 
   const atLimit = runCli(["set-deadline", "600"]);
   assert.equal(atLimit.status, 0);
   assert.deepEqual(atLimit.savedConfig(), { deadlineSeconds: 600 });
+});
+
+test("rejects a deadline below Google's minimum of 10 s", () => {
+  // Measured: Google answers every request with such a deadline with a 400, and
+  // the backup inherits the same header.
+  const tooShort = runCli(["set-deadline", "9"]);
+  assert.equal(tooShort.status, 1);
+  assert.match(tooShort.stderr, /from 10 to 600/);
+  assert.deepEqual(tooShort.savedConfig(), {});
+
+  const atLimit = runCli(["set-deadline", "10"]);
+  assert.equal(atLimit.status, 0);
+  assert.deepEqual(atLimit.savedConfig(), { deadlineSeconds: 10 });
+});
+
+test("reads a hand-edited deadline below 10 s as 10 s", () => {
+  const configHome = freshConfigHome();
+  const file = configFile(configHome);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify({ deadlineSeconds: 5 }));
+  const result = runCli(["config"], { configHome });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /^Deadline: 10 s$/m);
+  assert.match(result.stderr, /Warning: deadlineSeconds .* is 5, .* using 10\./);
 });
 
 test("reads a hand-edited deadline above 600 s as 600 s", () => {
