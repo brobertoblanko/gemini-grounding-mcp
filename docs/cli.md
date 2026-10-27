@@ -49,6 +49,18 @@ gemini-grounding "which node version is currently lts"
 Unquoted, the call aborts with a message rather than sending a query that option parsing has cut individual words out of.
 Without that check, `… what does --thinking high mean …` would have run as `what does mean …`: a query that looks plausible, returns a plausible answer, and is quietly not the question you asked.
 
+A long question with line breaks and quotes is easier to write into a file and pipe in.
+A single `-` in place of the query reads it from stdin:
+
+```powershell
+Get-Content question.txt | gemini-grounding -
+```
+
+On Windows this is more than convenience.
+Called through npm's `.cmd` wrapper - from `cmd.exe`, Windows PowerShell 5.1 or another program - a multi-line argument is cut at its first line break and loses its quotes, without any message.
+stdin arrives intact on every route.
+The same check for an empty query applies, and without anything piped in, `-` aborts instead of waiting for input.
+
 Unknown options (`--al` instead of `--all`) and surplus arguments are errors with exit code 1 as well.
 None of it is silently ignored.
 

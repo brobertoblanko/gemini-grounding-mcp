@@ -292,6 +292,7 @@ CLI - it then waits silently on stdio, which looks like a hang.
 | Command                                 | Effect                                                                                                                                                     |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `gemini-grounding "<query>"`            | Search using the saved defaults; `--model <id>` and `--thinking <level>` apply to this call only, `--debug` adds the full stack trace on an error          |
+| `gemini-grounding -`                    | Same as a search, but reads the query from stdin, e.g. `Get-Content question.txt \| gemini-grounding -`                                                    |
 | `gemini-grounding config`               | Shows the saved models with their thinking levels and the deadline, whether an API key is present, where the config file lives, and the installed version  |
 | `gemini-grounding models [--all]`       | Lists the models suggested for use here with their token limits; `--all` lists every one with a status column                                              |
 | `gemini-grounding set-model <id>`       | Persists the default model; add `--thinking <level>` to save both in one call                                                                              |

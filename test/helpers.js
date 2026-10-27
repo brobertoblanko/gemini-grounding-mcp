@@ -81,11 +81,16 @@ export function configFile(configHome) {
  * case would write into this machine's real configuration. The API key is
  * replaced by a placeholder so that no case can reach the API by accident;
  * apiKey: null removes the variable instead, for the cases about a missing key.
- * env overrides any of these last.
+ * env overrides any of these last; input is piped to the CLI's stdin.
  */
 export function runCli(
   args,
-  { configHome = freshConfigHome(), apiKey = "test-key-never-sent", env: extraEnv = {} } = {},
+  {
+    configHome = freshConfigHome(),
+    apiKey = "test-key-never-sent",
+    env: extraEnv = {},
+    input,
+  } = {},
 ) {
   const env = {
     ...process.env,
@@ -100,6 +105,7 @@ export function runCli(
   const result = spawnSync(process.execPath, [CLI, ...args], {
     encoding: "utf8",
     env,
+    input,
   });
 
   return {

@@ -49,6 +49,18 @@ gemini-grounding "welche node-version ist aktuell lts"
 Ohne Anführungszeichen bricht der Aufruf mit einer Meldung ab, statt eine Anfrage zu senden, aus der die Optionsauswertung einzelne Wörter herausgeschnitten hat.
 Ohne diese Prüfung wäre aus `… what does --thinking high mean …` die Anfrage `what does mean …` geworden: eine Anfrage, die plausibel aussieht, eine plausible Antwort liefert und stillschweigend nicht die gestellte Frage ist.
 
+Eine lange Frage mit Zeilenumbrüchen und Anführungszeichen lässt sich leichter in eine Datei schreiben und hineinleiten.
+Ein einzelnes `-` anstelle der Anfrage liest sie von stdin:
+
+```powershell
+Get-Content frage.txt | gemini-grounding -
+```
+
+Unter Windows ist das mehr als Bequemlichkeit.
+Über die `.cmd`-Hülle von npm aufgerufen - aus `cmd.exe`, Windows PowerShell 5.1 oder einem anderen Programm - wird ein mehrzeiliges Argument am ersten Zeilenumbruch abgeschnitten und verliert seine Anführungszeichen, ohne jede Meldung.
+Über stdin kommt es auf jedem Weg unverändert an.
+Es gilt dieselbe Prüfung auf eine leere Anfrage, und ist nichts hineingeleitet, bricht `-` ab, statt auf Eingabe zu warten.
+
 Unbekannte Optionen (`--al` statt `--all`) und überzählige Argumente sind ebenfalls Fehler mit Exit-Code 1.
 Nichts davon wird stillschweigend übergangen.
 

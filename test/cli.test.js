@@ -398,3 +398,17 @@ test("reads a hand-edited deadline above 600 s as 600 s", () => {
   assert.match(result.stdout, /^Deadline: 600 s$/m);
   assert.match(result.stderr, /Warning: deadlineSeconds .* is 3600, .* using 600\./);
 });
+
+test('reads the query from stdin when it is "-"', () => {
+  // Reaching the key check proves the piped query was accepted; with "-" taken
+  // literally it would have been a search for a dash.
+  const piped = runCli(["-"], { apiKey: null, input: 'Line one with "quotes"\r\nLine two\r\n' });
+  assert.equal(piped.status, 1);
+  assert.match(piped.stderr, /^Error: GEMINI_API_KEY is not set/);
+
+  for (const input of ["", "  \r\n\n"]) {
+    const empty = runCli(["-"], { input });
+    assert.equal(empty.status, 1, JSON.stringify(input));
+    assert.equal(empty.stderr, "Error: The query is empty.\n");
+  }
+});

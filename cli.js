@@ -64,9 +64,11 @@ Examples:
   gemini-grounding set-model gemini-flash-latest --thinking low
   gemini-grounding set-backup gemini-3.6-flash
 
-The query is one argument - quote it if it contains spaces. The API key comes
-from GEMINI_API_KEY. Settings are shared with the MCP server; "config" shows
-where they are stored.`;
+The query is one argument - quote it if it contains spaces, or pass "-" to
+read it from stdin: Get-Content question.txt | gemini-grounding -
+
+The API key comes from GEMINI_API_KEY. Settings are shared with the MCP
+server; "config" shows where they are stored.`;
 
 /** The second line of a syntax error, for when the message alone does not say how. */
 const SEE_HELP = 'Run "gemini-grounding help" for usage.';
@@ -368,7 +370,25 @@ async function main() {
           'Example: gemini-grounding "what is an mcp server"',
         );
       }
-      const query = command.trim();
+      // "-" reads the query from stdin, the only way a multi-line query with
+      // quotes arrives intact through npm's .cmd wrapper on Windows: measured,
+      // an argument loses its quotes there and is cut at the first line break.
+      // CRLF from a Windows pipe becomes LF so the query does not depend on the
+      // shell it came from.
+      let query = command;
+      if (command === "-") {
+        if (process.stdin.isTTY) {
+          fail(
+            '"-" reads the query from stdin, but nothing is piped in.',
+            "Example: Get-Content question.txt | gemini-grounding -",
+          );
+        }
+        query = "";
+        process.stdin.setEncoding("utf8");
+        for await (const chunk of process.stdin) query += chunk;
+        query = query.replace(/\r\n/g, "\n");
+      }
+      query = query.trim();
       // Without this check an empty argument - from an unset shell variable, say
       // - would go to the API as a query and cost tokens.
       if (query === "") fail("The query is empty.");
