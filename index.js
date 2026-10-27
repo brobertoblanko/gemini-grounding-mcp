@@ -28,6 +28,11 @@ import {
 // version check. npm always packs package.json along, regardless of files.
 const { version } = createRequire(import.meta.url)("./package.json");
 
+const toolError = (tool, text) => ({
+  content: [{ type: "text", text: `Error in ${tool}: ${text}` }],
+  isError: true,
+});
+
 function createServer() {
   const server = new McpServer(
     {
@@ -109,10 +114,7 @@ function createServer() {
         });
         return { content: [{ type: "text", text }] };
       } catch (error) {
-        return {
-          content: [{ type: "text", text: `Error in gemini-search: ${describeError(error)}` }],
-          isError: true,
-        };
+        return toolError("gemini-search", describeError(error));
       }
     },
   );
@@ -147,10 +149,7 @@ function createServer() {
         const text = await listModels({ all, allOption: "all: true" });
         return { content: [{ type: "text", text }] };
       } catch (error) {
-        return {
-          content: [{ type: "text", text: `Error in gemini-list-models: ${describeError(error)}` }],
-          isError: true,
-        };
+        return toolError("gemini-list-models", describeError(error));
       }
     },
   );
@@ -215,38 +214,23 @@ function createServer() {
       // rules, and denies the call where no person can answer, as in claude -p.
       _meta: { "anthropic/requiresUserInteraction": true },
     },
-    async ({ model, thinkingLevel, backupModel, backupThinkingLevel, deadlineSeconds }) => {
-      if (
-        model === undefined &&
-        thinkingLevel === undefined &&
-        backupModel === undefined &&
-        backupThinkingLevel === undefined &&
-        deadlineSeconds === undefined
-      ) {
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                "Error in gemini-set-config: at least one of model, thinkingLevel, " +
-                "backupModel, backupThinkingLevel or deadlineSeconds must be provided.",
-            },
-          ],
-          isError: true,
-        };
+    async (args) => {
+      // Over the parsed arguments, so a parameter added to the schema counts too.
+      if (Object.values(args).every((value) => value === undefined)) {
+        return toolError(
+          "gemini-set-config",
+          "at least one of model, thinkingLevel, backupModel, backupThinkingLevel " +
+            "or deadlineSeconds must be provided.",
+        );
       }
+      const { model, thinkingLevel, backupModel, backupThinkingLevel, deadlineSeconds } = args;
       // The same two checks as in the CLI, and needed here on top of that because
       // only this handler can set several values in ONE call. A model prompted for
       // it has no reason to read the stored state beforehand.
       const problem =
         findModelCollision({ model, backupModel }) ??
         findBackupLevelProblem({ backupModel, backupThinkingLevel });
-      if (problem) {
-        return {
-          content: [{ type: "text", text: `Error in gemini-set-config: ${problem}` }],
-          isError: true,
-        };
-      }
+      if (problem) return toolError("gemini-set-config", problem);
 
       // Write errors are real here: an unwritable directory or an unreadable file.
       // Without catch they would escape the handler instead of arriving as isError.
@@ -261,15 +245,7 @@ function createServer() {
           deadlineSeconds,
         });
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error in gemini-set-config: could not save - ${error.message}`,
-            },
-          ],
-          isError: true,
-        };
+        return toolError("gemini-set-config", `could not save - ${error.message}`);
       }
       // What was written, then the complete state the next query runs with - the
       // confirmation CLAUDE.md requires after a model change.
