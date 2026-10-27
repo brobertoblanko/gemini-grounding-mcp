@@ -18,9 +18,8 @@ import {
   findModelCollision,
   formatConfigState,
   formatSavedValues,
-  getSavedBackup,
-  getSavedModel,
   isValidDeadline,
+  loadConfig,
   MAX_DEADLINE_SECONDS,
   resolveCallConfig,
   setSavedConfig,
@@ -391,9 +390,8 @@ async function main() {
       if (!models) {
         console.log("Models:   skipped - needs a working API key");
       } else {
-        const model = getSavedModel();
+        const { model, backup } = loadConfig();
         row("Default:", (await checkModelIds([model], models))[0], model);
-        const backup = getSavedBackup();
         if (backup.model) {
           row("Backup:", (await checkModelIds([backup.model], models))[0], backup.model);
         } else {

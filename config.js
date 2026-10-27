@@ -69,8 +69,8 @@ export function isValidDeadline(value) {
  */
 export const THINKING_LEVELS = ["minimal", "low", "medium", "high"];
 
-// readConfig() runs four times per call and again after every write; without
-// this memory one fault would print as several.
+// The MCP server reads config.json on every call; without this memory each
+// search would repeat the same warning in the client's log.
 const warned = new Map();
 let collecting = false;
 
@@ -86,18 +86,15 @@ function warnOnce(key, message) {
 }
 
 /**
- * Everything wrong with config.json, through the same checks the getters run
- * on every call - so "doctor" in cli.js cannot disagree with what a search
- * actually does. Collected instead of printed, and with the path shortened to
+ * Everything wrong with config.json, through the same loadConfig() every call
+ * runs - so "doctor" in cli.js cannot disagree with what a search actually
+ * does. Collected instead of printed, and with the path shortened to
  * the file name: the output is meant to be pasted into a bug report.
  */
 export function configProblems() {
   collecting = true;
   try {
-    getSavedModel();
-    getSavedThinkingLevel();
-    getSavedDeadline();
-    getSavedBackup();
+    loadConfig();
   } finally {
     collecting = false;
   }
@@ -112,7 +109,7 @@ export function configProblems() {
 function readConfig({ strict = false } = {}) {
   try {
     const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
-    // null would crash every getter, and an array swallows the write silently:
+    // null would crash loadConfig(), and an array swallows the write silently:
     // JSON.stringify drops properties set on it.
     if (typeof config !== "object" || config === null || Array.isArray(config)) {
       throw new Error("not a JSON object");
@@ -134,14 +131,23 @@ function readConfig({ strict = false } = {}) {
 }
 
 /**
- * Reads the persistently stored default model.
- * Returns DEFAULT_MODEL when no or a broken config.json exists.
- *
- * Validated like the backup, because the file can be edited by hand: an empty
- * model would go to the API on every search.
+ * The stored settings as one validated snapshot, read from the file once, so a
+ * call cannot mix values from before and after a write. Each value falls back
+ * to its default when no or a broken config.json exists.
  */
-export function getSavedModel() {
-  const { model } = readConfig();
+export function loadConfig() {
+  const config = readConfig();
+  return {
+    model: savedModel(config),
+    thinkingLevel: savedThinkingLevel(config),
+    backup: savedBackup(config),
+    deadlineSeconds: savedDeadline(config),
+  };
+}
+
+// Validated like the backup, because the file can be edited by hand: an empty
+// model would go to the API on every search.
+function savedModel({ model }) {
   if (model === undefined) return DEFAULT_MODEL;
   if (typeof model === "string" && model.trim() !== "") return model;
   warnOnce(
@@ -152,15 +158,9 @@ export function getSavedModel() {
   return DEFAULT_MODEL;
 }
 
-/**
- * Reads the persistently stored default thinking level.
- * Returns DEFAULT_THINKING_LEVEL when no or a broken config.json exists.
- *
- * Validated because an unknown level comes back as a 400, which triggers the
- * fallback - and the backup inherits the same unusable level.
- */
-export function getSavedThinkingLevel() {
-  const { thinkingLevel } = readConfig();
+// Validated because an unknown level comes back as a 400, which triggers the
+// fallback - and the backup inherits the same unusable level.
+function savedThinkingLevel({ thinkingLevel }) {
   if (thinkingLevel === undefined) return DEFAULT_THINKING_LEVEL;
   if (THINKING_LEVELS.includes(thinkingLevel)) return thinkingLevel;
   warnOnce(
@@ -172,13 +172,11 @@ export function getSavedThinkingLevel() {
 }
 
 /**
- * Reads the stored deadline: whole seconds, or false when none is to be sent.
- * Returns DEFAULT_DEADLINE_SECONDS when no or a broken config.json exists.
- * An unusable value warns: unlike an unknown model, which the API rejects, a
- * deadline nobody applies would show nowhere.
+ * Whole seconds, or false when none is to be sent. An unusable value warns:
+ * unlike an unknown model, which the API rejects, a deadline nobody applies
+ * would show nowhere.
  */
-export function getSavedDeadline() {
-  const { deadlineSeconds } = readConfig();
+function savedDeadline({ deadlineSeconds }) {
   if (deadlineSeconds === undefined) return DEFAULT_DEADLINE_SECONDS;
   if (isValidDeadline(deadlineSeconds)) return deadlineSeconds;
 
@@ -201,14 +199,13 @@ export function getSavedDeadline() {
 }
 
 /**
- * Reads the stored backup as a unit, because a model and its thinking level
- * belong together. disabled (false in the file) behaves like "never configured"
+ * The backup as a unit, because a model and its thinking level belong
+ * together. disabled (false in the file) behaves like "never configured"
  * and exists for the output of "config" alone: "off" and "not set" are two
  * different statements. Invalid values count as unset, so they never reach the
  * API on the very path that is meant to catch an error.
  */
-export function getSavedBackup() {
-  const { backupModel, backupThinkingLevel } = readConfig();
+function savedBackup({ backupModel, backupThinkingLevel }) {
   return {
     model: typeof backupModel === "string" && backupModel !== "" ? backupModel : undefined,
     thinkingLevel: THINKING_LEVELS.includes(backupThinkingLevel)
@@ -228,16 +225,17 @@ export function resolveCallConfig({ model, thinkingLevel } = {}) {
   // A model named on the call gets NO backup: whoever names one often wants to
   // know whether that one is reachable. Syntactic - it applies even when the
   // named model equals the stored default.
-  const backup = model === undefined ? getSavedBackup() : {};
+  const saved = loadConfig();
+  const backup = model === undefined ? saved.backup : {};
 
   return {
-    model: model ?? getSavedModel(),
-    thinkingLevel: thinkingLevel ?? getSavedThinkingLevel(),
+    model: model ?? saved.model,
+    thinkingLevel: thinkingLevel ?? saved.thinkingLevel,
     backupModel: backup.model,
     backupThinkingLevel: backup.thinkingLevel,
     // No per-call override: the deadline is an operating setting, and a call
     // that could raise it would turn a 504 into an invitation to retry longer.
-    deadlineSeconds: getSavedDeadline(),
+    deadlineSeconds: saved.deadlineSeconds,
   };
 }
 
@@ -253,11 +251,12 @@ export function resolveCallConfig({ model, thinkingLevel } = {}) {
 export function findModelCollision({ model, backupModel } = {}) {
   if (model === undefined && backupModel === undefined) return undefined;
 
+  const saved = loadConfig();
   // null is a reset and leaves the built-in default, not what is saved now.
-  const resultingModel = model === null ? DEFAULT_MODEL : (model ?? getSavedModel());
+  const resultingModel = model === null ? DEFAULT_MODEL : (model ?? saved.model);
   // false (switched off) and undefined (never configured) are both harmless and
   // drop out through the truthiness check below.
-  const resultingBackup = backupModel === undefined ? getSavedBackup().model : backupModel;
+  const resultingBackup = backupModel === undefined ? saved.backup.model : backupModel;
   if (!resultingBackup || resultingModel !== resultingBackup) return undefined;
 
   // Which side the call touches decides the advice: whoever sets the default
@@ -282,7 +281,7 @@ export function findBackupLevelProblem({ backupModel, backupThinkingLevel } = {}
   // the call" must stay open even when no backup is left at all.
   if (backupThinkingLevel === undefined || backupThinkingLevel === null) return undefined;
 
-  const saved = getSavedBackup();
+  const saved = loadConfig().backup;
   // Model ID, false (switched off) or undefined (never configured). ?? and not
   // ||, so that a false passed in is preserved.
   const resulting = backupModel ?? (saved.disabled ? false : saved.model);
@@ -400,8 +399,7 @@ export function formatSavedValues({
  * Full derivation: docs/specs.md, "Reporting what was saved".
  */
 export function formatConfigState() {
-  const thinkingLevel = getSavedThinkingLevel();
-  const backup = getSavedBackup();
+  const { model, thinkingLevel, backup, deadlineSeconds } = loadConfig();
 
   const backupLine = backup.model
     ? `${backup.model} · ${backup.thinkingLevel ?? `${thinkingLevel} (inherited)`}`
@@ -410,8 +408,8 @@ export function formatConfigState() {
       : "not set";
 
   return (
-    `Default:  ${getSavedModel()} · ${thinkingLevel}\n` +
+    `Default:  ${model} · ${thinkingLevel}\n` +
     `Backup:   ${backupLine}\n` +
-    `Deadline: ${formatDeadline(getSavedDeadline())}`
+    `Deadline: ${formatDeadline(deadlineSeconds)}`
   );
 }

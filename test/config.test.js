@@ -23,8 +23,7 @@ test("warns exactly once when the configuration is unreadable", () => {
   const result = runCli(["config"], { configHome: withBrokenConfig() });
 
   assert.equal(result.status, 0, "the defaults still carry the call");
-  // Exactly once: readConfig() runs twice per call, once for the model and once
-  // for the thinking level. Two lines would look like two errors.
+  // Exactly once: two lines would look like two errors.
   assert.equal((result.stderr.match(/Warning:/g) ?? []).length, 1);
   assert.match(result.stderr, /could not be read/);
 });
