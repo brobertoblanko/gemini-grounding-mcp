@@ -38,6 +38,7 @@ import {
   isUsableModel,
   readErrorBody,
 } from "../gemini.js";
+import { THINKING_LEVELS } from "../config.js";
 import { EXCLUDED_MODELS } from "../models-excluded.js";
 
 /**
@@ -310,11 +311,31 @@ async function main() {
     },
   });
 
+  // Before the key check, so a typo costs nothing. An unchecked --attempts abc
+  // retried a transient error forever, and --thinking foo failed every model
+  // with 400 and proposed all of them for the negative list.
+  const wholeNumber = (name) => {
+    if (!/^\d+$/.test(values[name]) || Number(values[name]) < 1) {
+      throw new Error(`--${name} must be a whole number of at least 1, not "${values[name]}".`);
+    }
+    return Number(values[name]);
+  };
+  const attempts = wholeNumber("attempts");
+  wholeNumber("deadline");
+  const pause = Number(values.pause);
+  if (values.pause.trim() === "" || !(pause >= 0)) {
+    throw new Error(`--pause must be a number of seconds of at least 0, not "${values.pause}".`);
+  }
+  if (!THINKING_LEVELS.includes(values.thinking)) {
+    throw new Error(
+      `--thinking must be one of ${THINKING_LEVELS.join(", ")}, not "${values.thinking}".`,
+    );
+  }
+
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set.");
 
-  const attempts = Number.parseInt(values.attempts, 10);
-  const pauseMs = Number.parseFloat(values.pause) * 1000;
+  const pauseMs = pause * 1000;
   const ai = new GoogleGenAI({
     apiKey,
     httpOptions: {

@@ -127,10 +127,19 @@ export function describeError(error) {
  *
  * For cli.js only. The MCP handler keeps describeError(): the agent reads the
  * raw body without effort, and nothing in error.details such as a 429's
- * retryDelay can get lost on the way. A plain Error carrying such a body inside
- * its text - both models failing after a fallback - passes through unchanged.
+ * retryDelay can get lost on the way. The errors runSearch() wraps around a
+ * backup carry the originals as primary or attempts and are rendered from those,
+ * in the same layout as their text.
  */
 export function formatRuntimeError(error) {
+  if (error?.primary) return `${formatRuntimeError(error.primary)} (${error.refusal})`;
+  if (error?.attempts) {
+    const [first, backup] = error.attempts;
+    return (
+      `${first.model}: ${formatRuntimeError(first.error)} | ` +
+      `backup ${backup.model}: ${formatRuntimeError(backup.error)}`
+    );
+  }
   const { statusName, message } = readErrorBody(error);
   if (typeof error?.status !== "number" || typeof message !== "string") {
     return describeError(error);
@@ -559,12 +568,16 @@ function fallbackRefusal({ error, model, backupModel, reason }) {
 }
 
 /**
- * An error that additionally says why no backup was tried. A plain Error without
- * a cause, so describeError() passes it through unchanged - the cause of a
- * network error is already in the text.
+ * An error that additionally says why no backup was tried. Without a cause, so
+ * describeError() passes the text through unchanged - the cause of a network
+ * error is already in it. The original error rides along as primary, so
+ * formatRuntimeError() can still render it as an ApiError.
  */
 function withRefusal(error, refusal) {
-  return new Error(`${describeError(error)} (${refusal})`);
+  return Object.assign(new Error(`${describeError(error)} (${refusal})`), {
+    primary: error,
+    refusal,
+  });
 }
 
 /**
@@ -715,9 +728,12 @@ export async function runSearch({
       // Both errors, each with its model in front of it. With only the second
       // one here, you would go looking at the wrong model; describeError() on
       // both, so the cause of a network error is not lost.
-      throw new Error(
-        `${fallback.model}: ${describeError(error)} | ` +
-          `backup ${backupModel}: ${describeError(backupError)}`,
+      throw Object.assign(
+        new Error(
+          `${fallback.model}: ${describeError(error)} | ` +
+            `backup ${backupModel}: ${describeError(backupError)}`,
+        ),
+        { attempts: [{ model: fallback.model, error }, { model: backupModel, error: backupError }] },
       );
     }
   }

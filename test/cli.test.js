@@ -293,7 +293,7 @@ test("warns about an unusable deadline in a hand-edited file", () => {
   const result = runCli(["config"], { configHome });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stderr, /deadlineSeconds .* must be a positive whole number or false/);
+  assert.match(result.stderr, /deadlineSeconds .* must be a whole number from 1 to 600 or false/);
   assert.match(result.stdout, /^Deadline: 300 s$/m, "the default applies instead");
 });
 
@@ -348,4 +348,53 @@ test("accepts --debug only where a runtime error can occur", () => {
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /"config" takes no --debug option/);
+});
+
+test("ignores an empty or relative XDG_CONFIG_HOME and APPDATA", () => {
+  // The XDG spec says to ignore such values. Taken as they are, the file would
+  // move with the working directory, and every place the server is started
+  // from would get its own configuration.
+  for (const value of ["", "relative/dir"]) {
+    const result = runCli(["config"], { env: { XDG_CONFIG_HOME: value, APPDATA: value } });
+    const configPath = result.stdout.match(/^Config: +(.+)$/m)?.[1];
+
+    assert.ok(path.isAbsolute(configPath), `"${value}" gave ${configPath}`);
+  }
+});
+
+test("rejects an empty model id", () => {
+  for (const args of [["set-model", ""], ["set-backup", " "], ["set-thinking", "low", "--model", ""]]) {
+    const result = runCli(args);
+
+    assert.equal(result.status, 1, args.join(" "));
+    assert.match(result.stderr, /^Error: .*empty/m);
+    assert.deepEqual(result.savedConfig(), {});
+  }
+});
+
+test("caps the deadline at Google's own limit of 600 s", () => {
+  // Above it the value promises a limit that does not exist: Google ends a
+  // unary request after 10 minutes regardless.
+  const tooLong = runCli(["set-deadline", "601"]);
+  assert.equal(tooLong.status, 1);
+  assert.match(tooLong.stderr, /from 1 to 600 \(Google's own limit\)/);
+  assert.deepEqual(tooLong.savedConfig(), {});
+
+  const atLimit = runCli(["set-deadline", "600"]);
+  assert.equal(atLimit.status, 0);
+  assert.deepEqual(atLimit.savedConfig(), { deadlineSeconds: 600 });
+});
+
+test("reads a hand-edited deadline above 600 s as 600 s", () => {
+  // The cap and not the default 300: whoever wrote 3600 wanted the longest
+  // deadline there is.
+  const configHome = freshConfigHome();
+  const file = configFile(configHome);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify({ deadlineSeconds: 3600 }));
+  const result = runCli(["config"], { configHome });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /^Deadline: 600 s$/m);
+  assert.match(result.stderr, /Warning: deadlineSeconds .* is 3600, .* using 600\./);
 });

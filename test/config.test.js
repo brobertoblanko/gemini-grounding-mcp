@@ -3,17 +3,19 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { configFile, freshConfigHome, runCli } from "./helpers.js";
 
-/** Creates a config.json whose content is not valid JSON. */
-function withBrokenConfig() {
+/**
+ * Creates a config.json the defaults have to stand in for. The default content
+ * is what the file looks like after an interrupted write.
+ */
+function withBrokenConfig(content = '{ "model": "gemini-x"') {
   const configHome = freshConfigHome();
   const file = configFile(configHome);
   mkdirSync(path.dirname(file), { recursive: true });
-  // This is what the file looks like after an interrupted write.
-  writeFileSync(file, '{ "model": "gemini-x"');
+  writeFileSync(file, content);
   return configHome;
 }
 
@@ -55,4 +57,47 @@ test("stays silent as long as there is no configuration at all", () => {
 
   assert.equal(result.status, 0);
   assert.equal(result.stderr, "");
+});
+
+test("leaves an unreadable configuration untouched instead of overwriting it", () => {
+  // Writing on top of the defaults would replace every value in the broken file
+  // with the single one just set - the only path that loses data.
+  const configHome = withBrokenConfig();
+  const before = readFileSync(configFile(configHome), "utf8");
+  const result = runCli(["set-thinking", "high"], { configHome });
+
+  assert.equal(result.status, 1);
+  assert.doesNotMatch(result.stdout, /Saved/);
+  assert.match(result.stderr, /^Error: .*could not be read .*nothing was saved/m);
+  assert.equal(readFileSync(configFile(configHome), "utf8"), before);
+});
+
+test("treats a configuration that is no JSON object as unreadable", () => {
+  for (const content of ["null", "[]", "42"]) {
+    const configHome = withBrokenConfig(content);
+
+    const shown = runCli(["config"], { configHome });
+    assert.equal(shown.status, 0, `config with ${content}`);
+    assert.match(shown.stderr, /not a JSON object/);
+    assert.match(shown.stdout, /gemini-flash-latest · medium/);
+
+    // JSON.stringify drops properties set on an array, so "[]" used to report a
+    // save that never happened.
+    const saved = runCli(["set-thinking", "low"], { configHome });
+    assert.equal(saved.status, 1, `set-thinking with ${content}`);
+    assert.equal(readFileSync(configFile(configHome), "utf8"), content);
+  }
+});
+
+test("replaces an unusable default model and thinking level with a warning each", () => {
+  // An unknown level comes back as a 400, triggers the fallback, and the backup
+  // inherits the same unusable level.
+  const configHome = withBrokenConfig('{ "model": "", "thinkingLevel": "ultra" }');
+  const result = runCli(["config"], { configHome });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /^Default: +gemini-flash-latest · medium$/m);
+  assert.match(result.stderr, /model in .* must be a non-empty string, not "" - using gemini-flash-latest/);
+  assert.match(result.stderr, /thinkingLevel in .* must be one of minimal, low, medium, high, not "ultra" - using medium/);
+  assert.equal((result.stderr.match(/Warning:/g) ?? []).length, 2);
 });

@@ -15,11 +15,15 @@ import path from "path";
 // macOS is deliberately treated like Linux although the Apple standard would be
 // ~/Library/Application Support/: this is a terminal tool, and in the terminal
 // nobody goes looking in a folder that Finder hides.
+//
+// An empty or relative value counts as unset, as the XDG spec demands: taken as
+// it is, the file would move with the working directory.
 // Full derivation: docs/specs.md, "Configuration file location".
+const absolute = (value) => (value && path.isAbsolute(value) ? value : undefined);
 const CONFIG_DIR = path.join(
-  process.env.XDG_CONFIG_HOME ??
+  absolute(process.env.XDG_CONFIG_HOME) ??
     (process.platform === "win32"
-      ? (process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"))
+      ? (absolute(process.env.APPDATA) ?? path.join(os.homedir(), "AppData", "Roaming"))
       : path.join(os.homedir(), ".config")),
   "gemini-grounding-mcp",
 );
@@ -56,13 +60,19 @@ const DEFAULT_THINKING_LEVEL = "medium";
 export const DEFAULT_DEADLINE_SECONDS = 300;
 
 /**
+ * Google's own limit for a unary request (see DEFAULT_DEADLINE_SECONDS). A larger
+ * deadline would promise a limit that does not exist.
+ */
+export const MAX_DEADLINE_SECONDS = 600;
+
+/**
  * Whether a value may be stored as the deadline: a positive whole number of
- * seconds, or false for "send none". false and not 0 or null, the same
- * convention as backupModel: false - a switch that is deliberately off, kept
- * apart from "never set".
+ * seconds up to MAX_DEADLINE_SECONDS, or false for "send none". false and not 0
+ * or null, the same convention as backupModel: false - a switch that is
+ * deliberately off, kept apart from "never set".
  */
 export function isValidDeadline(value) {
-  return value === false || (Number.isInteger(value) && value > 0);
+  return value === false || (Number.isInteger(value) && value > 0 && value <= MAX_DEADLINE_SECONDS);
 }
 
 /**
@@ -74,33 +84,50 @@ export function isValidDeadline(value) {
 export const THINKING_LEVELS = ["minimal", "low", "medium", "high"];
 
 // readConfig() runs four times per call - from getSavedModel(), from
-// getSavedThinkingLevel(), from getSavedBackup() and from getSavedDeadline().
-// Without this flag the same warning would stand there four times over and look
-// like four separate faults.
-let warned = false;
-// Same reason for the unusable deadline: getSavedDeadline() runs on every
-// search and after every write.
-let warnedDeadline = false;
+// getSavedThinkingLevel(), from getSavedBackup() and from getSavedDeadline() -
+// and every getter runs again after a write. Without remembering what was
+// already said, the same warning would stand there several times over and look
+// like several separate faults.
+const warned = new Set();
 
-function readConfig() {
+/**
+ * console.error and not console.log: the MCP server speaks JSON-RPC over
+ * stdout, where a single line breaks the connection to the client. stderr lands
+ * in the client's log and, on the command line, straight in front of the user.
+ */
+function warnOnce(key, message) {
+  if (warned.has(key)) return;
+  warned.add(key);
+  console.error(`Warning: ${message}`);
+}
+
+/**
+ * strict is for the write path: there an unreadable file must stop the write,
+ * because writing on top of the defaults would replace every stored value with
+ * the one just set.
+ */
+function readConfig({ strict = false } = {}) {
   try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+    const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+    // null would crash every getter, and an array swallows the write silently:
+    // JSON.stringify drops properties set on it.
+    if (typeof config !== "object" || config === null || Array.isArray(config)) {
+      throw new Error("not a JSON object");
+    }
+    return config;
   } catch (error) {
+    if (strict && error.code !== "ENOENT") {
+      throw new Error(
+        `${CONFIG_PATH} could not be read (${error.message}) - fix or delete it; nothing was saved.`,
+      );
+    }
     // The missing file is the normal case and no error: before the first stored
     // value it does not exist, and the defaults are exactly what is wanted then.
     // Everything else - broken JSON after an interrupted write, missing read
     // permissions - renders a stored setting ineffective, and without a word the
     // server would simply keep running on the defaults.
-    //
-    // console.error and not console.log: the MCP server speaks JSON-RPC over
-    // stdout, where a single line breaks the connection to the client. stderr
-    // lands in the client's log and, on the command line, straight in front of
-    // the user.
-    if (error.code !== "ENOENT" && !warned) {
-      warned = true;
-      console.error(
-        `Warning: ${CONFIG_PATH} could not be read (${error.message}) - using defaults.`,
-      );
+    if (error.code !== "ENOENT") {
+      warnOnce("file", `${CONFIG_PATH} could not be read (${error.message}) - using defaults.`);
     }
     return {};
   }
@@ -109,17 +136,39 @@ function readConfig() {
 /**
  * Reads the persistently stored default model.
  * Returns DEFAULT_MODEL when no or a broken config.json exists.
+ *
+ * Validated like the backup, because the file can be edited by hand: an empty
+ * model would go to the API on every search.
  */
 export function getSavedModel() {
-  return readConfig().model ?? DEFAULT_MODEL;
+  const { model } = readConfig();
+  if (model === undefined) return DEFAULT_MODEL;
+  if (typeof model === "string" && model.trim() !== "") return model;
+  warnOnce(
+    "model",
+    `model in ${CONFIG_PATH} must be a non-empty string, not ${JSON.stringify(model)} - ` +
+      `using ${DEFAULT_MODEL}.`,
+  );
+  return DEFAULT_MODEL;
 }
 
 /**
  * Reads the persistently stored default thinking level.
  * Returns DEFAULT_THINKING_LEVEL when no or a broken config.json exists.
+ *
+ * Validated because an unknown level comes back as a 400, which triggers the
+ * fallback - and the backup inherits the same unusable level.
  */
 export function getSavedThinkingLevel() {
-  return readConfig().thinkingLevel ?? DEFAULT_THINKING_LEVEL;
+  const { thinkingLevel } = readConfig();
+  if (thinkingLevel === undefined) return DEFAULT_THINKING_LEVEL;
+  if (THINKING_LEVELS.includes(thinkingLevel)) return thinkingLevel;
+  warnOnce(
+    "thinkingLevel",
+    `thinkingLevel in ${CONFIG_PATH} must be one of ${THINKING_LEVELS.join(", ")}, ` +
+      `not ${JSON.stringify(thinkingLevel)} - using ${DEFAULT_THINKING_LEVEL}.`,
+  );
+  return DEFAULT_THINKING_LEVEL;
 }
 
 /**
@@ -136,15 +185,21 @@ export function getSavedDeadline() {
   if (deadlineSeconds === undefined) return DEFAULT_DEADLINE_SECONDS;
   if (isValidDeadline(deadlineSeconds)) return deadlineSeconds;
 
-  // console.error for the same reason as in readConfig(): stdout carries
-  // JSON-RPC.
-  if (!warnedDeadline) {
-    warnedDeadline = true;
-    console.error(
-      `Warning: deadlineSeconds in ${CONFIG_PATH} must be a positive whole number or false, ` +
-        `not ${JSON.stringify(deadlineSeconds)} - using ${DEFAULT_DEADLINE_SECONDS}.`,
+  // The cap and not the default: whoever wrote 3600 wanted the longest deadline
+  // there is.
+  if (Number.isInteger(deadlineSeconds) && deadlineSeconds > MAX_DEADLINE_SECONDS) {
+    warnOnce(
+      "deadlineSeconds",
+      `deadlineSeconds in ${CONFIG_PATH} is ${deadlineSeconds}, but Google ends a request ` +
+        `after ${MAX_DEADLINE_SECONDS} s anyway - using ${MAX_DEADLINE_SECONDS}.`,
     );
+    return MAX_DEADLINE_SECONDS;
   }
+  warnOnce(
+    "deadlineSeconds",
+    `deadlineSeconds in ${CONFIG_PATH} must be a whole number from 1 to ${MAX_DEADLINE_SECONDS} or false, ` +
+      `not ${JSON.stringify(deadlineSeconds)} - using ${DEFAULT_DEADLINE_SECONDS}.`,
+  );
   return DEFAULT_DEADLINE_SECONDS;
 }
 
@@ -316,7 +371,7 @@ export function setSavedConfig({
     backupThinkingLevel = null;
   }
 
-  const config = readConfig();
+  const config = readConfig({ strict: true });
   const apply = (key, value) => {
     if (value === undefined) return;
     if (value === null) delete config[key];

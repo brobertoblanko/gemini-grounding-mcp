@@ -3,7 +3,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -92,3 +93,61 @@ for (const [revision, mode] of REVISIONS) {
     }
   });
 }
+
+test("gemini-set-config refuses to overwrite an unreadable config.json", async () => {
+  // Nobody sees the warning on stderr behind an MCP client, so the refusal has
+  // to arrive as the tool's answer.
+  const configHome = freshConfigHome();
+  const file = configFile(configHome);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, '{ "model": "gemini-x", }');
+  const client = await connect("auto", configHome);
+  try {
+    const result = await client.callTool({
+      name: "gemini-set-config",
+      arguments: { thinkingLevel: "high" },
+    });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /^Error in gemini-set-config: could not save - .*nothing was saved/);
+    assert.equal(readFileSync(file, "utf8"), '{ "model": "gemini-x", }');
+  } finally {
+    await client.close();
+  }
+});
+
+test("rejects empty strings for query, model and backupModel", async () => {
+  // An empty query costs a billed request for nothing, and an empty model is
+  // saved and sent to the API on every search after it.
+  const configHome = freshConfigHome();
+  const client = await connect("auto", configHome);
+  try {
+    const calls = [
+      ["gemini-search", { query: "   " }],
+      ["gemini-search", { query: "x", model: "" }],
+      ["gemini-set-config", { model: " " }],
+      ["gemini-set-config", { backupModel: "" }],
+    ];
+    for (const [name, args] of calls) {
+      const result = await client.callTool({ name, arguments: args });
+      assert.equal(result.isError, true, `${name} ${JSON.stringify(args)}`);
+    }
+    assert.throws(() => readFileSync(configFile(configHome)), { code: "ENOENT" });
+  } finally {
+    await client.close();
+  }
+});
+
+test("gemini-set-config rejects a deadline above 600 s", async () => {
+  const configHome = freshConfigHome();
+  const client = await connect("auto", configHome);
+  try {
+    const result = await client.callTool({
+      name: "gemini-set-config",
+      arguments: { deadlineSeconds: 601 },
+    });
+    assert.equal(result.isError, true);
+    assert.throws(() => readFileSync(configFile(configHome)), { code: "ENOENT" });
+  } finally {
+    await client.close();
+  }
+});

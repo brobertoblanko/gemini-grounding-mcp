@@ -404,7 +404,9 @@ Whether and when that happens is an open question - so far only the favourable c
   syntactically valid, factually wrong, and inconspicuous. Fenced blocks and
   inline code are determined as intervals in a single pass (the fences come
   first in the alternation and therefore swallow everything inside them); if the
-  target position falls into one, the marker is discarded. Indented code blocks
+  target position falls into one, the marker is discarded. A fence that is
+  never closed runs to the end of the text, as in CommonMark - an answer cut
+  off by `MAX_TOKENS` often ends inside a block. Indented code blocks
   (four spaces) are not detected - the only known gap.
 - **Numbers via `chunkNumbers`, never via `index + 1`.** See "Building the
   source list" below.
@@ -943,6 +945,7 @@ Instead, the platform's conventional location for user state, resolved in this o
 3. Otherwise `~/.config`.
 
 With `gemini-grounding-mcp/config.json` underneath, in each case.
+An empty or relative `XDG_CONFIG_HOME` or `%APPDATA%` counts as unset, as the XDG Base Directory Specification demands: taken as it is, the file would move with the working directory, and every place the MCP server is started from would get its own configuration.
 
 macOS is deliberately treated like Linux, even though the Apple standard would be `~/Library/Application Support/`: this is a terminal tool, and in the terminal nobody goes looking in a folder that Finder hides.
 A separate `darwin` branch is explicitly not built in.
@@ -1000,9 +1003,19 @@ Actually implemented (including `setSavedConfig` and `getSavedBackup`) in `confi
 Before the first stored value there is no file, and the defaults are exactly what is wanted then.
 Everything else - broken JSON after an interrupted write, missing read permissions - renders a stored setting ineffective, and without a word the server would simply keep running on the defaults while the setting had silently vanished.
 Such a case therefore produces one warning naming the path and the original message.
+A file that parses but holds no JSON object - `null`, an array, a number - counts as unreadable too: `null` would crash every getter, and an array swallows a write silently, because `JSON.stringify` drops properties set on it.
 
-It goes to **stderr**, never to stdout: the MCP server speaks JSON-RPC over stdout, where a single stray line breaks the connection to the client.
-A module-level flag limits it to one occurrence, because `readConfig()` runs four times per call - once for the model, once for the thinking level, once for the backup, once for the deadline. Without the flag the same warning would stand there four times over and look like four separate faults.
+Writing is stricter than reading.
+`setSavedConfig()` refuses with an error when the file exists but cannot be read, and nothing is saved.
+Writing on top of the defaults would replace every stored value with the single one just set - from a hand-edited file with one surplus comma, model, backup and deadline would be gone.
+Behind an MCP client nobody sees the warning on stderr, so the refusal arrives as the tool's error answer.
+
+The warning goes to **stderr**, never to stdout: the MCP server speaks JSON-RPC over stdout, where a single stray line breaks the connection to the client.
+A module-level set of the warnings already given limits each to one occurrence, because `readConfig()` runs four times per call - once for the model, once for the thinking level, once for the backup, once for the deadline. Without it the same warning would stand there four times over and look like four separate faults.
+
+A readable file can still hold unusable values, and each one is checked on reading: the default model has to be a non-empty string, the default thinking level one of `THINKING_LEVELS`, and backup and deadline have their own checks.
+An unusable value warns once and is replaced by its default.
+An unknown level would otherwise come back as a 400, trigger the fallback, and hand the same unusable level on to the backup.
 
 ## MCP interface
 
@@ -1154,11 +1167,13 @@ export const DEFAULT_DEADLINE_SECONDS = 300; // config.js
 Google honours the header as an execution deadline and does abort the generation server-side; the value goes out in whole seconds.
 Up to `@google/genai` 2.28 the value was 290 s, just below Node's limit; with that limit gone, there is nothing left to stay under, and the round number applies.
 
-**Configurable.** `deadlineSeconds` in `config.json` holds a positive whole number of seconds, or `false` for no header at all - Google's own limit applies then.
+**Configurable.** `deadlineSeconds` in `config.json` holds a whole number of seconds from 1 to `MAX_DEADLINE_SECONDS` (600), or `false` for no header at all - Google's own limit applies then.
 It is set via `gemini-set-config` or `gemini-grounding set-deadline <seconds|off>`, and `false` is stored rather than deleted for the same reason as `backupModel: false`: deleting would bring back the default, the opposite of "off".
 There is deliberately no per-call parameter: a call that could raise the deadline turns a `504` into an invitation to retry longer, and the deadline is an operating setting rather than part of a question.
 For the same reason the tool description and the server instructions tell an agent to report a `504` instead of raising the deadline on its own.
 An unusable value in a hand-edited file produces one warning on stderr and the default applies - unlike an unknown model, which comes back from the API as an error, a deadline nobody applies would show nowhere.
+The cap is Google's own limit for a unary request: above it the value promises a limit that does not exist, while the local brake would only fire after it and the MCP client gives up after 1800 s.
+A hand-edited whole number above 600 therefore warns and is read as 600, not as the default - whoever wrote 3600 wanted the longest deadline there is.
 
 **The local brake.** Without Node's limit, a request that runs into nothing - a silent line, no answer, no error - waited until the MCP client gave up after 1800 s.
 `generate()` therefore arms an `AbortController` at the deadline plus `LOCAL_BRAKE_MARGIN_SECONDS` (30 s) and passes its signal as `config.abortSignal`.

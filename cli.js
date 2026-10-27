@@ -16,6 +16,7 @@ import {
   formatConfigState,
   formatSavedValues,
   isValidDeadline,
+  MAX_DEADLINE_SECONDS,
   resolveCallConfig,
   setSavedConfig,
   THINKING_LEVELS,
@@ -101,6 +102,14 @@ function requireThinkingLevel(value, origin) {
   return value;
 }
 
+// An empty id - from an unset shell variable, say - would be saved and sent to
+// the API on every search after it. Trimmed like the MCP schema does.
+function requireModelId(value, origin) {
+  const id = value.trim();
+  if (id === "") fail(`The model id for ${origin} is empty.`);
+  return id;
+}
+
 /**
  * Takes "--name <value>" out of the argument list and REMOVES both from it.
  * That makes the position of the flags arbitrary and leaves a remainder that is
@@ -158,7 +167,8 @@ async function main() {
 
   // First, so that it is known whatever goes wrong after it.
   debug = takeSwitch(args, "debug");
-  const modelFlag = takeFlag(args, "model");
+  const rawModel = takeFlag(args, "model");
+  const modelFlag = rawModel === undefined ? undefined : requireModelId(rawModel, "--model");
   const thinkingFlag = takeFlag(args, "thinking");
   const allFlag = takeSwitch(args, "all");
   if (thinkingFlag !== undefined) requireThinkingLevel(thinkingFlag, "--thinking");
@@ -268,7 +278,7 @@ async function main() {
           "Usage: gemini-grounding set-model <id> [--thinking <level>]",
         );
       }
-      saveAndReport({ model: rest[0], thinkingLevel: thinkingFlag });
+      saveAndReport({ model: requireModelId(rest[0], "set-model"), thinkingLevel: thinkingFlag });
       break;
     }
 
@@ -314,7 +324,7 @@ async function main() {
       // "deliberately switched off" stays in the file. A --thinking alongside is
       // caught by saveAndReport as well - a switched-off backup has no level, and
       // the option does not expire silently.
-      const backupModel = rest[0] === "off" ? false : rest[0];
+      const backupModel = rest[0] === "off" ? false : requireModelId(rest[0], "set-backup");
       saveAndReport({ backupModel, backupThinkingLevel: thinkingFlag });
       break;
     }
@@ -334,7 +344,10 @@ async function main() {
       if (rest[0] === "off") deadlineSeconds = false;
       else if (/^\d+$/.test(rest[0])) deadlineSeconds = Number(rest[0]);
       if (!isValidDeadline(deadlineSeconds)) {
-        fail(`Invalid deadline "${rest[0]}" - a positive whole number of seconds, or "off".`);
+        fail(
+          `Invalid deadline "${rest[0]}" - a whole number of seconds from 1 to ` +
+            `${MAX_DEADLINE_SECONDS} (Google's own limit), or "off".`,
+        );
       }
       saveAndReport({ deadlineSeconds });
       break;

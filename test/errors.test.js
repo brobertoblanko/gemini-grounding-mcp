@@ -76,7 +76,7 @@ test("leaves everything that is no API error to describeError", () => {
   assert.equal(formatRuntimeError(network), describeError(network));
 
   // A status without a JSON body, and a plain Error carrying one inside its
-  // text, as runSearch throws when both models fail.
+  // text.
   const noBody = Object.assign(new Error("Bad Gateway"), { status: 502 });
   assert.equal(formatRuntimeError(noBody), "Bad Gateway");
   const both = new Error('gemini-x: {"error":{}} | backup gemini-y: {"error":{}}');

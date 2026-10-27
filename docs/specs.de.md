@@ -480,7 +480,10 @@ Regel angenommen.
   syntaktisch gültig, inhaltlich falsch, und unauffällig. Umzäunte Blöcke und
   Inline-Code werden in einem Durchlauf als Intervalle bestimmt (die Zäune
   stehen in der Alternation vorn und schlucken damit alles, was in ihnen steht);
-  fällt die Zielposition hinein, wird der Marker verworfen. Nicht erkannt werden eingerückte Codeblöcke (vier Leerzeichen) -
+  fällt die Zielposition hinein, wird der Marker verworfen. Ein Zaun, der nie
+  geschlossen wird, reicht bis zum Ende des Textes, wie in CommonMark - eine
+  durch `MAX_TOKENS` abgeschnittene Antwort endet oft mitten in einem Block.
+  Nicht erkannt werden eingerückte Codeblöcke (vier Leerzeichen) -
   die einzige bekannte Lücke.
 - **Nummern über `chunkNumbers`, nie über `index + 1`.** Siehe „Quellenliste
   erzeugen" unten.
@@ -1170,6 +1173,7 @@ Reihenfolge:
 3. Sonst `~/.config`.
 
 Darunter jeweils `gemini-grounding-mcp/config.json`.
+Ein leeres oder relatives `XDG_CONFIG_HOME` oder `%APPDATA%` gilt als nicht gesetzt, wie es die XDG Base Directory Specification verlangt: So übernommen, würde die Datei mit dem Arbeitsverzeichnis wandern, und jeder Ort, von dem aus der MCP-Server startet, bekäme seine eigene Konfiguration.
 
 macOS wird bewusst wie Linux behandelt, obwohl der Apple-Standard
 `~/Library/Application Support/` wäre: Dies ist ein Terminal-Werkzeug, und im
@@ -1247,9 +1251,19 @@ Tatsächlich implementiert (inkl. `setSavedConfig` und `getSavedBackup`) in `con
 Vor dem ersten gespeicherten Wert gibt es keine Datei, und die Standardwerte sind dann genau das Gewollte.
 Alles andere - kaputtes JSON nach einem abgebrochenen Schreibvorgang, fehlende Leserechte - macht eine gespeicherte Einstellung wirkungslos, und ohne ein Wort liefe der Server einfach mit den Standardwerten weiter, während die Einstellung stillschweigend verschwunden wäre.
 Ein solcher Fall erzeugt deshalb eine Warnung, die den Pfad und die Originalmeldung nennt.
+Eine Datei, die sich parsen lässt, aber kein JSON-Objekt enthält - `null`, ein Array, eine Zahl -, gilt ebenfalls als unlesbar: `null` würde jeden Getter abstürzen lassen, und ein Array schluckt einen Schreibvorgang stillschweigend, weil `JSON.stringify` daran gesetzte Eigenschaften verwirft.
 
-Sie geht nach **stderr**, nie nach stdout: Der MCP-Server spricht über stdout JSON-RPC, wo eine einzelne verirrte Zeile die Verbindung zum Client zerstört.
-Ein Flag auf Modulebene begrenzt sie auf ein Vorkommen, denn `readConfig()` läuft pro Aufruf viermal - einmal für das Modell, einmal für das Thinking-Level, einmal für das Backup, einmal für die Frist. Ohne das Flag stünde dieselbe Warnung viermal da und sähe nach vier Fehlern aus.
+Das Schreiben ist strenger als das Lesen.
+`setSavedConfig()` verweigert mit einem Fehler, wenn die Datei existiert, aber nicht lesbar ist, und speichert nichts.
+Auf die Standardwerte zu schreiben würde jeden gespeicherten Wert durch den einen gerade gesetzten ersetzen - aus einer von Hand bearbeiteten Datei mit einem überzähligen Komma wären Modell, Backup und Frist verschwunden.
+Hinter einem MCP-Client sieht niemand die Warnung auf stderr, deshalb kommt die Verweigerung als Fehlerantwort des Tools an.
+
+Die Warnung geht nach **stderr**, nie nach stdout: Der MCP-Server spricht über stdout JSON-RPC, wo eine einzelne verirrte Zeile die Verbindung zum Client zerstört.
+Eine Menge der schon ausgegebenen Warnungen auf Modulebene begrenzt jede auf ein Vorkommen, denn `readConfig()` läuft pro Aufruf viermal - einmal für das Modell, einmal für das Thinking-Level, einmal für das Backup, einmal für die Frist. Ohne sie stünde dieselbe Warnung viermal da und sähe nach vier Fehlern aus.
+
+Auch eine lesbare Datei kann unbrauchbare Werte enthalten, und jeder wird beim Lesen geprüft: Das Standardmodell muss ein nicht leerer String sein, das Standard-Thinking-Level eines aus `THINKING_LEVELS`, und Backup und Frist haben ihre eigenen Prüfungen.
+Ein unbrauchbarer Wert warnt einmal und wird durch seinen Standard ersetzt.
+Ein unbekanntes Level käme sonst als 400 zurück, löste den Fallback aus und gäbe dasselbe unbrauchbare Level an das Backup weiter.
 
 ## MCP-Schnittstelle
 
@@ -1401,11 +1415,13 @@ export const DEFAULT_DEADLINE_SECONDS = 300; // config.js
 Google übernimmt den Header als Ausführungsfrist und bricht die Generierung tatsächlich serverseitig ab; der Wert geht in ganzen Sekunden hinaus.
 Bis `@google/genai` 2.28 lag der Wert bei 290 s, knapp unter Nodes Grenze; seit diese Grenze weg ist, gibt es nichts mehr zu unterbieten, und es gilt die runde Zahl.
 
-**Einstellbar.** `deadlineSeconds` in der `config.json` enthält eine positive ganze Zahl von Sekunden oder `false` für gar keinen Header - dann gilt Googles eigene Grenze.
+**Einstellbar.** `deadlineSeconds` in der `config.json` enthält eine ganze Zahl von Sekunden von 1 bis `MAX_DEADLINE_SECONDS` (600) oder `false` für gar keinen Header - dann gilt Googles eigene Grenze.
 Gesetzt wird sie über `gemini-set-config` oder `gemini-grounding set-deadline <seconds|off>`, und `false` wird aus demselben Grund gespeichert statt gelöscht wie bei `backupModel: false`: Löschen brächte den Standard zurück, das Gegenteil von „aus".
 Einen Parameter pro Aufruf gibt es bewusst nicht: Ein Aufruf, der die Frist anheben kann, macht aus einem `504` eine Einladung, es länger zu versuchen, und die Frist ist eine Betriebseinstellung, kein Teil einer Frage.
 Aus demselben Grund sagen Tool-Beschreibung und Server-Instructions einem Agenten, einen `504` zu melden, statt die Frist eigenständig anzuheben.
 Ein unbrauchbarer Wert in einer von Hand bearbeiteten Datei erzeugt eine Warnung auf stderr, und es gilt der Standard - anders als ein unbekanntes Modell, das von der API als Fehler zurückkommt, zeigte sich eine Frist, die niemand anwendet, nirgends.
+Die Obergrenze ist Googles eigene Grenze für eine unäre Anfrage: Darüber verspricht der Wert eine Grenze, die es nicht gibt, während die lokale Notbremse erst danach greifen würde und der MCP-Client nach 1800 s aufgibt.
+Eine von Hand eingetragene ganze Zahl über 600 warnt deshalb und gilt als 600, nicht als Standard - wer 3600 schreibt, wollte die längste Frist, die es gibt.
 
 **Die lokale Notbremse.** Ohne Nodes Grenze wartete eine Anfrage, die ins Leere läuft - stille Leitung, keine Antwort, kein Fehler -, bis der MCP-Client nach 1800 s aufgab.
 `generate()` setzt deshalb einen `AbortController` auf Frist plus `LOCAL_BRAKE_MARGIN_SECONDS` (30 s) und übergibt sein Signal als `config.abortSignal`.

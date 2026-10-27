@@ -15,6 +15,7 @@ import {
   findModelCollision,
   formatConfigState,
   formatSavedValues,
+  MAX_DEADLINE_SECONDS,
   resolveCallConfig,
   setSavedConfig,
   THINKING_LEVELS,
@@ -73,9 +74,13 @@ function createServer() {
         "can be changed anytime via gemini-set-config. " +
         "The response includes a source list and a token-usage footer.",
       inputSchema: z.object({
-        query: z.string().describe("The search or research query"),
+        // trim().min(1) on every string: an empty query costs a billed request for
+        // nothing, and an empty model is saved and sent on every search after it.
+        query: z.string().trim().min(1).describe("The search or research query"),
         model: z
           .string()
+          .trim()
+          .min(1)
           .optional()
           .describe(
             "Gemini model, e.g. gemini-flash-latest. Omit to use the saved " +
@@ -170,13 +175,15 @@ function createServer() {
       inputSchema: z.object({
         model: z
           .string()
+          .trim()
+          .min(1)
           .optional()
           .describe(
             "Model ID, e.g. gemini-flash-latest or a pinned model like gemini-3.5-flash",
           ),
         thinkingLevel: z.enum(THINKING_LEVELS).optional().describe("Model reasoning depth"),
         backupModel: z
-          .union([z.string(), z.literal(false)])
+          .union([z.string().trim().min(1), z.literal(false)])
           .optional()
           .describe(
             "Model to retry the same request with when the default model fails, e.g. " +
@@ -194,10 +201,10 @@ function createServer() {
               "backup already saved, leaving the model as it is.",
           ),
         deadlineSeconds: z
-          .union([z.number().int().positive(), z.literal(false)])
+          .union([z.number().int().positive().max(MAX_DEADLINE_SECONDS), z.literal(false)])
           .optional()
           .describe(
-            "Seconds after which Google aborts a search (504) - 300 unless set. Pass " +
+            `Seconds after which Google aborts a search (504) - 300 unless set, at most ${MAX_DEADLINE_SECONDS}. Pass ` +
               "false to send no deadline, so Google's own limit applies. Never raise it " +
               "on your own after a search hit the deadline: report the error instead.",
           ),
@@ -249,8 +256,9 @@ function createServer() {
 
       // Write errors are a real possibility here - the target directory is created
       // on saving and can be unwritable depending on permissions or a relocated
-      // %APPDATA%. Without catch the error would run out of the handler uncaught;
-      // with it, it arrives as a clean isError response naming the path.
+      // %APPDATA%, and an unreadable existing file refuses the write. Without catch
+      // the error would run out of the handler uncaught; with it, it arrives as a
+      // clean isError response. Both messages name the path themselves.
       let saved;
       try {
         // setSavedConfig returns what was actually written, which matters for the
@@ -268,7 +276,7 @@ function createServer() {
           content: [
             {
               type: "text",
-              text: `Error in gemini-set-config: could not write ${CONFIG_PATH} - ${error.message}`,
+              text: `Error in gemini-set-config: could not save - ${error.message}`,
             },
           ],
           isError: true,

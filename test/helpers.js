@@ -4,7 +4,7 @@
 // reported this file like a test case.
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,9 +49,18 @@ export function mockFetch(...responses) {
   return calls;
 }
 
+// node --test runs every test file in a process of its own, so this removes
+// each file's directories once it is done.
+const createdHomes = [];
+process.on("exit", () => {
+  for (const dir of createdHomes) rmSync(dir, { recursive: true, force: true });
+});
+
 /** A fresh, empty directory to serve as XDG_CONFIG_HOME for one case. */
 export function freshConfigHome() {
-  return mkdtempSync(path.join(tmpdir(), "gemini-grounding-test-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "gemini-grounding-test-"));
+  createdHomes.push(dir);
+  return dir;
 }
 
 /** Where config.js creates its file below a given XDG_CONFIG_HOME. */
@@ -64,20 +73,26 @@ export function configFile(configHome) {
  * stderr.
  *
  * The separate process is required, not a convenience: config.js fixes its path
- * once at import time, and so does the flag that limits the warning about an
- * unreadable file to a single occurrence. Every case therefore needs a fresh
+ * once at import time, and so does the set that limits every warning about the
+ * file to a single occurrence. Every case therefore needs a fresh
  * process.
  *
  * XDG_CONFIG_HOME points at a temp directory; without that isolation every set
  * case would write into this machine's real configuration. The API key is
  * replaced by a placeholder so that no case can reach the API by accident;
  * apiKey: null removes the variable instead, for the cases about a missing key.
+ * env overrides any of these last.
  */
 export function runCli(
   args,
-  { configHome = freshConfigHome(), apiKey = "test-key-never-sent" } = {},
+  { configHome = freshConfigHome(), apiKey = "test-key-never-sent", env: extraEnv = {} } = {},
 ) {
-  const env = { ...process.env, XDG_CONFIG_HOME: configHome, GEMINI_API_KEY: apiKey };
+  const env = {
+    ...process.env,
+    XDG_CONFIG_HOME: configHome,
+    GEMINI_API_KEY: apiKey,
+    ...extraEnv,
+  };
   // Deleting and not setting to "": spawnSync turns every value into a string,
   // so null would reach the CLI as the four characters "null" and pass the check.
   if (apiKey === null) delete env.GEMINI_API_KEY;

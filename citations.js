@@ -35,6 +35,8 @@
  * One pass, left to right: the fenced blocks come first in the alternation, so
  * a fence swallows everything inside it, including single backticks that would
  * otherwise read as inline code. No second scan with an overlap check needed.
+ * A fence that is never closed runs to the end of the text, as in CommonMark:
+ * an answer cut off by MAX_TOKENS often ends inside a block.
  *
  * Counting the backticks before the target position and discarding on an odd
  * count was rejected: one unpaired backtick tips that count for the whole
@@ -49,7 +51,9 @@
 function findCodeRanges(text) {
   const toByte = (charIndex) => Buffer.byteLength(text.slice(0, charIndex), "utf8");
 
-  return [...text.matchAll(/```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`/g)].map((match) => [
+  // Without the m flag, $ is the end of the text.
+  const pattern = /```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]+`/g;
+  return [...text.matchAll(pattern)].map((match) => [
     toByte(match.index),
     toByte(match.index + match[0].length),
   ]);
