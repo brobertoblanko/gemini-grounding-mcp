@@ -298,7 +298,7 @@ function merge(pr) {
       return true;
     }
     error = result.stderr.trim();
-    sleep(15_000);
+    if (attempt < 3) sleep(15_000);
   }
   log(`- GitHub refused to merge ${title(pr)}, stopping: ${error}`);
   return false;

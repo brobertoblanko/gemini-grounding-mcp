@@ -942,7 +942,7 @@ When the list cannot be fetched - offline, no key - there is no warning at all, 
 The text names no command, because both interfaces share it.
 
 `gemini-grounding doctor` runs the same check on the saved models, next to the Node version, the readability of `config.json` and a `models.list` call that proves the key is accepted rather than only set.
-Its config line comes from `configProblems()` in `config.js`, which collects the warnings of the very getters a search runs, so `doctor` cannot disagree with what a search actually does.
+Its config line comes from `configProblems()` in `config.js`, which collects the warnings of the very `loadConfig()` a search runs, so `doctor` cannot disagree with what a search actually does.
 
 ### Configuration file location
 
@@ -993,13 +993,14 @@ Resolution deliberately happens **at call time** rather than as a Zod `.default(
 
 ```javascript
 export function resolveCallConfig({ model, thinkingLevel } = {}) {
-  const backup = model === undefined ? getSavedBackup() : {};
+  const saved = loadConfig(); // reads config.json once per call
+  const backup = model === undefined ? saved.backup : {};
   return {
-    model: model ?? getSavedModel(), // "gemini-flash-latest" without config.json
-    thinkingLevel: thinkingLevel ?? getSavedThinkingLevel(), // "medium" without config.json
+    model: model ?? saved.model, // "gemini-flash-latest" without config.json
+    thinkingLevel: thinkingLevel ?? saved.thinkingLevel, // "medium" without config.json
     backupModel: backup.model,
     backupThinkingLevel: backup.thinkingLevel,
-    deadlineSeconds: getSavedDeadline(), // 300 without config.json, no per-call override
+    deadlineSeconds: saved.deadlineSeconds, // 300 without config.json, no per-call override
   };
 }
 ```
@@ -1015,21 +1016,23 @@ An explicit `thinkingLevel` does not affect the fallback, because the model then
 The rule lives in this one function rather than in `runSearch`, which is what keeps `gemini.js` free of any notion of it: there, a backup is used if one was passed, and that is all.
 As a pure function without network access, `resolveCallConfig` is also the only place where the rule can be tested at all (`test/resolve.test.js`) - through the CLI it would take a real API call to observe.
 
-Actually implemented (including `setSavedConfig` and `getSavedBackup`) in `config.js` - see "Implementation" above.
+Actually implemented (including `setSavedConfig` and `loadConfig`) in `config.js` - see "Implementation" above.
 
 `readConfig()` falls back to the defaults for **any** unreadable file, but it only stays silent about the missing one.
 Before the first stored value there is no file, and the defaults are exactly what is wanted then.
 Everything else - broken JSON after an interrupted write, missing read permissions - renders a stored setting ineffective, and without a word the server would simply keep running on the defaults while the setting had silently vanished.
 Such a case therefore produces one warning naming the path and the original message.
-A file that parses but holds no JSON object - `null`, an array, a number - counts as unreadable too: `null` would crash every getter, and an array swallows a write silently, because `JSON.stringify` drops properties set on it.
+A file that parses but holds no JSON object - `null`, an array, a number - counts as unreadable too: `null` would crash `loadConfig()`, and an array swallows a write silently, because `JSON.stringify` drops properties set on it.
 
 Writing is stricter than reading.
 `setSavedConfig()` refuses with an error when the file exists but cannot be read, and nothing is saved.
 Writing on top of the defaults would replace every stored value with the single one just set - from a hand-edited file with one surplus comma, model, backup and deadline would be gone.
 Behind an MCP client nobody sees the warning on stderr, so the refusal arrives as the tool's error answer.
+The write itself goes to a temporary file beside `config.json` and is then renamed over it, so an interrupted write leaves the old file intact instead of half a new one.
 
 The warning goes to **stderr**, never to stdout: the MCP server speaks JSON-RPC over stdout, where a single stray line breaks the connection to the client.
-A module-level set of the warnings already given limits each to one occurrence, because `readConfig()` runs four times per call - once for the model, once for the thinking level, once for the backup, once for the deadline. Without it the same warning would stand there four times over and look like four separate faults.
+`loadConfig()` reads the file once and validates every value in one go, so a single call cannot mix values from before and after a write.
+A module-level set of the warnings already given limits each to one occurrence per process, because the MCP server reads the file again on every call: without it every search would repeat the same warning in the client's log.
 
 A readable file can still hold unusable values, and each one is checked on reading: the default model has to be a non-empty string, the default thinking level one of `THINKING_LEVELS`, and backup and deadline have their own checks.
 An unusable value warns once and is replaced by its default.

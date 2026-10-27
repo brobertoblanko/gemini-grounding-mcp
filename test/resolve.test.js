@@ -20,7 +20,7 @@ process.env.XDG_CONFIG_HOME = CONFIG_HOME;
 
 const {
   resolveCallConfig,
-  getSavedBackup,
+  loadConfig,
   setSavedConfig,
   findModelCollision,
   findBackupLevelProblem,
@@ -90,7 +90,7 @@ test("returns no backup when it is explicitly switched off", () => {
   assert.equal(resolveCallConfig({}).backupModel, undefined);
   // For the behavior "switched off" equals "never set", for the output of
   // "config" it does not, so the difference stays readable.
-  assert.deepEqual(getSavedBackup(), {
+  assert.deepEqual(loadConfig().backup, {
     model: undefined,
     thinkingLevel: "low",
     disabled: true,
@@ -131,7 +131,7 @@ test("changes only the level when no backup model comes along", () => {
   setSavedConfig({ backupModel: "gemini-old", backupThinkingLevel: "high" });
   setSavedConfig({ backupThinkingLevel: "minimal" });
 
-  assert.deepEqual(getSavedBackup(), {
+  assert.deepEqual(loadConfig().backup, {
     model: "gemini-old",
     thinkingLevel: "minimal",
     disabled: false,

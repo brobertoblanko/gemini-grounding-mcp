@@ -1168,7 +1168,7 @@ Lässt sich die Liste nicht abrufen - offline, kein Key -, gibt es gar keine War
 Der Text nennt keinen Befehl, weil beide Schnittstellen ihn teilen.
 
 `gemini-grounding doctor` führt dieselbe Prüfung für die gespeicherten Modelle aus, neben der Node-Version, der Lesbarkeit der `config.json` und einem Aufruf von `models.list`, der zeigt, dass der Key angenommen wird und nicht nur gesetzt ist.
-Seine Config-Zeile kommt aus `configProblems()` in `config.js`, das die Warnungen genau der Getter sammelt, die auch eine Suche durchläuft, sodass `doctor` nicht anderer Meinung sein kann als eine Suche.
+Seine Config-Zeile kommt aus `configProblems()` in `config.js`, das die Warnungen genau des `loadConfig()` sammelt, das auch eine Suche durchläuft, sodass `doctor` nicht anderer Meinung sein kann als eine Suche.
 
 ### Speicherort der Konfiguration
 
@@ -1242,13 +1242,14 @@ würde. `model` und `thinkingLevel` sind im Schema deshalb `optional()`.
 
 ```javascript
 export function resolveCallConfig({ model, thinkingLevel } = {}) {
-  const backup = model === undefined ? getSavedBackup() : {};
+  const saved = loadConfig(); // liest config.json einmal pro Aufruf
+  const backup = model === undefined ? saved.backup : {};
   return {
-    model: model ?? getSavedModel(), // "gemini-flash-latest" ohne config.json
-    thinkingLevel: thinkingLevel ?? getSavedThinkingLevel(), // "medium" ohne config.json
+    model: model ?? saved.model, // "gemini-flash-latest" ohne config.json
+    thinkingLevel: thinkingLevel ?? saved.thinkingLevel, // "medium" ohne config.json
     backupModel: backup.model,
     backupThinkingLevel: backup.thinkingLevel,
-    deadlineSeconds: getSavedDeadline(), // 300 ohne config.json, kein Wert pro Aufruf
+    deadlineSeconds: saved.deadlineSeconds, // 300 ohne config.json, kein Wert pro Aufruf
   };
 }
 ```
@@ -1264,21 +1265,23 @@ Ein ausdrückliches `thinkingLevel` berührt den Fallback nicht, weil das Modell
 Die Regel steht in dieser einen Funktion und nicht in `runSearch` - genau das hält `gemini.js` frei von ihr: Dort wird ein Backup genutzt, wenn eines übergeben wurde, und das ist alles.
 Als reine Funktion ohne Netzwerkzugriff ist `resolveCallConfig` zugleich der einzige Ort, an dem sich die Regel überhaupt prüfen lässt (`test/resolve.test.js`) - über die CLI bräuchte es dafür einen echten API-Aufruf.
 
-Tatsächlich implementiert (inkl. `setSavedConfig` und `getSavedBackup`) in `config.js` - siehe „Implementierung" oben.
+Tatsächlich implementiert (inkl. `setSavedConfig` und `loadConfig`) in `config.js` - siehe „Implementierung" oben.
 
 `readConfig()` fällt bei **jeder** unlesbaren Datei auf die Standardwerte zurück, schweigt aber nur über die fehlende.
 Vor dem ersten gespeicherten Wert gibt es keine Datei, und die Standardwerte sind dann genau das Gewollte.
 Alles andere - kaputtes JSON nach einem abgebrochenen Schreibvorgang, fehlende Leserechte - macht eine gespeicherte Einstellung wirkungslos, und ohne ein Wort liefe der Server einfach mit den Standardwerten weiter, während die Einstellung stillschweigend verschwunden wäre.
 Ein solcher Fall erzeugt deshalb eine Warnung, die den Pfad und die Originalmeldung nennt.
-Eine Datei, die sich parsen lässt, aber kein JSON-Objekt enthält - `null`, ein Array, eine Zahl -, gilt ebenfalls als unlesbar: `null` würde jeden Getter abstürzen lassen, und ein Array schluckt einen Schreibvorgang stillschweigend, weil `JSON.stringify` daran gesetzte Eigenschaften verwirft.
+Eine Datei, die sich parsen lässt, aber kein JSON-Objekt enthält - `null`, ein Array, eine Zahl -, gilt ebenfalls als unlesbar: `null` würde `loadConfig()` abstürzen lassen, und ein Array schluckt einen Schreibvorgang stillschweigend, weil `JSON.stringify` daran gesetzte Eigenschaften verwirft.
 
 Das Schreiben ist strenger als das Lesen.
 `setSavedConfig()` verweigert mit einem Fehler, wenn die Datei existiert, aber nicht lesbar ist, und speichert nichts.
 Auf die Standardwerte zu schreiben würde jeden gespeicherten Wert durch den einen gerade gesetzten ersetzen - aus einer von Hand bearbeiteten Datei mit einem überzähligen Komma wären Modell, Backup und Frist verschwunden.
 Hinter einem MCP-Client sieht niemand die Warnung auf stderr, deshalb kommt die Verweigerung als Fehlerantwort des Tools an.
+Geschrieben wird in eine temporäre Datei neben `config.json`, die danach über sie umbenannt wird, sodass ein abgebrochener Schreibvorgang die alte Datei unversehrt lässt statt einer halben neuen.
 
 Die Warnung geht nach **stderr**, nie nach stdout: Der MCP-Server spricht über stdout JSON-RPC, wo eine einzelne verirrte Zeile die Verbindung zum Client zerstört.
-Eine Menge der schon ausgegebenen Warnungen auf Modulebene begrenzt jede auf ein Vorkommen, denn `readConfig()` läuft pro Aufruf viermal - einmal für das Modell, einmal für das Thinking-Level, einmal für das Backup, einmal für die Frist. Ohne sie stünde dieselbe Warnung viermal da und sähe nach vier Fehlern aus.
+`loadConfig()` liest die Datei einmal und prüft alle Werte in einem Durchgang, sodass ein einzelner Aufruf keine Werte von vor und nach einem Schreibvorgang mischen kann.
+Eine Menge der schon ausgegebenen Warnungen auf Modulebene begrenzt jede auf ein Vorkommen pro Prozess, denn der MCP-Server liest die Datei bei jedem Aufruf erneut: Ohne sie wiederholte jede Suche dieselbe Warnung im Log des Clients.
 
 Auch eine lesbare Datei kann unbrauchbare Werte enthalten, und jeder wird beim Lesen geprüft: Das Standardmodell muss ein nicht leerer String sein, das Standard-Thinking-Level eines aus `THINKING_LEVELS`, und Backup und Frist haben ihre eigenen Prüfungen.
 Ein unbrauchbarer Wert warnt einmal und wird durch seinen Standard ersetzt.
