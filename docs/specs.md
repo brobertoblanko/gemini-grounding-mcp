@@ -1167,11 +1167,13 @@ export const DEFAULT_DEADLINE_SECONDS = 300; // config.js
 Google honours the header as an execution deadline and does abort the generation server-side; the value goes out in whole seconds.
 Up to `@google/genai` 2.28 the value was 290 s, just below Node's limit; with that limit gone, there is nothing left to stay under, and the round number applies.
 
-**Configurable.** `deadlineSeconds` in `config.json` holds a positive whole number of seconds, or `false` for no header at all - Google's own limit applies then.
+**Configurable.** `deadlineSeconds` in `config.json` holds a whole number of seconds from 1 to `MAX_DEADLINE_SECONDS` (600), or `false` for no header at all - Google's own limit applies then.
 It is set via `gemini-set-config` or `gemini-grounding set-deadline <seconds|off>`, and `false` is stored rather than deleted for the same reason as `backupModel: false`: deleting would bring back the default, the opposite of "off".
 There is deliberately no per-call parameter: a call that could raise the deadline turns a `504` into an invitation to retry longer, and the deadline is an operating setting rather than part of a question.
 For the same reason the tool description and the server instructions tell an agent to report a `504` instead of raising the deadline on its own.
 An unusable value in a hand-edited file produces one warning on stderr and the default applies - unlike an unknown model, which comes back from the API as an error, a deadline nobody applies would show nowhere.
+The cap is Google's own limit for a unary request: above it the value promises a limit that does not exist, while the local brake would only fire after it and the MCP client gives up after 1800 s.
+A hand-edited whole number above 600 therefore warns and is read as 600, not as the default - whoever wrote 3600 wanted the longest deadline there is.
 
 **The local brake.** Without Node's limit, a request that runs into nothing - a silent line, no answer, no error - waited until the MCP client gave up after 1800 s.
 `generate()` therefore arms an `AbortController` at the deadline plus `LOCAL_BRAKE_MARGIN_SECONDS` (30 s) and passes its signal as `config.abortSignal`.

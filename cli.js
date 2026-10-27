@@ -16,6 +16,7 @@ import {
   formatConfigState,
   formatSavedValues,
   isValidDeadline,
+  MAX_DEADLINE_SECONDS,
   resolveCallConfig,
   setSavedConfig,
   THINKING_LEVELS,
@@ -343,7 +344,10 @@ async function main() {
       if (rest[0] === "off") deadlineSeconds = false;
       else if (/^\d+$/.test(rest[0])) deadlineSeconds = Number(rest[0]);
       if (!isValidDeadline(deadlineSeconds)) {
-        fail(`Invalid deadline "${rest[0]}" - a positive whole number of seconds, or "off".`);
+        fail(
+          `Invalid deadline "${rest[0]}" - a whole number of seconds from 1 to ` +
+            `${MAX_DEADLINE_SECONDS} (Google's own limit), or "off".`,
+        );
       }
       saveAndReport({ deadlineSeconds });
       break;

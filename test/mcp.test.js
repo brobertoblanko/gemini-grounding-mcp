@@ -136,3 +136,18 @@ test("rejects empty strings for query, model and backupModel", async () => {
     await client.close();
   }
 });
+
+test("gemini-set-config rejects a deadline above 600 s", async () => {
+  const configHome = freshConfigHome();
+  const client = await connect("auto", configHome);
+  try {
+    const result = await client.callTool({
+      name: "gemini-set-config",
+      arguments: { deadlineSeconds: 601 },
+    });
+    assert.equal(result.isError, true);
+    assert.throws(() => readFileSync(configFile(configHome)), { code: "ENOENT" });
+  } finally {
+    await client.close();
+  }
+});

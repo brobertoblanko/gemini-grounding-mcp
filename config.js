@@ -60,13 +60,19 @@ const DEFAULT_THINKING_LEVEL = "medium";
 export const DEFAULT_DEADLINE_SECONDS = 300;
 
 /**
+ * Google's own limit for a unary request (see DEFAULT_DEADLINE_SECONDS). A larger
+ * deadline would promise a limit that does not exist.
+ */
+export const MAX_DEADLINE_SECONDS = 600;
+
+/**
  * Whether a value may be stored as the deadline: a positive whole number of
- * seconds, or false for "send none". false and not 0 or null, the same
- * convention as backupModel: false - a switch that is deliberately off, kept
- * apart from "never set".
+ * seconds up to MAX_DEADLINE_SECONDS, or false for "send none". false and not 0
+ * or null, the same convention as backupModel: false - a switch that is
+ * deliberately off, kept apart from "never set".
  */
 export function isValidDeadline(value) {
-  return value === false || (Number.isInteger(value) && value > 0);
+  return value === false || (Number.isInteger(value) && value > 0 && value <= MAX_DEADLINE_SECONDS);
 }
 
 /**
@@ -179,9 +185,19 @@ export function getSavedDeadline() {
   if (deadlineSeconds === undefined) return DEFAULT_DEADLINE_SECONDS;
   if (isValidDeadline(deadlineSeconds)) return deadlineSeconds;
 
+  // The cap and not the default: whoever wrote 3600 wanted the longest deadline
+  // there is.
+  if (Number.isInteger(deadlineSeconds) && deadlineSeconds > MAX_DEADLINE_SECONDS) {
+    warnOnce(
+      "deadlineSeconds",
+      `deadlineSeconds in ${CONFIG_PATH} is ${deadlineSeconds}, but Google ends a request ` +
+        `after ${MAX_DEADLINE_SECONDS} s anyway - using ${MAX_DEADLINE_SECONDS}.`,
+    );
+    return MAX_DEADLINE_SECONDS;
+  }
   warnOnce(
     "deadlineSeconds",
-    `deadlineSeconds in ${CONFIG_PATH} must be a positive whole number or false, ` +
+    `deadlineSeconds in ${CONFIG_PATH} must be a whole number from 1 to ${MAX_DEADLINE_SECONDS} or false, ` +
       `not ${JSON.stringify(deadlineSeconds)} - using ${DEFAULT_DEADLINE_SECONDS}.`,
   );
   return DEFAULT_DEADLINE_SECONDS;

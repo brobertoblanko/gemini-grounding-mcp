@@ -1415,11 +1415,13 @@ export const DEFAULT_DEADLINE_SECONDS = 300; // config.js
 Google übernimmt den Header als Ausführungsfrist und bricht die Generierung tatsächlich serverseitig ab; der Wert geht in ganzen Sekunden hinaus.
 Bis `@google/genai` 2.28 lag der Wert bei 290 s, knapp unter Nodes Grenze; seit diese Grenze weg ist, gibt es nichts mehr zu unterbieten, und es gilt die runde Zahl.
 
-**Einstellbar.** `deadlineSeconds` in der `config.json` enthält eine positive ganze Zahl von Sekunden oder `false` für gar keinen Header - dann gilt Googles eigene Grenze.
+**Einstellbar.** `deadlineSeconds` in der `config.json` enthält eine ganze Zahl von Sekunden von 1 bis `MAX_DEADLINE_SECONDS` (600) oder `false` für gar keinen Header - dann gilt Googles eigene Grenze.
 Gesetzt wird sie über `gemini-set-config` oder `gemini-grounding set-deadline <seconds|off>`, und `false` wird aus demselben Grund gespeichert statt gelöscht wie bei `backupModel: false`: Löschen brächte den Standard zurück, das Gegenteil von „aus".
 Einen Parameter pro Aufruf gibt es bewusst nicht: Ein Aufruf, der die Frist anheben kann, macht aus einem `504` eine Einladung, es länger zu versuchen, und die Frist ist eine Betriebseinstellung, kein Teil einer Frage.
 Aus demselben Grund sagen Tool-Beschreibung und Server-Instructions einem Agenten, einen `504` zu melden, statt die Frist eigenständig anzuheben.
 Ein unbrauchbarer Wert in einer von Hand bearbeiteten Datei erzeugt eine Warnung auf stderr, und es gilt der Standard - anders als ein unbekanntes Modell, das von der API als Fehler zurückkommt, zeigte sich eine Frist, die niemand anwendet, nirgends.
+Die Obergrenze ist Googles eigene Grenze für eine unäre Anfrage: Darüber verspricht der Wert eine Grenze, die es nicht gibt, während die lokale Notbremse erst danach greifen würde und der MCP-Client nach 1800 s aufgibt.
+Eine von Hand eingetragene ganze Zahl über 600 warnt deshalb und gilt als 600, nicht als Standard - wer 3600 schreibt, wollte die längste Frist, die es gibt.
 
 **Die lokale Notbremse.** Ohne Nodes Grenze wartete eine Anfrage, die ins Leere läuft - stille Leitung, keine Antwort, kein Fehler -, bis der MCP-Client nach 1800 s aufgab.
 `generate()` setzt deshalb einen `AbortController` auf Frist plus `LOCAL_BRAKE_MARGIN_SECONDS` (30 s) und übergibt sein Signal als `config.abortSignal`.
