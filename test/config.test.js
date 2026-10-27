@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { configFile, freshConfigHome, runCli } from "./helpers.js";
 
@@ -100,4 +100,13 @@ test("replaces an unusable default model and thinking level with a warning each"
   assert.match(result.stderr, /model in .* must be a non-empty string, not "" - using gemini-flash-latest/);
   assert.match(result.stderr, /thinkingLevel in .* must be one of minimal, low, medium, high, not "ultra" - using medium/);
   assert.equal((result.stderr.match(/Warning:/g) ?? []).length, 2);
+});
+
+test("leaves no temporary file behind after a write", () => {
+  const configHome = freshConfigHome();
+  const result = runCli(["set-thinking", "high"], { configHome });
+
+  assert.equal(result.status, 0);
+  assert.deepEqual(readdirSync(path.dirname(configFile(configHome))), ["config.json"]);
+  assert.match(readFileSync(configFile(configHome), "utf8"), /"thinkingLevel": "high"/);
 });

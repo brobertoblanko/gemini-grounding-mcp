@@ -1276,6 +1276,7 @@ Das Schreiben ist strenger als das Lesen.
 `setSavedConfig()` verweigert mit einem Fehler, wenn die Datei existiert, aber nicht lesbar ist, und speichert nichts.
 Auf die Standardwerte zu schreiben würde jeden gespeicherten Wert durch den einen gerade gesetzten ersetzen - aus einer von Hand bearbeiteten Datei mit einem überzähligen Komma wären Modell, Backup und Frist verschwunden.
 Hinter einem MCP-Client sieht niemand die Warnung auf stderr, deshalb kommt die Verweigerung als Fehlerantwort des Tools an.
+Geschrieben wird in eine temporäre Datei neben `config.json`, die danach über sie umbenannt wird, sodass ein abgebrochener Schreibvorgang die alte Datei unversehrt lässt statt einer halben neuen.
 
 Die Warnung geht nach **stderr**, nie nach stdout: Der MCP-Server spricht über stdout JSON-RPC, wo eine einzelne verirrte Zeile die Verbindung zum Client zerstört.
 Eine Menge der schon ausgegebenen Warnungen auf Modulebene begrenzt jede auf ein Vorkommen, denn `readConfig()` läuft pro Aufruf viermal - einmal für das Modell, einmal für das Thinking-Level, einmal für das Backup, einmal für die Frist. Ohne sie stünde dieselbe Warnung viermal da und sähe nach vier Fehlern aus.

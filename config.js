@@ -331,7 +331,16 @@ export function setSavedConfig({
   apply("deadlineSeconds", deadlineSeconds);
   // Created on the write path only, so the package creates nothing unasked.
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+  // Written beside it and renamed over it, so an interrupted write leaves the old
+  // file instead of half a new one. The pid keeps CLI and server apart.
+  const temp = `${CONFIG_PATH}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temp, JSON.stringify(config, null, 2));
+    fs.renameSync(temp, CONFIG_PATH);
+  } catch (error) {
+    fs.rmSync(temp, { force: true });
+    throw error;
+  }
 
   return { model, thinkingLevel, backupModel, backupThinkingLevel, deadlineSeconds };
 }

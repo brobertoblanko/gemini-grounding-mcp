@@ -1027,6 +1027,7 @@ Writing is stricter than reading.
 `setSavedConfig()` refuses with an error when the file exists but cannot be read, and nothing is saved.
 Writing on top of the defaults would replace every stored value with the single one just set - from a hand-edited file with one surplus comma, model, backup and deadline would be gone.
 Behind an MCP client nobody sees the warning on stderr, so the refusal arrives as the tool's error answer.
+The write itself goes to a temporary file beside `config.json` and is then renamed over it, so an interrupted write leaves the old file intact instead of half a new one.
 
 The warning goes to **stderr**, never to stdout: the MCP server speaks JSON-RPC over stdout, where a single stray line breaks the connection to the client.
 A module-level set of the warnings already given limits each to one occurrence, because `readConfig()` runs four times per call - once for the model, once for the thinking level, once for the backup, once for the deadline. Without it the same warning would stand there four times over and look like four separate faults.
