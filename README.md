@@ -463,11 +463,11 @@ thinking level, backup model and deadline to:
 | Any, if `XDG_CONFIG_HOME` is an absolute path   | `$XDG_CONFIG_HOME/gemini-grounding-mcp/config.json` |
 
 Neither the file nor its directory is created until you save a setting for the
-first time. Delete the file to return to the built-in defaults
-(`gemini-flash-latest`, thinking level `medium`, no backup model, a deadline
-of 300 seconds). It holds nothing but model names, thinking levels and the
-deadline - **never the API key**. Run `gemini-grounding config` to see the
-exact path on your machine.
+first time. Delete the file, or run `gemini-grounding reset all`, to return to
+the built-in defaults (`gemini-flash-latest`, thinking level `medium`, no backup
+model, a deadline of 300 seconds). It holds nothing but model names, thinking
+levels and the deadline - **never the API key**. Run `gemini-grounding config`
+to see the exact path on your machine.
 
 ## Documentation
 

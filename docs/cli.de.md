@@ -269,14 +269,15 @@ Die ersten drei Zeilen sind dieselben, die jedes Speichern ausgibt - es gibt dam
 `config` ergänzt die drei Angaben, die nur hier interessieren - Key-Status, Konfigurationspfad und die installierte Version, sodass ein Bugreport ohne zweiten Befehl auskommt.
 
 Beim Key wird nur geprüft, ob überhaupt einer in der Umgebung ankommt; ausgegeben wird seine Länge - **niemals der Wert selbst**, auch nicht gekürzt.
-Ob der Key tatsächlich gültig ist, kann nur eine echte Anfrage zeigen; ein erfolgreiches `config` ist also eine notwendige, keine hinreichende Bedingung.
+Ob der Key tatsächlich gültig ist, kann `config` nicht zeigen; ein erfolgreiches `config` ist also eine notwendige, keine hinreichende Bedingung.
+`doctor` prüft den Key kostenlos mit einem Aufruf von `models.list`.
 
 ## Aus einem Klon heraus arbeiten
 
 Statt `gemini-grounding` wird `node cli.js` verwendet:
 
 ```bash
-node cli.js "deine Anfrage"
+node cli.js "Ihre Anfrage"
 node cli.js config
 ```
 

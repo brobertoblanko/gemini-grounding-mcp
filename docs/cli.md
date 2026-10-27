@@ -269,7 +269,8 @@ The first three lines are the same ones every save prints, so there is only one 
 `config` adds the three things that are only of interest here - key status, config path, and the installed version, so a bug report needs no second command.
 
 The key check only establishes whether a key arrives in the environment at all and prints its length - **never the value itself**, not even shortened.
-Whether the key is actually valid is something only a real request can tell you, so a successful `config` is a necessary but not a sufficient condition.
+Whether the key is actually valid, `config` cannot tell, so a successful `config` is a necessary but not a sufficient condition.
+`doctor` checks the key free of charge with a call to `models.list`.
 
 ## Working from a clone
 
