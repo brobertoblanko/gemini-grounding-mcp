@@ -114,3 +114,25 @@ test("gemini-set-config refuses to overwrite an unreadable config.json", async (
     await client.close();
   }
 });
+
+test("rejects empty strings for query, model and backupModel", async () => {
+  // An empty query costs a billed request for nothing, and an empty model is
+  // saved and sent to the API on every search after it.
+  const configHome = freshConfigHome();
+  const client = await connect("auto", configHome);
+  try {
+    const calls = [
+      ["gemini-search", { query: "   " }],
+      ["gemini-search", { query: "x", model: "" }],
+      ["gemini-set-config", { model: " " }],
+      ["gemini-set-config", { backupModel: "" }],
+    ];
+    for (const [name, args] of calls) {
+      const result = await client.callTool({ name, arguments: args });
+      assert.equal(result.isError, true, `${name} ${JSON.stringify(args)}`);
+    }
+    assert.throws(() => readFileSync(configFile(configHome)), { code: "ENOENT" });
+  } finally {
+    await client.close();
+  }
+});

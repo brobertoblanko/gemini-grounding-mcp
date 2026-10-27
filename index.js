@@ -73,9 +73,13 @@ function createServer() {
         "can be changed anytime via gemini-set-config. " +
         "The response includes a source list and a token-usage footer.",
       inputSchema: z.object({
-        query: z.string().describe("The search or research query"),
+        // trim().min(1) on every string: an empty query costs a billed request for
+        // nothing, and an empty model is saved and sent on every search after it.
+        query: z.string().trim().min(1).describe("The search or research query"),
         model: z
           .string()
+          .trim()
+          .min(1)
           .optional()
           .describe(
             "Gemini model, e.g. gemini-flash-latest. Omit to use the saved " +
@@ -170,13 +174,15 @@ function createServer() {
       inputSchema: z.object({
         model: z
           .string()
+          .trim()
+          .min(1)
           .optional()
           .describe(
             "Model ID, e.g. gemini-flash-latest or a pinned model like gemini-3.5-flash",
           ),
         thinkingLevel: z.enum(THINKING_LEVELS).optional().describe("Model reasoning depth"),
         backupModel: z
-          .union([z.string(), z.literal(false)])
+          .union([z.string().trim().min(1), z.literal(false)])
           .optional()
           .describe(
             "Model to retry the same request with when the default model fails, e.g. " +

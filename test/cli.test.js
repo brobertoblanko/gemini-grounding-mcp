@@ -361,3 +361,13 @@ test("ignores an empty or relative XDG_CONFIG_HOME and APPDATA", () => {
     assert.ok(path.isAbsolute(configPath), `"${value}" gave ${configPath}`);
   }
 });
+
+test("rejects an empty model id", () => {
+  for (const args of [["set-model", ""], ["set-backup", " "], ["set-thinking", "low", "--model", ""]]) {
+    const result = runCli(args);
+
+    assert.equal(result.status, 1, args.join(" "));
+    assert.match(result.stderr, /^Error: .*empty/m);
+    assert.deepEqual(result.savedConfig(), {});
+  }
+});
