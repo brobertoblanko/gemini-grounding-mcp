@@ -4,7 +4,7 @@
 // reported this file like a test case.
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,9 +49,18 @@ export function mockFetch(...responses) {
   return calls;
 }
 
+// node --test runs every test file in a process of its own, so this removes
+// each file's directories once it is done.
+const createdHomes = [];
+process.on("exit", () => {
+  for (const dir of createdHomes) rmSync(dir, { recursive: true, force: true });
+});
+
 /** A fresh, empty directory to serve as XDG_CONFIG_HOME for one case. */
 export function freshConfigHome() {
-  return mkdtempSync(path.join(tmpdir(), "gemini-grounding-test-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "gemini-grounding-test-"));
+  createdHomes.push(dir);
+  return dir;
 }
 
 /** Where config.js creates its file below a given XDG_CONFIG_HOME. */
