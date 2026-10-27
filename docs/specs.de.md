@@ -1165,6 +1165,7 @@ Nach jedem Schreiben eines Standard- oder Backup-Modells sucht `checkModelIds()`
 Gespeichert wird das Modell trotzdem, und die Warnung folgt der Bestätigung: in der CLI auf stderr, in der MCP-Antwort als Absatz `Warning:`.
 Die Kurzliste entscheidet über die Anzeige, nicht über die Erlaubnis, und eine ID, die der Key heute nicht listet, kann er morgen listen.
 Lässt sich die Liste nicht abrufen - offline, kein Key -, gibt es gar keine Warnung, sodass ein Speichern nie an der Prüfung scheitert.
+Eine stumme Leitung gilt nach `MODELS_LIST_TIMEOUT_SECONDS` (15 s) als solcher Fall: Seit `@google/genai` 2.29 beendet sie sonst nichts, und die Bestätigung eines längst erfolgten Speicherns wartete, bis der MCP-Client nach 1800 s aufgibt.
 Der Text nennt keinen Befehl, weil beide Schnittstellen ihn teilen.
 
 `gemini-grounding doctor` führt dieselbe Prüfung für die gespeicherten Modelle aus, neben der Node-Version, der Lesbarkeit der `config.json` und einem Aufruf von `models.list`, der zeigt, dass der Key angenommen wird und nicht nur gesetzt ist.

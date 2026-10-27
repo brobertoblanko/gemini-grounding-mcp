@@ -939,6 +939,7 @@ After every write of a default or backup model, `checkModelIds()` in `models.js`
 The model is saved all the same, and the warning follows the confirmation: on stderr in the CLI, as a `Warning:` paragraph in the MCP response.
 The short list decides what is shown, not what is allowed, and an id the key does not list today may be listed tomorrow.
 When the list cannot be fetched - offline, no key - there is no warning at all, so a save never fails on the check.
+A silent line counts as such after `MODELS_LIST_TIMEOUT_SECONDS` (15 s): since `@google/genai` 2.29 nothing else ends it, and the confirmation of a save that already happened would wait until the MCP client gives up after 1800 s.
 The text names no command, because both interfaces share it.
 
 `gemini-grounding doctor` runs the same check on the saved models, next to the Node version, the readability of `config.json` and a `models.list` call that proves the key is accepted rather than only set.

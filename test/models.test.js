@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { afterEach, test } from "node:test";
+import { afterEach, mock, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   checkModelIds,
+  fetchModels,
   findModelDrift,
   isExcludedModel,
   isUsableModel,
   listModels,
   modelId,
+  MODELS_LIST_TIMEOUT_SECONDS,
 } from "../models.js";
 import { EXCLUDED_MODELS } from "../models-excluded.js";
 import { mockFetch } from "./helpers.js";
@@ -22,6 +24,7 @@ const realFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = realFetch;
+  mock.timers.reset();
 });
 
 const FIXTURE = JSON.parse(
@@ -183,6 +186,25 @@ test("gives no advice when the model list cannot be fetched", async () => {
     throw new TypeError("fetch failed");
   };
   assert.deepEqual(await checkModelIds(["gemini-typo"]), []);
+});
+
+test("gives up on a silent model list after its timeout", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  let markCalled;
+  const called = new Promise((resolve) => (markCalled = resolve));
+  globalThis.fetch = (url, init) => {
+    markCalled();
+    return new Promise((_, reject) => {
+      init.signal?.addEventListener("abort", () => reject(init.signal.reason));
+    });
+  };
+
+  const outcome = fetchModels().catch((error) => error);
+  await called;
+  mock.timers.tick(MODELS_LIST_TIMEOUT_SECONDS * 1000);
+
+  const error = await outcome;
+  assert.match(error.message, /the model list did not arrive within 15 s/);
 });
 
 test("finds retired exclusions and offered models nobody has probed", () => {
