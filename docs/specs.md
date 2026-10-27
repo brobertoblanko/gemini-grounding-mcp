@@ -1010,8 +1010,12 @@ Writing is stricter than reading.
 Writing on top of the defaults would replace every stored value with the single one just set - from a hand-edited file with one surplus comma, model, backup and deadline would be gone.
 Behind an MCP client nobody sees the warning on stderr, so the refusal arrives as the tool's error answer.
 
-It goes to **stderr**, never to stdout: the MCP server speaks JSON-RPC over stdout, where a single stray line breaks the connection to the client.
-A module-level flag limits it to one occurrence, because `readConfig()` runs four times per call - once for the model, once for the thinking level, once for the backup, once for the deadline. Without the flag the same warning would stand there four times over and look like four separate faults.
+The warning goes to **stderr**, never to stdout: the MCP server speaks JSON-RPC over stdout, where a single stray line breaks the connection to the client.
+A module-level set of the warnings already given limits each to one occurrence, because `readConfig()` runs four times per call - once for the model, once for the thinking level, once for the backup, once for the deadline. Without it the same warning would stand there four times over and look like four separate faults.
+
+A readable file can still hold unusable values, and each one is checked on reading: the default model has to be a non-empty string, the default thinking level one of `THINKING_LEVELS`, and backup and deadline have their own checks.
+An unusable value warns once and is replaced by its default.
+An unknown level would otherwise come back as a 400, trigger the fallback, and hand the same unusable level on to the backup.
 
 ## MCP interface
 

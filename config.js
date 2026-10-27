@@ -78,13 +78,22 @@ export function isValidDeadline(value) {
 export const THINKING_LEVELS = ["minimal", "low", "medium", "high"];
 
 // readConfig() runs four times per call - from getSavedModel(), from
-// getSavedThinkingLevel(), from getSavedBackup() and from getSavedDeadline().
-// Without this flag the same warning would stand there four times over and look
-// like four separate faults.
-let warned = false;
-// Same reason for the unusable deadline: getSavedDeadline() runs on every
-// search and after every write.
-let warnedDeadline = false;
+// getSavedThinkingLevel(), from getSavedBackup() and from getSavedDeadline() -
+// and every getter runs again after a write. Without remembering what was
+// already said, the same warning would stand there several times over and look
+// like several separate faults.
+const warned = new Set();
+
+/**
+ * console.error and not console.log: the MCP server speaks JSON-RPC over
+ * stdout, where a single line breaks the connection to the client. stderr lands
+ * in the client's log and, on the command line, straight in front of the user.
+ */
+function warnOnce(key, message) {
+  if (warned.has(key)) return;
+  warned.add(key);
+  console.error(`Warning: ${message}`);
+}
 
 /**
  * strict is for the write path: there an unreadable file must stop the write,
@@ -111,16 +120,8 @@ function readConfig({ strict = false } = {}) {
     // Everything else - broken JSON after an interrupted write, missing read
     // permissions - renders a stored setting ineffective, and without a word the
     // server would simply keep running on the defaults.
-    //
-    // console.error and not console.log: the MCP server speaks JSON-RPC over
-    // stdout, where a single line breaks the connection to the client. stderr
-    // lands in the client's log and, on the command line, straight in front of
-    // the user.
-    if (error.code !== "ENOENT" && !warned) {
-      warned = true;
-      console.error(
-        `Warning: ${CONFIG_PATH} could not be read (${error.message}) - using defaults.`,
-      );
+    if (error.code !== "ENOENT") {
+      warnOnce("file", `${CONFIG_PATH} could not be read (${error.message}) - using defaults.`);
     }
     return {};
   }
@@ -129,17 +130,39 @@ function readConfig({ strict = false } = {}) {
 /**
  * Reads the persistently stored default model.
  * Returns DEFAULT_MODEL when no or a broken config.json exists.
+ *
+ * Validated like the backup, because the file can be edited by hand: an empty
+ * model would go to the API on every search.
  */
 export function getSavedModel() {
-  return readConfig().model ?? DEFAULT_MODEL;
+  const { model } = readConfig();
+  if (model === undefined) return DEFAULT_MODEL;
+  if (typeof model === "string" && model.trim() !== "") return model;
+  warnOnce(
+    "model",
+    `model in ${CONFIG_PATH} must be a non-empty string, not ${JSON.stringify(model)} - ` +
+      `using ${DEFAULT_MODEL}.`,
+  );
+  return DEFAULT_MODEL;
 }
 
 /**
  * Reads the persistently stored default thinking level.
  * Returns DEFAULT_THINKING_LEVEL when no or a broken config.json exists.
+ *
+ * Validated because an unknown level comes back as a 400, which triggers the
+ * fallback - and the backup inherits the same unusable level.
  */
 export function getSavedThinkingLevel() {
-  return readConfig().thinkingLevel ?? DEFAULT_THINKING_LEVEL;
+  const { thinkingLevel } = readConfig();
+  if (thinkingLevel === undefined) return DEFAULT_THINKING_LEVEL;
+  if (THINKING_LEVELS.includes(thinkingLevel)) return thinkingLevel;
+  warnOnce(
+    "thinkingLevel",
+    `thinkingLevel in ${CONFIG_PATH} must be one of ${THINKING_LEVELS.join(", ")}, ` +
+      `not ${JSON.stringify(thinkingLevel)} - using ${DEFAULT_THINKING_LEVEL}.`,
+  );
+  return DEFAULT_THINKING_LEVEL;
 }
 
 /**
@@ -156,15 +179,11 @@ export function getSavedDeadline() {
   if (deadlineSeconds === undefined) return DEFAULT_DEADLINE_SECONDS;
   if (isValidDeadline(deadlineSeconds)) return deadlineSeconds;
 
-  // console.error for the same reason as in readConfig(): stdout carries
-  // JSON-RPC.
-  if (!warnedDeadline) {
-    warnedDeadline = true;
-    console.error(
-      `Warning: deadlineSeconds in ${CONFIG_PATH} must be a positive whole number or false, ` +
-        `not ${JSON.stringify(deadlineSeconds)} - using ${DEFAULT_DEADLINE_SECONDS}.`,
-    );
-  }
+  warnOnce(
+    "deadlineSeconds",
+    `deadlineSeconds in ${CONFIG_PATH} must be a positive whole number or false, ` +
+      `not ${JSON.stringify(deadlineSeconds)} - using ${DEFAULT_DEADLINE_SECONDS}.`,
+  );
   return DEFAULT_DEADLINE_SECONDS;
 }
 

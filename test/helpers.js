@@ -64,8 +64,8 @@ export function configFile(configHome) {
  * stderr.
  *
  * The separate process is required, not a convenience: config.js fixes its path
- * once at import time, and so does the flag that limits the warning about an
- * unreadable file to a single occurrence. Every case therefore needs a fresh
+ * once at import time, and so does the set that limits every warning about the
+ * file to a single occurrence. Every case therefore needs a fresh
  * process.
  *
  * XDG_CONFIG_HOME points at a temp directory; without that isolation every set

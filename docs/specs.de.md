@@ -1258,8 +1258,12 @@ Das Schreiben ist strenger als das Lesen.
 Auf die Standardwerte zu schreiben würde jeden gespeicherten Wert durch den einen gerade gesetzten ersetzen - aus einer von Hand bearbeiteten Datei mit einem überzähligen Komma wären Modell, Backup und Frist verschwunden.
 Hinter einem MCP-Client sieht niemand die Warnung auf stderr, deshalb kommt die Verweigerung als Fehlerantwort des Tools an.
 
-Sie geht nach **stderr**, nie nach stdout: Der MCP-Server spricht über stdout JSON-RPC, wo eine einzelne verirrte Zeile die Verbindung zum Client zerstört.
-Ein Flag auf Modulebene begrenzt sie auf ein Vorkommen, denn `readConfig()` läuft pro Aufruf viermal - einmal für das Modell, einmal für das Thinking-Level, einmal für das Backup, einmal für die Frist. Ohne das Flag stünde dieselbe Warnung viermal da und sähe nach vier Fehlern aus.
+Die Warnung geht nach **stderr**, nie nach stdout: Der MCP-Server spricht über stdout JSON-RPC, wo eine einzelne verirrte Zeile die Verbindung zum Client zerstört.
+Eine Menge der schon ausgegebenen Warnungen auf Modulebene begrenzt jede auf ein Vorkommen, denn `readConfig()` läuft pro Aufruf viermal - einmal für das Modell, einmal für das Thinking-Level, einmal für das Backup, einmal für die Frist. Ohne sie stünde dieselbe Warnung viermal da und sähe nach vier Fehlern aus.
+
+Auch eine lesbare Datei kann unbrauchbare Werte enthalten, und jeder wird beim Lesen geprüft: Das Standardmodell muss ein nicht leerer String sein, das Standard-Thinking-Level eines aus `THINKING_LEVELS`, und Backup und Frist haben ihre eigenen Prüfungen.
+Ein unbrauchbarer Wert warnt einmal und wird durch seinen Standard ersetzt.
+Ein unbekanntes Level käme sonst als 400 zurück, löste den Fallback aus und gäbe dasselbe unbrauchbare Level an das Backup weiter.
 
 ## MCP-Schnittstelle
 

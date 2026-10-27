@@ -88,3 +88,16 @@ test("treats a configuration that is no JSON object as unreadable", () => {
     assert.equal(readFileSync(configFile(configHome), "utf8"), content);
   }
 });
+
+test("replaces an unusable default model and thinking level with a warning each", () => {
+  // An unknown level comes back as a 400, triggers the fallback, and the backup
+  // inherits the same unusable level.
+  const configHome = withBrokenConfig('{ "model": "", "thinkingLevel": "ultra" }');
+  const result = runCli(["config"], { configHome });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /^Default: +gemini-flash-latest · medium$/m);
+  assert.match(result.stderr, /model in .* must be a non-empty string, not "" - using gemini-flash-latest/);
+  assert.match(result.stderr, /thinkingLevel in .* must be one of minimal, low, medium, high, not "ultra" - using medium/);
+  assert.equal((result.stderr.match(/Warning:/g) ?? []).length, 2);
+});
