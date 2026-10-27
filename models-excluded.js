@@ -1,6 +1,6 @@
 /**
  * Models hidden from the default view of gemini-list-models, on top of the
- * isUsableModel() filter in gemini.js. Every entry is a model the API reports as
+ * isUsableModel() filter in models.js. Every entry is a model the API reports as
  * usable and that this server should not offer, for one of four reasons: the
  * call fails, a different model answers, the answer arrives without any source,
  * or the vendor documents the model as built for something else. The four are

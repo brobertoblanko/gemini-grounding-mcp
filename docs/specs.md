@@ -48,6 +48,8 @@ Implemented as flat modules without a `src/` layout and without a build step
   to `serveStdio` (see "Serving both protocol revisions").
 - `gemini.js` - wraps the `GoogleGenAI` call including the three combined
   built-in tools, builds the source list and footer from the API response.
+- `models.js` - everything about the key's model list: the filters behind
+  `gemini-list-models`, the advice after a saved model, and the drift check.
 - `citations.js` - inserts the citation markers into the response text. Its own
   file because this is the only code in the project that is **fully testable
   without network access and without an API key**: text and metadata go in, text
@@ -595,7 +597,7 @@ Format and capping:
 
 Actually implemented in `gemini.js` (`buildText`, `formatNotice`, `buildSourceList`, `formatSourcesBlock`, `formatFooter`, `formatSearchQueries`) and `citations.js` (`insertCitations`).
 `buildSourceList`, `formatSourcesBlock`, `formatFooter` and `formatSearchQueries` are exported and, like `insertCitations`, testable without an API key (`test/sources.test.js`, `test/search-queries.test.js`).
-`gemini.js` can be imported without `GEMINI_API_KEY` because `getClient()` is only called inside `runSearch` and `listModels`, not at module load.
+`gemini.js` and `models.js` can be imported without `GEMINI_API_KEY` because `getClient()` is only called inside `runSearch` and `fetchModels`, not at module load.
 
 ### Automatic continuation
 
@@ -928,7 +930,7 @@ The middle dot separates as it does in `formatSearchQueries`: model names contai
 
 #### A doubtful model warns after the save
 
-After every write of a default or backup model, `checkModelIds()` in `gemini.js` looks the id up in `models.list`, which is free:
+After every write of a default or backup model, `checkModelIds()` in `models.js` looks the id up in `models.list`, which is free:
 
 - not in the list - `"<id>" is not in the model list of this API key - a search with it will most likely fail.`
 - in the list but unusable - `"<id>" cannot run here: <status>`, the same status as in `gemini-list-models` with `all: true`
@@ -1409,7 +1411,7 @@ The same workflow checks the key's model list every week, independently of the u
 It costs nothing: `models.list` is not billed.
 The full probe that decides what goes on the exclusion list costs about 33 billed requests and stays a manual run of `scripts/probe-models.js`; this check only says when one is due.
 
-It reports two things, both from `findModelDrift()` in `gemini.js`:
+It reports two things, both from `findModelDrift()` in `models.js`:
 
 - **stale** - exclusion entries whose model is no longer in `models.list` (`staleEntries()`, shared with `probe-models.js`)
 - **unprobed** - models offered here that `test/fixtures/models-list.json` does not contain. A new model passes `isUsableModel()` and is offered at once, untried, which is how two models that fail with `400` reached the short list in August 2026

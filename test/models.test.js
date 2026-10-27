@@ -9,7 +9,7 @@ import {
   isUsableModel,
   listModels,
   modelId,
-} from "../gemini.js";
+} from "../models.js";
 import { EXCLUDED_MODELS } from "../models-excluded.js";
 import { mockFetch } from "./helpers.js";
 

@@ -1,45 +1,18 @@
 import { GoogleGenAI } from "@google/genai";
 import { insertCitations } from "./citations.js";
 import { DEFAULT_DEADLINE_SECONDS } from "./config.js";
-import { EXCLUDED_MODELS } from "./models-excluded.js";
 
 /**
  * Retries for transient errors. Without httpOptions.retryOptions the SDK repeats
- * NOTHING - apiCall() in dist/index.mjs begins with
- * "if (!retryOptions) { return fetch(url, requestInit); }", and no default is
- * set anywhere. The Gemini docs claim the official SDKs retry out of the box;
- * that is demonstrated for the Python SDK only.
+ * NOTHING - apiCall() in dist/index.mjs calls fetch() directly when none is set,
+ * and no default exists, although the Gemini docs claim the SDKs retry.
  *
- * TWO codes are missing ON PURPOSE. Google's default would be
- * [408, 429, 500, 502, 503, 504]; without this note the list reads like an
- * incomplete copy.
- *
- * 429: the API supplies the waiting time itself, as RetryInfo in error.details
- * ("retryDelay": "53s"). The SDK does not read it - the string "RetryInfo" does
- * not occur anywhere in the bundle - and backs off blindly instead, so against
- * a demanded 53 seconds all four attempts are spent after roughly 15, long
- * before the block expires. The same behaviour in the Python SDK is tracked as
- * googleapis/python-genai#1875. A 429 therefore reaches the client unchanged and
- * immediately.
- *
- * 504: since this server sends a deadline of its own (see
- * DEFAULT_DEADLINE_SECONDS in config.js), a 504 is usually that deadline rather than Google's
- * overloaded gateway. Repeating it runs the same generation to the deadline
- * three more times and pays for each, because an aborted generation is billed
- * all the same. The two causes cannot be told apart here: the retry decision is
- * made on the status code, long before anyone gets to see the DEADLINE_EXCEEDED
- * in the body - and of the two, the expensive one is the more likely.
- *
- * For 500, 502, 503 and 408 no server-supplied hint exists, so blind backoff is
- * the only option. 408 is in the list for completeness: an expired deadline
- * comes back as 504, and a request that runs into nothing is ended by the local
- * brake without any HTTP status (see LOCAL_BRAKE_MARGIN_SECONDS). A genuine 408
- * would have to come from an intermediary.
- *
- * attempts counts the initial call, so four attempts mean three repeats and,
- * with the SDK defaults (initialDelay 1s, expBase 2, jitter), 7 to 14 seconds of
- * extra waiting before the error surfaces.
- *
+ * TWO codes are missing ON PURPOSE from Google's default
+ * [408, 429, 500, 502, 503, 504]. The SDK ignores the retryDelay of a 429
+ * ("53s") and spends all four attempts after roughly 15 s
+ * (googleapis/python-genai#1875 for the Python SDK). A 504 is usually this
+ * server's own deadline, so each repeat would bill the full generation again.
+ * attempts counts the initial call: three repeats, 7 to 14 s of extra waiting.
  * Full derivation: docs/specs.md, "Why 429 and 504 are missing from that list".
  */
 export const RETRY_OPTIONS = {
@@ -48,69 +21,36 @@ export const RETRY_OPTIONS = {
 };
 
 /**
- * How long after the deadline the server stops waiting by itself. The deadline
- * (DEFAULT_DEADLINE_SECONDS in config.js, configurable) goes to Google's gateway
- * as the header X-Server-Timeout: after it, Google aborts the generation and
- * answers 504 with a reason. Everything generated up to then is billed all the
- * same - input tokens in full, output tokens up to the actual end of the run.
+ * How long after the deadline the server stops waiting by itself. Since
+ * @google/genai 2.29 nothing else on this side ends a silent connection before
+ * the MCP client of Claude Code gives up at 1800 s (measured).
  *
- * The brake exists because nothing else on this side ends a silent connection
- * any more. Up to @google/genai 2.28 Node severed one after 306.8 s (measured);
- * since 2.29 the SDK passes its own undici dispatcher with headersTimeout: 0,
- * and the next limit is the MCP client of Claude Code at 1800 s (measured).
- *
- * Deliberately NOT httpOptions.timeout, although the SDK builds the same header
- * from it: that option arms a client-side clock with the SAME value, racing
- * Google's answer, and when the local one wins, "This operation was aborted"
- * arrives instead of the reason. 30 s apart there is no race: Google's 504
- * arrives first whenever the line is alive, and the brake catches only the one
- * that is not.
- *
- * The brake covers one generate() call as a whole, every continuation hop and
- * every retry included (the SDK passes config.abortSignal to each). A late hop
- * can therefore be cut off while Google still computes and bills it.
+ * Deliberately NOT httpOptions.timeout: it arms a local clock with the SAME
+ * value as the header, and when that one wins, "This operation was aborted"
+ * arrives instead of Google's reason. The brake covers one generate() call with
+ * every continuation hop and retry, so a late hop can be cut off while Google
+ * still computes and bills it.
  * Full derivation: docs/specs.md, "The deadline this server does send".
  */
 export const LOCAL_BRAKE_MARGIN_SECONDS = 30;
 
 /**
- * Errors that do NOT fall back to the backup model. Everything else triggers the
- * fallback, provided a backup is configured.
+ * Errors that do NOT fall back to the backup model. A negative list on purpose:
+ * an unknown future code gets the fallback instead of dropping out silently.
+ * 401 and 403 hang on the API key, which the backup shares. A 504 is usually the
+ * server's own deadline, already billed, and a fallback would double it.
  *
- * A negative list, and that is the actual decision: an unknown future error code
- * gets the fallback automatically, instead of dropping silently through a
- * positive list. Deliberately NOT the same list as RETRY_OPTIONS - the two
- * answer different questions, the retry "does waiting help?", the fallback "can
- * a different model be the difference?". On 429 the answers diverge: waiting
- * achieves nothing, because the SDK ignores Google's retryDelay, while switching
- * achieves something at once, because quotas count per model.
- *
- * The three exceptions come from two different reasons. 401 and 403 are
- * hopeless: both hang on the API key, and the second call uses the same one, so
- * the model cannot possibly be the cause. 504 is too expensive: on this server
- * it is usually the server's own deadline (see LOCAL_BRAKE_MARGIN_SECONDS), hence
- * a generation that ran in full and is billed, and a fallback would double it
- * and add the whole deadline again - 300 seconds by default.
- *
- * A network error is not in the list and does not need to be: it carries no
- * status at all and drops out by itself.
+ * Deliberately NOT the same list as RETRY_OPTIONS: on 429 waiting achieves
+ * nothing, while switching does, because quotas count per model.
  * Full derivation: docs/specs.md, "Which errors trigger it".
  */
 export const NO_FALLBACK_STATUS = [401, 403, 504];
 
 /**
- * Turns an error into a line that still says something when it comes from the
- * network rather than from the API.
- *
- * An ApiError carries the reason in plain text (message is the raw JSON body of
- * the error response) and needs nothing further. A network error in Node is
- * ALWAYS called "fetch failed" - refused connection, unknown host, timeout, all
- * the same two words - and what actually happened lives solely in error.cause,
- * which the client loses, because an MCP tool can return a single line of text.
- *
- * The code is optional: measured, "bad port" supplies none, ECONNREFUSED does.
- * Without this line a severed connection reaches the calling agent as bare
- * "fetch failed", which explains nothing beyond "it did not work".
+ * Turns an error into a line that still says something for a network error: Node
+ * calls every one of them "fetch failed", and what happened lives solely in
+ * error.cause, which the single line of an MCP result would lose. Measured,
+ * "bad port" supplies no code, ECONNREFUSED does.
  * Full derivation: docs/specs.md, "What reaches the client when a request fails".
  */
 export function describeError(error) {
@@ -164,7 +104,7 @@ export const API_KEY_MISSING_MESSAGE =
  * patchHttpOptions() merges both objects with Object.assign, so User-Agent and
  * Content-Type are not lost.
  */
-function getClient({ deadlineSeconds = false } = {}) {
+export function getClient({ deadlineSeconds = false } = {}) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error(API_KEY_MISSING_MESSAGE);
@@ -179,16 +119,10 @@ function getClient({ deadlineSeconds = false } = {}) {
 }
 
 /**
- * Builds the source list from two separate metadata sources of the Gemini API:
- * - groundingChunks: hits from the Google search
- * - urlContextMetadata: pages Gemini read on purpose via URL Context
- * Both lists are merged and deduplicated by URL.
- *
- * Returns chunkNumbers as well: the mapping from the index in groundingChunks to
- * the number in the EMITTED list. The two counts diverge, because
- * groundingChunks represents search hits rather than sources - measured 17 hits
- * for 14 distinct URLs. Without this mapping the markers in the text would point
- * at numbers the list does not have.
+ * Builds the source list from the search hits (groundingChunks) and the pages
+ * read via URL Context, deduplicated by URL. chunkNumbers maps the index in
+ * groundingChunks to the number in the EMITTED list: measured 17 hits for 14
+ * distinct URLs, so the markers would otherwise point past the list.
  *
  * INVARIANT I1 (see CLAUDE.md and docs/specs.md, "Terms compliance"): EVERY
  * chunk with a URI goes into the list, even when not a single support points at
@@ -263,21 +197,14 @@ export function formatSourcesBlock(sources) {
 }
 
 /**
- * Assembles the answer text from the parts of the response instead of using
- * `response.text`. The SDK's `.text` getter discards everything that is not a
- * text part - with Code Execution enabled, precisely the executed code and its
- * result - and writes a warning to stderr on every call. Both go into the answer
- * as code blocks here, so it stays traceable how a computed number came about.
+ * Assembles the answer text from the parts instead of `response.text`, whose
+ * getter drops the executed code and its result and warns on stderr every call.
+ * Code and result go to the END as evidence, like the source list; the API
+ * returns them first, in execution order.
  *
- * Code and result come at the END, after the answer text. The API returns the
- * parts in execution order, so the answer would otherwise begin with a code
- * block and the actual information would follow underneath. The computation is
- * evidence and belongs where the source list is: after the answer, not before.
- *
- * The citation markers are set here as well (see citations.js), deliberately at
- * this point, because the parts are only individually available here: the API's
- * offsets count from the beginning of EACH part, and after the join("\n\n") they
- * would be off by two bytes from the second part onwards.
+ * The citation markers are set here because the API's offsets count from the
+ * beginning of EACH part: after the join("\n\n") they would be off by two bytes
+ * from the second part onwards.
  * Full derivation: docs/specs.md, "Answer text: assembled by hand instead of `response.text`".
  */
 function buildText(candidate, { supports, chunkNumbers }) {
@@ -350,39 +277,22 @@ function formatNotice({ text, candidate, promptFeedback }) {
   return "";
 }
 
-// Character budget for the line with the search queries sent. Measured: usually
-// 2 to 6 queries totalling 73 to 270 characters, a single query 29 to 84 - but
-// 11 queries with over 500 characters for a deliberately overbroad question. The
-// API documents no upper bound, hence the cap: 300 lets the normal case through
-// untouched and catches the outlier that would otherwise pull the footer over
-// several lines.
+// Character budget for the search queries line. Measured: usually 73 to 270
+// characters, but over 500 for a deliberately overbroad question, which would
+// pull the footer over several lines. The API documents no upper bound.
 const SEARCH_QUERY_BUDGET = 300;
 
 /**
- * Builds the footer line with the queries Gemini actually sent to the Google
- * search (groundingMetadata.webSearchQueries).
- *
- * It sits in the footer because it exposes a gap that neither the source list
- * nor the citation markers show: WHETHER the search covered the question at all.
- * Measured on a request about six web frameworks, Gemini searched six times for
- * "<framework> current version" only - bundle size and rendering strategy, also
- * asked for, came unresearched from model knowledge, and the answer did not show
- * it.
- *
- * Its own line rather than appended to the metrics: together they would run to
- * 385 characters in the measured extreme case and wrap over four terminal lines
- * - in exactly the long answers where the footer is supposed to give
- * orientation.
- *
- * An empty array yields an empty string and therefore no line. That is the rule
- * for every optional part of the footer: the normal case must not lengthen it.
+ * The footer line with the queries Gemini actually sent to the Google search
+ * (groundingMetadata.webSearchQueries). It is the only place that shows WHETHER
+ * the search covered the question at all; source list and markers cannot. Its
+ * own line, because appended to the metrics it ran to 385 characters. No
+ * queries, no line: the normal case must not lengthen the footer.
  * Full derivation: docs/specs.md, "The search queries line".
  */
 export function formatSearchQueries(queries = []) {
   // Identical queries once: the SDK concatenates the lists of all continuation
-  // hops, and a hop may repeat a search of the one before. Unlike the source
-  // list this line falls under no invariant - it reports what was searched,
-  // and a repetition adds nothing to that.
+  // hops. Unlike the source list this line falls under no invariant.
   queries = [...new Set(queries)];
   if (queries.length === 0) return "";
 
@@ -406,18 +316,10 @@ export function formatSearchQueries(queries = []) {
 }
 
 /**
- * The line about a successful fallback to the backup model. Without a fallback
- * an empty string and therefore no line.
- *
- * 🔁 and not ⚠️: a successful fallback is not a degraded answer. The warning
- * sign stays reserved for the cases where something is wrong with the answer
- * itself (dropped markers, omitted sources, finishReason, blockReason).
- *
- * Three codes get a suffix, because with them there is something TO DO; for all
- * the others - 503, 500, 502, 408 and anything future - the disturbance is
- * transient and the bare code says enough. The 400 is the only one where the
- * line performs real diagnosis: that the backup accepts the same request proves
- * the request was not the problem, the model was.
+ * The footer line about a successful fallback; none without one. 🔁 and not ⚠️,
+ * because the answer itself is not degraded. 404, 429 and 400 get a suffix
+ * because there is something TO DO; the 400 also proves that the model, not the
+ * request, was the problem.
  * Full derivation: docs/specs.md, "What the footer says".
  */
 export function formatFallbackNote(fallback) {
@@ -442,18 +344,10 @@ export function formatFallbackNote(fallback) {
 }
 
 /**
- * The line about an answer that took more than one request. Without a
- * continuation an empty string and therefore no line.
- *
- * Since @google/genai 2.29 generateContent() resends the request with the
- * continuationToken on finishReason "CONTINUATION" and merges the answers. The
- * token counts are summed over all hops, the prompt included, because each hop
- * resends and bills it - so the input figure in the line above can be a
- * multiple of what the question cost on its own. This line says why, with the
- * first request's figure for comparison.
- *
- * The SDK records no hop count; that the prompt grew is the one trace a
- * continuation leaves. Not a ⚠️: the answer is complete, it only cost more.
+ * The footer line about an answer the SDK continued over several requests; none
+ * without one. Each hop resends and bills the prompt, so the summed input figure
+ * can be a multiple of the question's own. The SDK records no hop count, a grown
+ * prompt is the one trace. Not a ⚠️: the answer is complete, it only cost more.
  * Full derivation: docs/specs.md, "Automatic continuation".
  */
 export function formatContinuationNote(usageMetadata) {
@@ -478,11 +372,9 @@ export function formatFooter({
   const outputTokens = usageMetadata?.candidatesTokenCount ?? 0;
   const thinkingTokens = usageMetadata?.thoughtsTokenCount ?? 0;
 
-  // The model that answered, where it is not the one requested: aliases such as
-  // gemini-flash-latest resolve to a concrete model, and deprecated ids are
-  // routed to their successor without an error (gemini-3.7-flash answers as
-  // gemini-3.8-flash, measured 2026-10-26). Without it the footer names a model
-  // that never ran. Full derivation: docs/specs.md, "Footer format in the tool result".
+  // The model that answered, where it is not the one requested: aliases resolve,
+  // and deprecated ids are routed to a successor without an error.
+  // Full derivation: docs/specs.md, "Footer format in the tool result".
   const served = modelVersion && modelVersion !== model ? ` → ${modelVersion}` : "";
 
   // Dropped markers belong in the footer because they change how much the
@@ -548,11 +440,8 @@ function fallbackRefusal({ error, model, backupModel, reason }) {
   if (error instanceof LocalDeadlineError) {
     return `backup not tried: no response within ${error.limitSeconds} s`;
   }
-  // Measured: an unusable key does NOT arrive as 401 or 403 but as a
-  // 400 INVALID_ARGUMENT with "API key not valid", so the status code alone is
-  // not enough here. A 400 otherwise does justify a fallback, because behind it
-  // can be a model that does not know the thinking level. The key, however,
-  // applies to both models: hopeless.
+  // Measured: an invalid key arrives as 400 INVALID_ARGUMENT, not as 401 or 403,
+  // and a 400 otherwise does justify a fallback.
   if (reason === "API_KEY_INVALID") {
     return "backup not tried: the API key is not valid, and the backup would use the same one";
   }
@@ -617,17 +506,10 @@ export class LocalDeadlineError extends Error {
 }
 
 /**
- * One call to the API, continuation hops and retries included. Everything that
- * stays the same per attempt lives here.
- *
- * The brake is armed per call, so a backup gets a budget of its own instead of
- * what the failed default left over. AbortController plus setTimeout rather
- * than AbortSignal.timeout(): the tests advance setTimeout with mock.timers and
- * would otherwise have to wait 330 real seconds. Without a deadline there is no
- * brake either - whoever switched the deadline off waits for Google's own limit.
- *
- * signal is the client's cancellation and ends the request just like the brake,
- * but is not reported as a deadline.
+ * One call to the API, continuation hops and retries included. The brake is
+ * armed per call, so a backup gets a budget of its own; setTimeout rather than
+ * AbortSignal.timeout(), because the tests advance it with mock.timers. signal is
+ * the client's cancellation: it ends the request too, but is no deadline.
  */
 async function generate(ai, { query, model, thinkingLevel, deadlineSeconds, signal }) {
   const brake = new AbortController();
@@ -654,29 +536,15 @@ function requestContent(ai, { query, model, thinkingLevel, signal }) {
     contents: query,
     config: {
       abortSignal: signal,
-      // Without it Google may keep request and response in its API logs for up
-      // to 55 days: since 2026-10-26 generateContent logs by default for newly
-      // created projects on the paid tier, and the field takes precedence over
-      // the project setting. Research queries carry context from the user's
-      // work. Not INVARIANT I4, which is about this server's disk - and the
-      // 30-day storage for grounding under the terms stays regardless.
-      // Full derivation: docs/specs.md, "Logging at Google: store".
+      // Keeps request and response out of Google's API logs, on by default for
+      // new paid-tier projects since 2026-10-26. Not INVARIANT I4, which is about
+      // this server's disk. Full derivation: docs/specs.md, "Logging at Google: store".
       store: false,
-      // The current date, nothing else. Without it the model reads "the latest
-      // version" against its own training cutoff rather than against today -
-      // measured, it searched for "2025 2026" in four out of six cases, because
-      // it knows the year only approximately. For a server whose purpose is to
-      // bypass training knowledge, that is the wrong kind of vagueness.
-      //
-      // Deliberately NO content-level instructions such as "prefer official
-      // documentation": they tint every answer and narrow research into OS
-      // behaviour or recent events. A date is a fact, a source preference an
-      // opinion.
-      //
-      // toLocaleDateString("en-CA") yields YYYY-MM-DD in LOCAL time.
-      // toISOString() would be UTC and would report the previous day in Central
-      // Europe between 00:00 and 02:00 - in the very function meant to guarantee
-      // the correct date.
+      // The current date and nothing else: without it the model reads "the latest
+      // version" against its training cutoff. "en-CA" yields YYYY-MM-DD in LOCAL
+      // time; toISOString() is UTC and reports the previous day in Central Europe
+      // between 00:00 and 02:00.
+      // Full derivation: docs/specs.md, "The current date as the only system instruction".
       systemInstruction: `Today's date is ${new Date().toLocaleDateString("en-CA")}.`,
       tools: SEARCH_TOOLS,
       thinkingConfig: { thinkingLevel },
@@ -685,21 +553,13 @@ function requestContent(ai, { query, model, thinkingLevel, signal }) {
 }
 
 /**
- * Runs a Gemini research call with all three built-in tools (Google Search, URL
- * Context, Code Execution), places the citation markers in the answer text and
- * appends the source list and token footer.
+ * Runs a research call with all three built-in tools and appends citation
+ * markers, source list and footer. If the model fails and a backup was passed
+ * (resolveCallConfig() in config.js decides), the same request runs once more;
+ * everything evaluated afterwards knows nothing of the fallback except the footer.
  *
- * If the model fails and a backup was passed, the same request runs a second
- * time - with the same retry, because that hangs on the client rather than on
- * the call. Whether a backup IS passed is decided by resolveCallConfig() in
- * config.js: a model named explicitly gets none.
- *
- * Everything evaluated afterwards runs on the response that won and knows
- * nothing of the fallback - except the footer, which has to name it.
- *
- * signal is the MCP client's cancellation. Once it fires, the request, the SDK's
- * retries and the backup all stop: nobody waits for the answer any more, and a
- * backup would be a second billed request for it.
+ * signal is the MCP client's cancellation: it stops the request, the SDK's
+ * retries and the backup, which would be a second billed request nobody reads.
  * Full derivation: docs/specs.md, "Cancellation by the client".
  */
 export async function runSearch({
@@ -791,233 +651,4 @@ export async function runSearch({
   // interspersing foreign content with the Grounded Results; here there is
   // nothing in between. See CLAUDE.md and docs/specs.md, "Terms compliance".
   return text + notice + sourcesBlock + footer;
-}
-
-/** Abbreviates a token count readably: 1048576 -> 1M, 65536 -> 64k. */
-function formatTokenLimit(limit) {
-  if (typeof limit !== "number") return "?";
-  if (limit >= 1024 * 1024) return `${Math.round(limit / (1024 * 1024))}M`;
-  if (limit >= 1024) return `${Math.round(limit / 1024)}k`;
-  return String(limit);
-}
-
-/**
- * Whether a model CAN run here at all. Two conditions, both taken from what the
- * API reports itself rather than from the model name or from displayName and
- * description, although those two do carry information: "nano-banana-pro-preview"
- * is described as "Gemini 3 Pro Image Preview". Reading them would be the same
- * name pattern one field further right, and it would go stale just as silently
- * once a future text model carries one of the keywords.
- * - generateContent: produces text at all (excludes embeddings, Imagen, Veo and
- *   the Live/Audio models)
- * - thinking: accepts a thinking level. runSearch always sends one, otherwise
- *   the API answers 400 "Thinking level is not supported for this model."
- *
- * What the conditions cannot decide is whether a model SHOULD run here - a TTS
- * model with 8k input passes both. That is what EXCLUDED_MODELS is for.
- * Full derivation: docs/specs.md, "gemini-list-models".
- */
-export function isUsableModel(model) {
-  return (model.supportedActions ?? []).includes("generateContent") && model.thinking === true;
-}
-
-/** The bare model id: the API prefixes every name with "models/". */
-export function modelId(model) {
-  return (model.name ?? "?").replace(/^models\//, "");
-}
-
-/**
- * Whether a model is on the maintained exclusion list. Separate from
- * isUsableModel() because the two answer different questions: that one reads
- * what the API reports, this one what trying it out showed.
- * Full derivation: docs/specs.md, "The exclusion list".
- */
-export function isExcludedModel(model) {
-  return Object.hasOwn(EXCLUDED_MODELS, modelId(model));
-}
-
-/** Whether a model is in the default list: usable and not excluded. */
-function isOfferedModel(model) {
-  return isUsableModel(model) && !isExcludedModel(model);
-}
-
-/**
- * Entries of the exclusion list that no model in models.list matches any more,
- * because Google retired it. Harmless at runtime - nothing ever looks an entry
- * up unless the API named the model first - but the reason is dead weight, and a
- * reused id would attach it to something else.
- *
- * Reported by scripts/probe-models.js and scripts/model-drift.js because nothing
- * else can: the test in test/models.test.js reads the stored response, which
- * keeps a retired model until somebody renews the file, and a test may not call
- * the live API. Needs the full models.list: without liveIds it reports nothing
- * rather than guessing from a partial list.
- */
-export function staleEntries(liveIds) {
-  if (!liveIds) return [];
-  return Object.keys(EXCLUDED_MODELS).filter((id) => !liveIds.has(id));
-}
-
-/**
- * What changed in the key's model list since knownIds was recorded, for the
- * weekly check in scripts/model-drift.js:
- * - stale: exclusion entries whose model is gone (see staleEntries)
- * - unprobed: models offered here that knownIds does not contain - a new model
- *   passes isUsableModel() and is offered at once, untried, which is how two
- *   models that fail with 400 reached the short list in August 2026
- */
-export function findModelDrift(models, knownIds) {
-  const liveIds = new Set(models.map(modelId));
-  return {
-    stale: staleEntries(liveIds),
-    unprobed: models
-      .filter(isOfferedModel)
-      .map(modelId)
-      .filter((id) => !knownIds.has(id))
-      .sort((a, b) => a.localeCompare(b)),
-  };
-}
-
-/**
- * Why a model is not in the default list - for the --all view only. An excluded
- * model shows the kind of its exclusion, everything before the first dash of its
- * reason: the reason itself runs to three lines for the "unsuitable" entries,
- * and the kind is what says how much the entry is worth.
- *
- * A model without generateContent names what it does instead, skipping the
- * count* actions: the native audio models list countTokens first, which says
- * nothing about them.
- */
-function modelStatus(model) {
-  const actions = model.supportedActions ?? [];
-  if (!actions.includes("generateContent")) {
-    const action = actions.find((name) => !name.startsWith("count")) ?? actions[0];
-    return action ? `no text (${action})` : "no text";
-  }
-  if (model.thinking !== true) return "no thinking";
-  if (!isExcludedModel(model)) return "offered";
-  return EXCLUDED_MODELS[modelId(model)].split(" - ")[0];
-}
-
-/** Every model the current API key exposes, across all pages. models.list is free. */
-export async function fetchModels() {
-  const ai = getClient();
-  const pager = await ai.models.list({ config: { pageSize: 50 } });
-  const models = [];
-  for await (const model of pager) models.push(model);
-  return models;
-}
-
-/**
- * Why each of the given model ids is unlikely to work here, as plain text - an
- * empty list when all of them look fine. Advice after a save, never a refusal:
- * the short list decides what is shown, not what is allowed, and an id the key
- * does not list today may be listed tomorrow.
- *
- * A failed models.list (offline, no key) yields no advice rather than an error,
- * so a save never fails on it. Pass models when they are already fetched.
- * No command name in the text: the CLI and gemini-set-config share it.
- */
-export async function checkModelIds(ids, models) {
-  if (!models) {
-    try {
-      models = await fetchModels();
-    } catch {
-      return [];
-    }
-  }
-  const advice = [];
-  for (const id of ids) {
-    const model = models.find((candidate) => modelId(candidate) === id);
-    if (!model) {
-      advice.push(`"${id}" is not in the model list of this API key - a search with it will most likely fail.`);
-    } else if (!isUsableModel(model)) {
-      advice.push(`"${id}" cannot run here: ${modelStatus(model)}.`);
-    } else if (isExcludedModel(model)) {
-      advice.push(`"${id}" is on this server's exclusion list: ${EXCLUDED_MODELS[id]}.`);
-    }
-  }
-  return advice;
-}
-
-/**
- * Lists the models available to the current API key, with token limits. By
- * default only those this server offers - usable and not excluded; with
- * all=true the complete list including a status column.
- *
- * Two filters run in the default view, and the closing note counts both: leaving
- * EXCLUDED_MODELS unmentioned would make it as invisible to the user as the
- * shortened choice that issue #15 started from. The note stays a single line
- * under 80 columns, so a terminal does not wrap it mid-word, and takes every
- * number from the response, so no wording needs revising when models come and
- * go. Full derivation: docs/specs.md, "The notice names the list".
- *
- * allOption is how the caller's own frontend spells that switch, because the
- * note names it and the two spell it differently: "--all" on the command line,
- * "all: true" over MCP. Both pass it explicitly; the default only keeps the
- * note readable for a caller that does not.
- *
- * Being listed says nothing about availability: deprecated models stay in the
- * response and answer with 404. A field indicating that does not exist.
- */
-export async function listModels({ all = false, allOption = "--all" } = {}) {
-  const models = await fetchModels();
-  if (models.length === 0) return "No models available for this API key.";
-
-  const usable = models.filter(isUsableModel);
-  const offered = usable.filter(isOfferedModel);
-
-  // Guard against an empty result, whichever filter empties it: the API might
-  // stop supplying the evaluated fields, or the exclusion list might one day
-  // cover everything the key still has. Better the wider list than none at all.
-  const filterFailed = usable.length === 0;
-  const exclusionFailed = !filterFailed && offered.length === 0;
-  const showAll = all || filterFailed;
-  const shown = [...(showAll ? models : exclusionFailed ? usable : offered)];
-
-  // In the full view the offered models come first: they are what somebody
-  // picking a model is looking for, and alphabetically they scatter among 50
-  // others.
-  const name = modelId;
-  const rank = (model) => (showAll && !isOfferedModel(model) ? 1 : 0);
-  shown.sort((a, b) => rank(a) - rank(b) || name(a).localeCompare(name(b)));
-  const width = Math.max("MODEL".length, ...shown.map((model) => name(model).length));
-
-  const row = (id, input, output, status) =>
-    `${id.padEnd(width)}  ${input.padStart(5)}  ${output.padStart(6)}` +
-    (showAll ? `  ${status}` : "");
-  const lines = [
-    row("MODEL", "INPUT", "OUTPUT", "STATUS"),
-    ...shown.map((model) =>
-      row(
-        name(model),
-        formatTokenLimit(model.inputTokenLimit),
-        formatTokenLimit(model.outputTokenLimit),
-        modelStatus(model),
-      ),
-    ),
-  ];
-
-  const hidden = usable.length - offered.length;
-
-  let note;
-  if (filterFailed) {
-    note =
-      `All ${models.length} models - the usability filter matched nothing. Check whether the ` +
-      "API still reports supportedActions and thinking.";
-  } else if (exclusionFailed) {
-    note =
-      `All ${usable.length} usable models are on the exclusion list, so it is skipped here. ` +
-      "Check models-excluded.js against this API key.";
-  } else if (all) {
-    note =
-      `All ${models.length} models; "offered" marks the default list. ` +
-      "Not every model answers.";
-  } else {
-    note =
-      `${offered.length} of ${models.length} models offered, ${hidden} excluded after testing. ` +
-      `${allOption} lists all models.`;
-  }
-
-  return `${lines.join("\n")}\n\n${note}`;
 }

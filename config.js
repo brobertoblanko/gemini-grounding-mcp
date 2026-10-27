@@ -2,22 +2,12 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-// The platform's conventional location for user state, NOT "./config.json" -
-// the working directory of an MCP server started over stdio is not guaranteed
-// to be the project folder. Script-relative was rejected as well: with "npm
-// install -g" the script sits in a directory the package manager rewrites on
-// update, with "npx" in a cache whose hash changes with every version - the
-// setting would be effectively ephemeral there.
-//
-// Order: XDG_CONFIG_HOME wins when set - the Linux convention and at the same
-// time the escape hatch for anyone who does not want the default location.
-// Otherwise %APPDATA% on Windows, where user state belongs, not ~/.config.
-// macOS is deliberately treated like Linux although the Apple standard would be
-// ~/Library/Application Support/: this is a terminal tool, and in the terminal
-// nobody goes looking in a folder that Finder hides.
-//
-// An empty or relative value counts as unset, as the XDG spec demands: taken as
-// it is, the file would move with the working directory.
+// The platform's conventional location for user state, NOT "./config.json" and
+// not next to the script: an MCP server's working directory is not guaranteed,
+// and npm rewrites the script's directory on update or caches it per version.
+// XDG_CONFIG_HOME wins, then %APPDATA% on Windows, otherwise ~/.config - macOS
+// included, because in the terminal nobody looks in a folder Finder hides. An
+// empty or relative value counts as unset, as the XDG spec demands.
 // Full derivation: docs/specs.md, "Configuration file location".
 const absolute = (value) => (value && path.isAbsolute(value) ? value : undefined);
 const CONFIG_DIR = path.join(
@@ -47,15 +37,11 @@ const DEFAULT_THINKING_LEVEL = "medium";
 
 /**
  * The deadline Google's gateway is told about, in whole seconds, for a missing
- * or unusable config.json entry. Exported because gemini.js and the tests need
- * the number the server runs with when nobody set one.
- *
- * Below Google's own server-side limit of 10 minutes for a unary request (SDK
- * comment on createUndiciNoTimeoutDispatcher, @google/genai 2.31.0), so the
- * header still decides. A round number, because since @google/genai 2.29 no
- * client-side limit is left to stay under: Node no longer severs a silent
- * connection after 306.8 s. Full derivation: docs/specs.md, "The deadline this
- * server does send".
+ * or unusable config.json entry. Below Google's own limit of 10 minutes for a
+ * unary request (SDK comment on createUndiciNoTimeoutDispatcher, @google/genai
+ * 2.31.0), so the header still decides. A round number, because since
+ * @google/genai 2.29 no client-side limit is left to stay under.
+ * Full derivation: docs/specs.md, "The deadline this server does send".
  */
 export const DEFAULT_DEADLINE_SECONDS = 300;
 
@@ -83,11 +69,8 @@ export function isValidDeadline(value) {
  */
 export const THINKING_LEVELS = ["minimal", "low", "medium", "high"];
 
-// readConfig() runs four times per call - from getSavedModel(), from
-// getSavedThinkingLevel(), from getSavedBackup() and from getSavedDeadline() -
-// and every getter runs again after a write. Without remembering what was
-// already said, the same warning would stand there several times over and look
-// like several separate faults.
+// readConfig() runs four times per call and again after every write; without
+// this memory one fault would print as several.
 const warned = new Map();
 let collecting = false;
 
@@ -141,11 +124,8 @@ function readConfig({ strict = false } = {}) {
         `${CONFIG_PATH} could not be read (${error.message}) - fix it, or delete it with "gemini-grounding reset all"; nothing was saved.`,
       );
     }
-    // The missing file is the normal case and no error: before the first stored
-    // value it does not exist, and the defaults are exactly what is wanted then.
-    // Everything else - broken JSON after an interrupted write, missing read
-    // permissions - renders a stored setting ineffective, and without a word the
-    // server would simply keep running on the defaults.
+    // The missing file is the normal case before the first stored value. Anything
+    // else renders a stored setting ineffective and must not pass in silence.
     if (error.code !== "ENOENT") {
       warnOnce("file", `${CONFIG_PATH} could not be read (${error.message}) - using defaults.`);
     }
@@ -194,11 +174,8 @@ export function getSavedThinkingLevel() {
 /**
  * Reads the stored deadline: whole seconds, or false when none is to be sent.
  * Returns DEFAULT_DEADLINE_SECONDS when no or a broken config.json exists.
- *
- * Validated because the file can be edited by hand. An unusable value warns
- * instead of falling back silently: unlike an unknown model, which comes back
- * from the API as an error, a deadline nobody applies would show nowhere - the
- * search simply runs under a different limit than the one written down.
+ * An unusable value warns: unlike an unknown model, which the API rejects, a
+ * deadline nobody applies would show nowhere.
  */
 export function getSavedDeadline() {
   const { deadlineSeconds } = readConfig();
@@ -224,23 +201,11 @@ export function getSavedDeadline() {
 }
 
 /**
- * Reads the stored backup model as a unit: a model and the thinking level
- * assigned to it belong together and are therefore read together, rather than
- * through two getters like the default values.
- *
- * Three states that have to be kept apart:
- * - `model` set: a fallback takes place
- * - `disabled`: explicitly switched off via false
- * - both empty: never configured
- *
- * The difference between the last two changes nothing about the behaviour and
- * exists solely for the output of "gemini-grounding config": "not set" and
- * "off" are two different statements to the user.
- *
- * Both are validated because the file can be edited by hand. A model has to be
- * a non-empty string, a level one of the known ones - otherwise an unusable
- * value would go to the API first and come back as a 400, on the very path that
- * is meant to catch an error.
+ * Reads the stored backup as a unit, because a model and its thinking level
+ * belong together. disabled (false in the file) behaves like "never configured"
+ * and exists for the output of "config" alone: "off" and "not set" are two
+ * different statements. Invalid values count as unset, so they never reach the
+ * API on the very path that is meant to catch an error.
  */
 export function getSavedBackup() {
   const { backupModel, backupThinkingLevel } = readConfig();
@@ -254,24 +219,15 @@ export function getSavedBackup() {
 }
 
 /**
- * Resolves which model and thinking level a single call actually runs with -
- * and whether it gets a backup. Shared ground for the MCP handler and the CLI
- * so both give the same answer.
- *
- * Resolution happens anew on EVERY call. A value resolved once would be wrong
- * from the next gemini-set-config on, without anyone noticing.
- *
+ * Which model and thinking level a single call runs with, and whether it gets a
+ * backup - shared by the MCP handler and the CLI. Resolved anew on EVERY call,
+ * because a value resolved once would be wrong after the next gemini-set-config.
  * Full derivation: docs/specs.md, "Resolving the defaults per call".
  */
 export function resolveCallConfig({ model, thinkingLevel } = {}) {
-  // A model named on the call gets NO backup. Whoever names one wants that one -
-  // frequently in order to check whether it is reachable at all. An answer from
-  // a different model does not answer that question, it hides it.
-  //
-  // The rule is syntactic and applies even when the named model happens to equal
-  // the stored default: what counts is the explicit naming, not the value. An
-  // explicit thinkingLevel does not affect the fallback - the model then still
-  // is the stored default.
+  // A model named on the call gets NO backup: whoever names one often wants to
+  // know whether that one is reachable. Syntactic - it applies even when the
+  // named model equals the stored default.
   const backup = model === undefined ? getSavedBackup() : {};
 
   return {
@@ -286,21 +242,13 @@ export function resolveCallConfig({ model, thinkingLevel } = {}) {
 }
 
 /**
- * Whether a write would put default and backup on the same model - as a plain
- * text reason, or undefined when everything is in order.
+ * Whether a write would put default and backup on the same model, as a plain
+ * text reason. runSearch refuses such a fallback as well, but only on the next
+ * failing call; until then the backup is silently dead.
  *
- * Were both equal, no fallback would take place at all: runSearch then refuses
- * it with "it is the same model as the default". That is a safety net and no
- * substitute for this check - it only fires on the next failing call, and until
- * then the backup is silently dead.
- *
- * Checked is the STATE AFTER the write, not the call: only that way does the
- * case show up in which a single call sets both values at once. A call without
- * any model is let through even when the stored values already collide -
- * "set-thinking low" did not cause that state and should not fail on it.
- *
- * Here and not in cli.js, because it would otherwise apply to the CLI alone:
- * gemini-set-config writes the same file and can set both values in one go.
+ * Checked on the STATE AFTER the write, because gemini-set-config can set both
+ * in one call. A call without any model passes even when the stored values
+ * already collide: it did not cause that state.
  */
 export function findModelCollision({ model, backupModel } = {}) {
   if (model === undefined && backupModel === undefined) return undefined;
@@ -324,17 +272,10 @@ export function findModelCollision({ model, backupModel } = {}) {
 }
 
 /**
- * Whether a write would leave behind a backup thinking level without its model
- * - as a plain text reason, or undefined.
- *
- * A level belongs to exactly one model (see the unit rule in setSavedConfig).
- * Without that model it has nothing to refer to: it sits in the file, takes
- * effect nowhere, and the confirmation reports a value that the state block two
- * lines below revokes as "not set" or "off".
- *
- * As in findModelCollision, checked on the STATE AFTER THE WRITE and not on the
- * single argument, because only gemini-set-config can set model and level in ONE
- * call - at the time of the check neither of them is stored yet.
+ * Whether a write would leave a backup thinking level without its model, as a
+ * plain text reason. Such a level takes effect nowhere, and the confirmation
+ * would name a value that the state block below revokes. Checked on the STATE
+ * AFTER THE WRITE, as in findModelCollision.
  */
 export function findBackupLevelProblem({ backupModel, backupThinkingLevel } = {}) {
   // null deletes the level and needs no model: the way back to "inherits from
@@ -347,14 +288,8 @@ export function findBackupLevelProblem({ backupModel, backupThinkingLevel } = {}
   const resulting = backupModel ?? (saved.disabled ? false : saved.model);
   if (resulting) return undefined;
 
-  // No CLI command name in the message: the same function answers both
-  // interfaces, and "set-backup ..." would be advice into the void inside an MCP
-  // response.
-  //
-  // The first message names the rule and not the state ("a backup that is
-  // switched off" instead of "the backup is switched off"): it also appears
-  // where the call brings the switching off about in the first place and a
-  // backup is still running.
+  // No command name: both interfaces share the text. The first message names the
+  // rule, not the state, because the same call may be what switches it off.
   return resulting === false
     ? "a backup that is switched off has no thinking level - switch a backup model on first, or leave the level out."
     : "no backup model is set - a thinking level on its own has nothing to belong to. Name the backup model together with the level.";
@@ -367,19 +302,10 @@ export function findBackupLevelProblem({ backupModel, backupThinkingLevel } = {}
  * data or anything from a response - INVARIANT I4 (see CLAUDE.md and
  * docs/specs.md, "Terms compliance"): Grounded Results never touch the disk.
  *
- * null deletes the key: "reset" in cli.js uses it to return any of the five to
- * its built-in default, and backupThinkingLevel to fall back to "inherits from
- * the primary call".
- *
- * THE ONE EXCEPTION TO THE MERGE RULE: the backup is written as a UNIT. A
- * backupModel arriving without a backupThinkingLevel of its own expires a
- * previously stored level instead of leaving it in place. The level belongs to
- * that one model - carried across a change of backup, it would silently apply to
- * a model it was never chosen for.
- *
- * Returns what was actually written - including the null derived here. Only then
- * can the confirmation at the caller name the level that fell away instead of
- * concealing it.
+ * null deletes the key. THE ONE EXCEPTION TO THE MERGE RULE: a backupModel
+ * without a backupThinkingLevel of its own expires the stored level, which was
+ * chosen for a different model. Returns what was actually written, that null
+ * included, so the confirmation can name the level that fell away.
  */
 export function setSavedConfig({
   model,
@@ -403,9 +329,7 @@ export function setSavedConfig({
   apply("backupModel", backupModel);
   apply("backupThinkingLevel", backupThinkingLevel);
   apply("deadlineSeconds", deadlineSeconds);
-  // Created on the write path only, so the package creates nothing unasked: as
-  // long as nobody sets the model, neither directory nor file comes into
-  // existence - readConfig() already handles the missing file.
+  // Created on the write path only, so the package creates nothing unasked.
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 
@@ -425,16 +349,10 @@ function formatDeadline(deadlineSeconds) {
 }
 
 /**
- * Confirms every written value individually. Intended for the result of
- * setSavedConfig(), so that the derived null appears there as well.
- *
- * What was stored without standing there is indistinguishable from a discarded
- * parameter - hence every value stands there on its own rather than a bare
- * "saved".
- *
- * Shared by the CLI and the MCP handler, which differ only in their prefix. Two
- * separate copies would drift apart sooner or later.
- *
+ * Confirms every written value individually, from the result of setSavedConfig()
+ * so the derived null appears too: a value stored without being named is
+ * indistinguishable from a discarded parameter. Shared by the CLI and the MCP
+ * handler, so the two cannot drift apart.
  * Full derivation: docs/specs.md, "Reporting what was saved".
  */
 export function formatSavedValues({
@@ -465,25 +383,12 @@ export function formatSavedValues({
 }
 
 /**
- * The complete stored state in three lines - what applies from now on, not what
- * was just written.
- *
- * Printed after EVERY write and in "config", in the CLI as in the MCP handler.
- * The confirmation above says what changed; only these lines say what the
- * next query runs with - and that gap is exactly where somebody ends up working
- * with a model they did not mean.
- *
- * On the inherited level the value is printed rather than a bare "inherited":
- * what the backup would run with if it stepped in right now is the information
- * being asked for. The suffix says the value is not its own but travels along -
- * a call passing its own thinkingLevel is what the backup inherits then.
- *
- * The middle dot separates as in formatSearchQueries (gemini.js): model names
- * contain hyphens and digits of their own, between which another hyphen would
- * disappear.
- *
- * The labels are padded to the width of "Deadline: ", and cli.js pads its own
- * lines in "config" to the same column.
+ * The complete stored state in three lines - what the next query runs with, not
+ * what was just written. Printed after EVERY write and in "config". The
+ * inherited level is printed as its value, because that is what the backup
+ * would run with right now. The labels are padded to the width of "Deadline: ",
+ * and cli.js pads its own lines in "config" to the same column.
+ * Full derivation: docs/specs.md, "Reporting what was saved".
  */
 export function formatConfigState() {
   const thinkingLevel = getSavedThinkingLevel();
