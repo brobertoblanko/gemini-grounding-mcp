@@ -37,9 +37,9 @@ import {
   describeError,
   isUsableModel,
   readErrorBody,
+  staleEntries,
 } from "../gemini.js";
 import { THINKING_LEVELS } from "../config.js";
-import { EXCLUDED_MODELS } from "../models-excluded.js";
 
 /**
  * Needs a real search to be answerable, so a model that ignores the tool shows
@@ -93,15 +93,10 @@ const MAX_RETRY_DELAY_MS = 90_000;
  * backs off blindly against a quota window it cannot guess.
  */
 function retryDelayMs(error, attempt) {
-  try {
-    const details = JSON.parse(error.message)?.error?.details ?? [];
-    const delay = details.find((detail) => detail.retryDelay)?.retryDelay;
-    const seconds = Number.parseFloat(delay);
-    if (Number.isFinite(seconds) && seconds > 0) {
-      return Math.min(seconds * 1000 + 1000, MAX_RETRY_DELAY_MS);
-    }
-  } catch {
-    // Not an ApiError, or a body that is not JSON. Fall through to the fixed backoff.
+  // Not an ApiError, or a body that is not JSON, gives NaN and the fixed backoff.
+  const seconds = Number.parseFloat(readErrorBody(error).retryDelay);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.min(seconds * 1000 + 1000, MAX_RETRY_DELAY_MS);
   }
   return Math.min(5000 * 2 ** (attempt - 1), MAX_RETRY_DELAY_MS);
 }
@@ -210,23 +205,6 @@ async function probe(ai, id, { attempts, thinkingLevel }) {
 
 function pad(value, width) {
   return String(value).padEnd(width);
-}
-
-/**
- * Entries of the negative list that no model in models.list matches any more,
- * because Google retired it. Harmless at runtime - nothing ever looks an entry
- * up unless the API named the model first - but the reason is dead weight, and a
- * reused id would attach it to something else.
- *
- * Reported here because nothing else can: the test in test/models.test.js reads
- * the stored response, which keeps a retired model until somebody renews the
- * file, and a test may not call the live API. Needs the full models.list, so a
- * run narrowed to --model skips the check rather than guessing from ids the
- * command line supplied.
- */
-function staleEntries(liveIds) {
-  if (!liveIds) return [];
-  return Object.keys(EXCLUDED_MODELS).filter((id) => !liveIds.has(id));
 }
 
 /** The table, plus the entries ready to paste into the negative list. */

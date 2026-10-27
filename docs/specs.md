@@ -926,6 +926,22 @@ On the backup, the inherited level is printed as its value rather than as the ba
 The suffix says the value is not its own but travels along - a call carrying its own `thinkingLevel` is inherited instead.
 The middle dot separates as it does in `formatSearchQueries`: model names contain hyphens and digits of their own, between which another hyphen would disappear.
 
+#### A doubtful model warns after the save
+
+After every write of a default or backup model, `checkModelIds()` in `gemini.js` looks the id up in `models.list`, which is free:
+
+- not in the list - `"<id>" is not in the model list of this API key - a search with it will most likely fail.`
+- in the list but unusable - `"<id>" cannot run here: <status>`, the same status as in `gemini-list-models` with `all: true`
+- on the exclusion list - the reason from `models-excluded.js`
+
+The model is saved all the same, and the warning follows the confirmation: on stderr in the CLI, as a `Warning:` paragraph in the MCP response.
+The short list decides what is shown, not what is allowed, and an id the key does not list today may be listed tomorrow.
+When the list cannot be fetched - offline, no key - there is no warning at all, so a save never fails on the check.
+The text names no command, because both interfaces share it.
+
+`gemini-grounding doctor` runs the same check on the saved models, next to the Node version, the readability of `config.json` and a `models.list` call that proves the key is accepted rather than only set.
+Its config line comes from `configProblems()` in `config.js`, which collects the warnings of the very getters a search runs, so `doctor` cannot disagree with what a search actually does.
+
 ### Configuration file location
 
 Not `./config.json`: the working directory of an MCP server started over stdio is not guaranteed to be the project folder.
@@ -1311,6 +1327,23 @@ Neither `ApiError` nor the successful `HttpResponse` carries an attempt count, a
 Counting them would mean wrapping the global `fetch` and propagating a per-call context through `AsyncLocalStorage`, because several `gemini-search` calls can run in parallel and a global counter would mix them up.
 That was judged out of proportion to a footnote, so the footer reports model, thinking level and token usage as before - and the possible extra seconds are documented here instead.
 
+### Cancellation by the client
+
+When the user cancels a running `gemini-search` (Esc in Claude Code), the client sends `notifications/cancelled`.
+The MCP SDK turns that into the `AbortSignal` at `ctx.mcpReq.signal`, and the handler passes it to `runSearch()`.
+
+- `generate()` combines it with the local brake through `AbortSignal.any()`, so either one ends the request.
+  The request and every SDK retry stop at once, because the SDK hands the same signal to each attempt.
+- `generate()` checks only the brake's own signal for `LocalDeadlineError`, so a cancellation is never reported as an expired deadline.
+- `runSearch()` tries no backup once the client's signal has fired.
+  Nobody waits for the answer any more, and the backup would be a second billed request for it.
+
+Before this, a cancelled search ran on for up to 330 s, and if the default model then failed, the backup started a second billed request that nobody would ever read.
+
+Not measured: whether Google still bills a generation that is already running when the connection is cut.
+What is certain is that the connection, the retries and the backup stop.
+Pinned by `test/fallback.test.js` and, over the real stdio transport in both protocol revisions, by `test/mcp.test.js`.
+
 ## Weekly dependency update
 
 Dependabot only opens pull requests; nothing merges them on its own.
@@ -1369,6 +1402,26 @@ The `test` job checks out without stored credentials (`persist-credentials: fals
 The plan comes from the job that ran the code under test, so `merge` checks it rather than trusting it.
 Each entry must be an open pull request by Dependabot whose head is still the tested commit.
 At worst a tampered plan merges a genuine Dependabot update untested, and branch protection still demands that pull request's own green `Tests` check.
+
+### Model list drift
+
+The same workflow checks the key's model list every week, independently of the updates, through `scripts/model-drift.js`.
+It costs nothing: `models.list` is not billed.
+The full probe that decides what goes on the exclusion list costs about 33 billed requests and stays a manual run of `scripts/probe-models.js`; this check only says when one is due.
+
+It reports two things, both from `findModelDrift()` in `gemini.js`:
+
+- **stale** - exclusion entries whose model is no longer in `models.list` (`staleEntries()`, shared with `probe-models.js`)
+- **unprobed** - models offered here that `test/fixtures/models-list.json` does not contain. A new model passes `isUsableModel()` and is offered at once, untried, which is how two models that fail with `400` reached the short list in August 2026
+
+The split follows the boundary above.
+`drift` runs `npm ci --ignore-scripts` and the SDK with the Gemini key and a read-only token, and passes its result on as a job output.
+`drift-report` holds `issues: write`, runs no dependency code and checks the result rather than trusting it: model ids only, nothing that could carry markup or mentions into the issue.
+It then writes into a single issue titled "Model list drift" and changes nothing else; without drift, and on a dry run, it does nothing.
+If an issue with that title is open, the new finding is added to it as a comment, so earlier weeks stay readable; otherwise a new issue is opened.
+A closed issue counts as done and is never reopened.
+
+The open issue is found by listing the open issues and filtering by title, not through `--search`: the search index lags behind, and measured, an issue opened three seconds earlier was not found, so a second one was opened next to it.
 
 ### Branch protection
 

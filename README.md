@@ -292,12 +292,15 @@ CLI - it then waits silently on stdio, which looks like a hang.
 | Command                                 | Effect                                                                                                                                                     |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `gemini-grounding "<query>"`            | Search using the saved defaults; `--model <id>` and `--thinking <level>` apply to this call only, `--debug` adds the full stack trace on an error          |
+| `gemini-grounding -`                    | Same as a search, but reads the query from stdin, e.g. `Get-Content question.txt \| gemini-grounding -`                                                    |
 | `gemini-grounding config`               | Shows the saved models with their thinking levels and the deadline, whether an API key is present, where the config file lives, and the installed version  |
 | `gemini-grounding models [--all]`       | Lists the models suggested for use here with their token limits; `--all` lists every one with a status column                                              |
 | `gemini-grounding set-model <id>`       | Persists the default model; add `--thinking <level>` to save both in one call                                                                              |
 | `gemini-grounding set-thinking <level>` | Persists the default thinking level (`minimal`, `low`, `medium`, `high`); `--model <id>` saves both                                                        |
 | `gemini-grounding set-backup <id\|off>` | Persists a model to retry a failed request with; `--thinking <level>` gives it its own level, on its own it changes only that level                        |
 | `gemini-grounding set-deadline <s>`     | Persists after how many seconds Google aborts a search (default 300); `off` instead of a number sends no deadline                                          |
+| `gemini-grounding doctor`               | Checks Node, the config file, the API key and the saved models, one line each; exit code 1 on a problem                                                    |
+| `gemini-grounding reset <value>`        | Returns `model`, `thinking`, `backup` or `deadline` to its built-in default; `all` deletes the config file                                                 |
 | `gemini-grounding help`                 | Short help                                                                                                                                                 |
 | `gemini-grounding version`              | Prints the installed version                                                                                                                               |
 

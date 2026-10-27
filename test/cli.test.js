@@ -3,10 +3,10 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { configFile, freshConfigHome, runCli } from "./helpers.js";
+import { MODELS_LIST, configFile, freshConfigHome, runCli } from "./helpers.js";
 
 const { version } = createRequire(import.meta.url)("../package.json");
 
@@ -397,4 +397,109 @@ test("reads a hand-edited deadline above 600 s as 600 s", () => {
   assert.equal(result.status, 0);
   assert.match(result.stdout, /^Deadline: 600 s$/m);
   assert.match(result.stderr, /Warning: deadlineSeconds .* is 3600, .* using 600\./);
+});
+
+test('reads the query from stdin when it is "-"', () => {
+  // Reaching the key check proves the piped query was accepted; with "-" taken
+  // literally it would have been a search for a dash.
+  const piped = runCli(["-"], { apiKey: null, input: 'Line one with "quotes"\r\nLine two\r\n' });
+  assert.equal(piped.status, 1);
+  assert.match(piped.stderr, /^Error: GEMINI_API_KEY is not set/);
+
+  for (const input of ["", "  \r\n\n"]) {
+    const empty = runCli(["-"], { input });
+    assert.equal(empty.status, 1, JSON.stringify(input));
+    assert.equal(empty.stderr, "Error: The query is empty.\n");
+  }
+});
+
+test("resets each saved value to its built-in default", () => {
+  const configHome = freshConfigHome();
+  const cli = (...args) => runCli(args, { configHome });
+  cli("set-model", "gemini-x", "--thinking", "high");
+  cli("set-backup", "gemini-y", "--thinking", "low");
+  cli("set-deadline", "120");
+
+  assert.equal(cli("reset", "model").status, 0);
+  assert.equal(cli("reset", "thinking").status, 0);
+  assert.equal(cli("reset", "deadline").status, 0);
+  const backup = cli("reset", "backup");
+  assert.equal(backup.status, 0);
+  assert.match(backup.stdout, /^Reset - backup is back to its built-in default\n/);
+  assert.match(backup.stdout, /Backup: {3}not set/);
+  // Every key removed rather than written with a default value.
+  assert.deepEqual(backup.savedConfig(), {});
+});
+
+test("reset all deletes the config file, even a broken one", () => {
+  const configHome = freshConfigHome();
+  mkdirSync(path.dirname(configFile(configHome)), { recursive: true });
+  writeFileSync(configFile(configHome), "{broken");
+
+  const result = runCli(["reset", "all"], { configHome });
+  assert.equal(result.status, 0);
+  assert.equal(existsSync(configFile(configHome)), false);
+});
+
+test("reset refuses to make the default model the backup", () => {
+  const configHome = freshConfigHome();
+  runCli(["set-model", "gemini-x"], { configHome });
+  runCli(["set-backup", "gemini-flash-latest"], { configHome });
+
+  const result = runCli(["reset", "model"], { configHome });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /"gemini-flash-latest" is currently the backup model/);
+  assert.equal(result.savedConfig().model, "gemini-x");
+});
+
+test("reset takes exactly one known target", () => {
+  for (const args of [["reset"], ["reset", "foo"], ["reset", "model", "thinking"]]) {
+    const result = runCli(args);
+    assert.equal(result.status, 1, args.join(" "));
+    assert.match(result.stderr, /^Error: "reset" takes exactly one of/);
+  }
+});
+
+test("saves a doubtful model and warns about it afterwards", () => {
+  const result = runCli(["set-model", "gemini-typo"], { nodeArgs: [MODELS_LIST] });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /^Saved - Model: gemini-typo/);
+  assert.equal(
+    result.stderr,
+    'Warning: "gemini-typo" is not in the model list of this API key - a search with it will most likely fail.\n',
+  );
+  assert.equal(result.savedConfig().model, "gemini-typo");
+
+  // Offline, the save goes through without a word.
+  const offline = runCli(["set-model", "gemini-typo"]);
+  assert.equal(offline.status, 0);
+  assert.equal(offline.stderr, "");
+});
+
+test("doctor reports every check on its own line", () => {
+  const healthy = runCli(["doctor"], { nodeArgs: [MODELS_LIST] });
+  assert.equal(healthy.status, 0, healthy.stdout);
+  assert.match(healthy.stdout, /^Node: {5}ok - v\d+/m);
+  assert.match(healthy.stdout, /^Config: {3}ok - /m);
+  assert.match(healthy.stdout, /^API key: {2}ok - accepted, 60 models listed$/m);
+  assert.match(healthy.stdout, /^Default: {2}ok - gemini-flash-latest$/m);
+  assert.match(healthy.stdout, /^Backup: {3}ok - not set$/m);
+
+  const noKey = runCli(["doctor"], { apiKey: null });
+  assert.equal(noKey.status, 1);
+  assert.match(noKey.stdout, /^API key: {2}problem - not set/m);
+  assert.match(noKey.stdout, /^Models: {3}skipped/m);
+});
+
+test("doctor names a broken config file and a doubtful model without the path", () => {
+  const configHome = freshConfigHome();
+  mkdirSync(path.dirname(configFile(configHome)), { recursive: true });
+  writeFileSync(configFile(configHome), '{"model": "gemini-typo", "thinkingLevel": "ultra"}');
+
+  const result = runCli(["doctor"], { configHome, nodeArgs: [MODELS_LIST] });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /^Config: {3}problem - thinkingLevel in config.json must be one of/m);
+  assert.match(result.stdout, /^Default: {2}problem - "gemini-typo" is not in the model list/m);
+  assert.equal(result.stderr, "", "collected, not printed twice");
+  assert.ok(!result.stdout.includes(configHome), "no local path in the output");
 });

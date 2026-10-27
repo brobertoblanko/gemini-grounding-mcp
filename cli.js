@@ -7,14 +7,25 @@
 
 import { createRequire } from "node:module";
 
-import { runSearch, listModels, formatRuntimeError, API_KEY_MISSING_MESSAGE } from "./gemini.js";
+import {
+  runSearch,
+  listModels,
+  fetchModels,
+  checkModelIds,
+  formatRuntimeError,
+  API_KEY_MISSING_MESSAGE,
+} from "./gemini.js";
 import {
   CONFIG_PATH,
+  configProblems,
   DEFAULT_DEADLINE_SECONDS,
+  deleteSavedConfig,
   findBackupLevelProblem,
   findModelCollision,
   formatConfigState,
   formatSavedValues,
+  getSavedBackup,
+  getSavedModel,
   isValidDeadline,
   MAX_DEADLINE_SECONDS,
   resolveCallConfig,
@@ -24,7 +35,7 @@ import {
 
 // Read the same way index.js does; the reasoning for createRequire over
 // Import Attributes sits there.
-const { version } = createRequire(import.meta.url)("./package.json");
+const { version, engines } = createRequire(import.meta.url)("./package.json");
 
 const HELP = `gemini-grounding - Google search through Gemini, from the command line
 
@@ -43,6 +54,11 @@ Commands:
   set-backup --thinking <level>  Change only the backup's thinking level
   set-deadline <seconds|off>     Save after how many seconds Google aborts a
                                  search (default ${DEFAULT_DEADLINE_SECONDS}); "off" sends none
+  doctor                         Check Node, config file, API key and the
+                                 saved models, one line each
+  reset <model|thinking|backup|deadline|all>
+                                 Return a saved value to its built-in default;
+                                 "all" deletes the config file
   help                           Show this help
   version                        Show the installed version
 
@@ -64,9 +80,11 @@ Examples:
   gemini-grounding set-model gemini-flash-latest --thinking low
   gemini-grounding set-backup gemini-3.6-flash
 
-The query is one argument - quote it if it contains spaces. The API key comes
-from GEMINI_API_KEY. Settings are shared with the MCP server; "config" shows
-where they are stored.`;
+The query is one argument - quote it if it contains spaces, or pass "-" to
+read it from stdin: Get-Content question.txt | gemini-grounding -
+
+The API key comes from GEMINI_API_KEY. Settings are shared with the MCP
+server; "config" shows where they are stored.`;
 
 /** The second line of a syntax error, for when the message alone does not say how. */
 const SEE_HELP = 'Run "gemini-grounding help" for usage.';
@@ -141,9 +159,10 @@ function takeSwitch(args, name) {
  *
  * The second half is the reason for this function: without it every set command
  * would need a "config" behind it to see what the next search actually runs
- * with.
+ * with. A model written here is then checked against the key's model list, and
+ * a doubtful one warns after the save rather than blocking it.
  */
-function saveAndReport(values) {
+async function saveAndReport(values) {
   // Default and backup must not become the same model - silently there would be
   // nothing left to fall back to. The check sits here and not in the individual
   // branches so it cannot miss a write path: "set-model x", "set-thinking low
@@ -158,6 +177,9 @@ function saveAndReport(values) {
 
   console.log(`Saved - ${formatSavedValues(setSavedConfig(values))}`);
   console.log(`\n${formatConfigState()}`);
+
+  const ids = [values.model, values.backupModel].filter((id) => typeof id === "string");
+  for (const advice of await checkModelIds(ids)) console.error(`Warning: ${advice}`);
 }
 
 async function main() {
@@ -278,7 +300,7 @@ async function main() {
           "Usage: gemini-grounding set-model <id> [--thinking <level>]",
         );
       }
-      saveAndReport({ model: requireModelId(rest[0], "set-model"), thinkingLevel: thinkingFlag });
+      await saveAndReport({ model: requireModelId(rest[0], "set-model"), thinkingLevel: thinkingFlag });
       break;
     }
 
@@ -291,7 +313,7 @@ async function main() {
         );
       }
       const level = requireThinkingLevel(rest[0], "set-thinking");
-      saveAndReport({ model: modelFlag, thinkingLevel: level });
+      await saveAndReport({ model: modelFlag, thinkingLevel: level });
       break;
     }
 
@@ -310,7 +332,7 @@ async function main() {
       // rejected by findBackupLevelProblem() in saveAndReport, in the same
       // wording as for the MCP handler, which does not run through this branch.
       if (rest.length === 0 && thinkingFlag !== undefined) {
-        saveAndReport({ backupThinkingLevel: thinkingFlag });
+        await saveAndReport({ backupThinkingLevel: thinkingFlag });
         break;
       }
 
@@ -325,7 +347,7 @@ async function main() {
       // caught by saveAndReport as well - a switched-off backup has no level, and
       // the option does not expire silently.
       const backupModel = rest[0] === "off" ? false : requireModelId(rest[0], "set-backup");
-      saveAndReport({ backupModel, backupThinkingLevel: thinkingFlag });
+      await saveAndReport({ backupModel, backupThinkingLevel: thinkingFlag });
       break;
     }
 
@@ -349,7 +371,92 @@ async function main() {
             `${MAX_DEADLINE_SECONDS} (Google's own limit), or "off".`,
         );
       }
-      saveAndReport({ deadlineSeconds });
+      await saveAndReport({ deadlineSeconds });
+      break;
+    }
+
+    // One line per check, so a failure points at its cause: key, file or
+    // model. No path in the output - it is meant for bug reports, and "config"
+    // names the path.
+    case "doctor": {
+      allowFlags();
+      requireNoArgs();
+      let failed = false;
+      const row = (label, problem, detail) => {
+        if (problem) failed = true;
+        console.log(`${label.padEnd(9)} ${problem ? `problem - ${problem}` : `ok - ${detail}`}`);
+      };
+
+      const minimum = Number(engines.node.match(/\d+/)[0]);
+      const major = Number(process.versions.node.split(".")[0]);
+      row(
+        "Node:",
+        major < minimum ? `${process.version}, needs ${engines.node}` : undefined,
+        process.version,
+      );
+
+      const problems = configProblems();
+      row("Config:", problems.join(" "), "readable, every value valid");
+
+      // models.list is free and proves the key works, not only that it is set.
+      let models;
+      if (!process.env.GEMINI_API_KEY) {
+        row("API key:", "not set - set the GEMINI_API_KEY environment variable");
+      } else {
+        try {
+          models = await fetchModels();
+          row("API key:", undefined, `accepted, ${models.length} models listed`);
+        } catch (error) {
+          row("API key:", formatRuntimeError(error));
+        }
+      }
+
+      if (!models) {
+        console.log("Models:   skipped - needs a working API key");
+      } else {
+        const model = getSavedModel();
+        row("Default:", (await checkModelIds([model], models))[0], model);
+        const backup = getSavedBackup();
+        if (backup.model) {
+          row("Backup:", (await checkModelIds([backup.model], models))[0], backup.model);
+        } else {
+          row("Backup:", undefined, backup.disabled ? "off" : "not set");
+        }
+      }
+      if (failed) process.exitCode = 1;
+      break;
+    }
+
+    // Back to the built-in default through the null of setSavedConfig(), not
+    // through saveAndReport(): its confirmation would print "Model: null".
+    case "reset": {
+      allowFlags("debug");
+      const targets = {
+        model: { model: null },
+        thinking: { thinkingLevel: null },
+        // Model and level as a unit, like set-backup.
+        backup: { backupModel: null, backupThinkingLevel: null },
+        deadline: { deadlineSeconds: null },
+      };
+      const target = rest[0];
+      if (rest.length !== 1 || (target !== "all" && !Object.hasOwn(targets, target))) {
+        fail(
+          '"reset" takes exactly one of model, thinking, backup, deadline or all.',
+          "Usage: gemini-grounding reset <model|thinking|backup|deadline|all>",
+        );
+      }
+      if (target === "all") {
+        // Deleting works on a broken file too, where every other write refuses.
+        deleteSavedConfig();
+        console.log("Reset - config file deleted, every value is back to its built-in default");
+      } else {
+        // The built-in default model may be the saved backup.
+        const collision = findModelCollision(targets[target]);
+        if (collision) fail(collision);
+        setSavedConfig(targets[target]);
+        console.log(`Reset - ${target} is back to its built-in default`);
+      }
+      console.log(`\n${formatConfigState()}`);
       break;
     }
 
@@ -368,7 +475,25 @@ async function main() {
           'Example: gemini-grounding "what is an mcp server"',
         );
       }
-      const query = command.trim();
+      // "-" reads the query from stdin, the only way a multi-line query with
+      // quotes arrives intact through npm's .cmd wrapper on Windows: measured,
+      // an argument loses its quotes there and is cut at the first line break.
+      // CRLF from a Windows pipe becomes LF so the query does not depend on the
+      // shell it came from.
+      let query = command;
+      if (command === "-") {
+        if (process.stdin.isTTY) {
+          fail(
+            '"-" reads the query from stdin, but nothing is piped in.',
+            "Example: Get-Content question.txt | gemini-grounding -",
+          );
+        }
+        query = "";
+        process.stdin.setEncoding("utf8");
+        for await (const chunk of process.stdin) query += chunk;
+        query = query.replace(/\r\n/g, "\n");
+      }
+      query = query.trim();
       // Without this check an empty argument - from an unset shell variable, say
       // - would go to the API as a query and cost tokens.
       if (query === "") fail("The query is empty.");

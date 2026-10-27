@@ -293,3 +293,29 @@ test("keeps both failed attempts readable on the command line", async () => {
   );
   assert.match(describeError(error), /^gemini-primary: \{"error":.* \| backup gemini-backup: \{"error":/);
 });
+
+test("stops at the client's cancellation: no backup", async () => {
+  // A 404 hands over to the backup in every other case.
+  const client = new AbortController();
+  const calls = mockFetch(() => {
+    client.abort();
+    return errorResponse(404, "NOT_FOUND");
+  });
+
+  const error = await runSearch(withBackup({ signal: client.signal })).catch((e) => e);
+  assert.equal(calls.length, 1, "neither retried nor handed to the backup");
+  assert.doesNotMatch(String(error?.message), /no response within/, "not reported as the deadline");
+});
+
+test("stops at the client's cancellation: no further retry", async () => {
+  // 503 is retried; without the signal in the SDK's request the backoff would
+  // run on and send three more attempts plus the backup.
+  const client = new AbortController();
+  const calls = mockFetch(() => {
+    client.abort();
+    return errorResponse(503, "UNAVAILABLE");
+  });
+
+  await assert.rejects(runSearch(withBackup({ signal: client.signal })));
+  assert.equal(calls.length, 1, "neither retried nor handed to the backup");
+});

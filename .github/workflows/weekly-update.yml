@@ -89,3 +89,62 @@ jobs:
         env:
           PLAN: ${{ needs.test.outputs.plan }}
           GH_TOKEN: ${{ github.token }}
+
+  # The free check of the key's model list, independent of the updates above.
+  # Same split as test/merge: this job runs dependency code (npm ci) with the
+  # Gemini key and a read-only token; the report job below holds the write
+  # permission and runs no dependency code. See scripts/model-drift.js.
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      drift: ${{ steps.drift.outputs.drift }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # Without install scripts, as in the test job; see docs/specs.md,
+      # "Two jobs as a security boundary".
+      - run: npm ci --ignore-scripts
+
+      - id: drift
+        run: |
+          node scripts/model-drift.js check drift.json
+          echo "drift=$(cat drift.json)" >> "$GITHUB_OUTPUT"
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+  # Opens or updates one issue when something drifted; changes nothing else.
+  drift-report:
+    needs: drift
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - run: |
+          printf '%s' "$DRIFT" > "$RUNNER_TEMP/drift.json"
+          node scripts/model-drift.js report "$RUNNER_TEMP/drift.json"
+        env:
+          DRIFT: ${{ needs.drift.outputs.drift }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

@@ -69,6 +69,30 @@ test("renders an API error as code, status and Google's text for the command lin
   assert.equal(formatRuntimeError(error), "404 NOT_FOUND - models/gemini-x is not found.");
 });
 
+test("keeps a 429's waiting time in the command line rendering", () => {
+  const body = (retryDelay) =>
+    JSON.stringify({
+      error: {
+        code: 429,
+        message: "Quota exceeded.",
+        status: "RESOURCE_EXHAUSTED",
+        details: [{ "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay }],
+      },
+    });
+  const error = (retryDelay) => Object.assign(new Error(body(retryDelay)), { status: 429 });
+
+  assert.equal(
+    formatRuntimeError(error("53s")),
+    "429 RESOURCE_EXHAUSTED - Quota exceeded. (retry in 53 s)",
+  );
+  assert.equal(
+    formatRuntimeError(error("0.4s")),
+    "429 RESOURCE_EXHAUSTED - Quota exceeded. (retry in 1 s)",
+  );
+  // The MCP side keeps the raw body, waiting time included.
+  assert.equal(describeError(error("53s")), body("53s"));
+});
+
 test("leaves everything that is no API error to describeError", () => {
   const network = new TypeError("fetch failed", {
     cause: Object.assign(new Error("connect refused"), { code: "ECONNREFUSED" }),

@@ -1151,6 +1151,22 @@ Beim Backup steht das geerbte Level als Wert und nicht als bloßes Wort „inher
 Der Zusatz sagt dazu, dass der Wert nicht ihm gehört, sondern mitwandert - ein Aufruf mit eigenem `thinkingLevel` wird stattdessen geerbt.
 Der Mittelpunkt trennt wie in `formatSearchQueries`: Modellnamen enthalten selbst Bindestriche und Ziffern, zwischen denen ein weiterer Bindestrich untergeht.
 
+#### Ein zweifelhaftes Modell warnt nach dem Speichern
+
+Nach jedem Schreiben eines Standard- oder Backup-Modells sucht `checkModelIds()` in `gemini.js` die ID in `models.list`, das kostenlos ist:
+
+- nicht in der Liste - `"<id>" is not in the model list of this API key - a search with it will most likely fail.`
+- in der Liste, aber nicht nutzbar - `"<id>" cannot run here: <Status>`, derselbe Status wie in `gemini-list-models` mit `all: true`
+- auf der Ausschlussliste - der Grund aus `models-excluded.js`
+
+Gespeichert wird das Modell trotzdem, und die Warnung folgt der Bestätigung: in der CLI auf stderr, in der MCP-Antwort als Absatz `Warning:`.
+Die Kurzliste entscheidet über die Anzeige, nicht über die Erlaubnis, und eine ID, die der Key heute nicht listet, kann er morgen listen.
+Lässt sich die Liste nicht abrufen - offline, kein Key -, gibt es gar keine Warnung, sodass ein Speichern nie an der Prüfung scheitert.
+Der Text nennt keinen Befehl, weil beide Schnittstellen ihn teilen.
+
+`gemini-grounding doctor` führt dieselbe Prüfung für die gespeicherten Modelle aus, neben der Node-Version, der Lesbarkeit der `config.json` und einem Aufruf von `models.list`, der zeigt, dass der Key angenommen wird und nicht nur gesetzt ist.
+Seine Config-Zeile kommt aus `configProblems()` in `config.js`, das die Warnungen genau der Getter sammelt, die auch eine Suche durchläuft, sodass `doctor` nicht anderer Meinung sein kann als eine Suche.
+
 ### Speicherort der Konfiguration
 
 Nicht `./config.json`: Das Arbeitsverzeichnis eines per stdio gestarteten
@@ -1559,6 +1575,23 @@ Weder `ApiError` noch die erfolgreiche `HttpResponse` trägt eine Versuchszahl, 
 Sie zu zählen hieße, das globale `fetch` zu umhüllen und einen Kontext pro Aufruf über `AsyncLocalStorage` zu propagieren, denn mehrere `gemini-search`-Aufrufe können parallel laufen und ein globaler Zähler würde sie vermischen.
 Das stand nicht im Verhältnis zu einer Fußnote, deshalb weist der Footer weiterhin Modell, Thinking-Level und Tokenverbrauch aus - und die möglichen Zusatzsekunden stehen stattdessen hier.
 
+### Abbruch durch den Client
+
+Bricht der Nutzer einen laufenden `gemini-search` ab (Esc in Claude Code), schickt der Client `notifications/cancelled`.
+Das MCP-SDK macht daraus das `AbortSignal` unter `ctx.mcpReq.signal`, und der Handler reicht es an `runSearch()` weiter.
+
+- `generate()` verbindet es über `AbortSignal.any()` mit der lokalen Bremse, sodass jedes der beiden die Anfrage beendet.
+  Die Anfrage und jeder Retry des SDK enden sofort, weil das SDK jedem Versuch dasselbe Signal mitgibt.
+- `generate()` prüft für `LocalDeadlineError` nur das Signal der Bremse, ein Abbruch wird also nie als abgelaufene Frist gemeldet.
+- `runSearch()` versucht kein Backup mehr, sobald das Signal des Clients ausgelöst hat.
+  Auf die Antwort wartet niemand mehr, und das Backup wäre eine zweite abgerechnete Anfrage dafür.
+
+Vorher lief eine abgebrochene Suche bis zu 330 s weiter, und scheiterte danach das Standardmodell, startete das Backup eine zweite abgerechnete Anfrage, die nie jemand lesen würde.
+
+Nicht gemessen: ob Google eine bereits laufende Generierung noch abrechnet, wenn die Verbindung getrennt wird.
+Sicher ist, dass Verbindung, Retries und Backup enden.
+Festgenagelt in `test/fallback.test.js` und, über den echten stdio-Transport in beiden Protokollrevisionen, in `test/mcp.test.js`.
+
 ## Wöchentliches Abhängigkeits-Update
 
 Dependabot öffnet nur Pull Requests; nichts mergt sie von selbst.
@@ -1617,6 +1650,26 @@ Der `test`-Job checkt ohne gespeicherte Zugangsdaten aus (`persist-credentials: 
 Der Plan stammt aus dem Job, der den getesteten Code ausgeführt hat, deshalb prüft `merge` ihn, statt ihm zu vertrauen.
 Jeder Eintrag muss ein offener Pull Request von Dependabot sein, dessen Head noch der getestete Commit ist.
 Schlimmstenfalls mergt ein manipulierter Plan ein echtes Dependabot-Update ungetestet, und die Branch-Protection verlangt trotzdem den eigenen grünen `Tests`-Check dieses Pull Requests.
+
+### Drift der Modellliste
+
+Derselbe Workflow prüft jede Woche die Modellliste des Keys, unabhängig von den Updates, über `scripts/model-drift.js`.
+Das kostet nichts: `models.list` wird nicht abgerechnet.
+Der vollständige Probe-Lauf, der über die Ausschlussliste entscheidet, kostet etwa 33 abgerechnete Anfragen und bleibt ein manueller Lauf von `scripts/probe-models.js`; diese Prüfung sagt nur, wann einer fällig ist.
+
+Sie meldet zweierlei, beides aus `findModelDrift()` in `gemini.js`:
+
+- **stale** - Einträge der Ausschlussliste, deren Modell nicht mehr in `models.list` steht (`staleEntries()`, gemeinsam mit `probe-models.js`)
+- **unprobed** - hier angebotene Modelle, die `test/fixtures/models-list.json` nicht enthält. Ein neues Modell besteht `isUsableModel()` und wird sofort angeboten, ungeprüft - so kamen im August 2026 zwei Modelle auf die Kurzliste, die mit `400` scheitern
+
+Die Aufteilung folgt der Grenze oben.
+`drift` führt `npm ci --ignore-scripts` und das SDK mit dem Gemini-Key und einem Token nur zum Lesen aus und gibt sein Ergebnis als Job-Output weiter.
+`drift-report` hält `issues: write`, führt keinen Code aus Abhängigkeiten aus und prüft das Ergebnis, statt ihm zu vertrauen: nur Modell-IDs, nichts, was Markup oder Erwähnungen in das Issue tragen könnte.
+Danach schreibt es in ein einziges Issue mit dem Titel "Model list drift" und ändert sonst nichts; ohne Drift und bei einem Probelauf tut es nichts.
+Ist ein Issue mit diesem Titel offen, kommt der neue Befund als Kommentar dazu, sodass frühere Wochen lesbar bleiben; sonst entsteht ein neues Issue.
+Ein geschlossenes Issue gilt als erledigt und wird nie wieder geöffnet.
+
+Das offene Issue wird gefunden, indem die offenen Issues gelistet und nach Titel gefiltert werden, nicht über `--search`: Der Suchindex hinkt hinterher, und gemessen wurde ein drei Sekunden zuvor angelegtes Issue nicht gefunden, sodass ein zweites daneben entstand.
 
 ### Branch-Protection
 

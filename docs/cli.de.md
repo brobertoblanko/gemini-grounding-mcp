@@ -49,6 +49,18 @@ gemini-grounding "welche node-version ist aktuell lts"
 Ohne Anführungszeichen bricht der Aufruf mit einer Meldung ab, statt eine Anfrage zu senden, aus der die Optionsauswertung einzelne Wörter herausgeschnitten hat.
 Ohne diese Prüfung wäre aus `… what does --thinking high mean …` die Anfrage `what does mean …` geworden: eine Anfrage, die plausibel aussieht, eine plausible Antwort liefert und stillschweigend nicht die gestellte Frage ist.
 
+Eine lange Frage mit Zeilenumbrüchen und Anführungszeichen lässt sich leichter in eine Datei schreiben und hineinleiten.
+Ein einzelnes `-` anstelle der Anfrage liest sie von stdin:
+
+```powershell
+Get-Content frage.txt | gemini-grounding -
+```
+
+Unter Windows ist das mehr als Bequemlichkeit.
+Über die `.cmd`-Hülle von npm aufgerufen - aus `cmd.exe`, Windows PowerShell 5.1 oder einem anderen Programm - wird ein mehrzeiliges Argument am ersten Zeilenumbruch abgeschnitten und verliert seine Anführungszeichen, ohne jede Meldung.
+Über stdin kommt es auf jedem Weg unverändert an.
+Es gilt dieselbe Prüfung auf eine leere Anfrage, und ist nichts hineingeleitet, bricht `-` ab, statt auf Eingabe zu warten.
+
 Unbekannte Optionen (`--al` statt `--all`) und überzählige Argumente sind ebenfalls Fehler mit Exit-Code 1.
 Nichts davon wird stillschweigend übergangen.
 
@@ -169,6 +181,44 @@ Dreißig Sekunden nach der Frist hört der Server von sich aus auf zu warten, fa
 Ohne Frist gibt es auch diese Bremse nicht.
 Warum es beides gibt und was es kostet: [specs.de.md, „Die Frist, die dieser Server mitschickt"](./specs.de.md#die-frist-die-dieser-server-mitschickt).
 
+## Die Einrichtung prüfen
+
+`doctor` prüft alles, wovon eine Suche abhängt, eine Zeile pro Prüfung, und endet mit Exit-Code 1, wenn eine davon scheitert:
+
+```console
+$ gemini-grounding doctor
+Node:     ok - v24.15.0
+Config:   ok - readable, every value valid
+API key:  ok - accepted, 60 models listed
+Default:  problem - "gemini-3-flsh" is not in the model list of this API key - a search with it will most likely fail.
+Backup:   ok - not set
+```
+
+Der Key wird über `models.list` geprüft, das kostenlos ist und zeigt, dass Google den Key annimmt, nicht nur, dass er gesetzt ist.
+Die Ausgabe nennt keinen Pfad, damit sie unverändert in einen Bug-Report passt; `config` zeigt, wo die Datei liegt.
+
+Dieselbe Modellprüfung läuft nach jedem `set-model` und `set-backup`.
+Ein Modell, das der Key nicht listet, das hier nicht laufen kann oder das auf der Ausschlussliste steht, wird trotzdem gespeichert, gefolgt von einer Zeile `Warning:` auf stderr.
+Offline oder ohne Key gibt es keine Warnung.
+
+## Zurück zu den Standardwerten
+
+`reset` setzt einen gespeicherten Wert auf seinen eingebauten Standard zurück, indem es ihn aus der `config.json` entfernt:
+
+```console
+$ gemini-grounding reset backup
+Reset - backup is back to its built-in default
+
+Default:  gemini-flash-latest · medium
+Backup:   not set
+Deadline: 300 s
+```
+
+Die Ziele sind `model`, `thinking`, `backup` (Modell und Level gemeinsam, wie bei `set-backup`) und `deadline`.
+`reset all` löscht die Datei, was auch dann funktioniert, wenn sie kaputt ist und jeder andere Schreibvorgang verweigert.
+Ein Zurücksetzen, das das eingebaute Standardmodell zum gespeicherten Backup machen würde, wird abgewiesen, wie dieselbe Kollision bei `set-model`.
+Ein Gegenstück über MCP gibt es nicht; ein Zurücksetzen ist selten, und `gemini-set-config` bräuchte dafür eine weitere Art von Parameter.
+
 ## Fehler in einer lesbaren Zeile
 
 Scheitert eine Anfrage, gibt die CLI Googles Statuscode, Statusnamen und Meldung in einer Zeile aus und endet mit Exit-Code 1:
@@ -180,6 +230,14 @@ Run again with --debug for the full stack trace.
 ```
 
 Ein `503 UNAVAILABLE` sagt, dass die Anfrage nicht bei Google angekommen ist - ein anderes Problem als eine kaputte Installation, und eines, gegen das nichts hilft außer einem späteren Versuch.
+
+Ein `429` behält die Wartezeit, die Google mitschickt, auf ganze Sekunden aufgerundet:
+
+```console
+Error: 429 RESOURCE_EXHAUSTED - You exceeded your current quota, ... (retry in 53 s)
+```
+
+Die CLI wartet nicht selbst, sie sagt nur, wann ein neuer Versuch Sinn hat.
 
 `--debug` gibt zusätzlich den vollständigen Stacktrace und den rohen Fehler aus, samt Googles kompletter Antwort.
 Standardmäßig ist das aus, weil der Stack aus SDK-Interna besteht und absolute Pfade Ihres Rechners enthält, die in jedem Bug-Report landen, in den die Ausgabe kopiert wird.

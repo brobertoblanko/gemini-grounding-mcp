@@ -49,6 +49,18 @@ gemini-grounding "which node version is currently lts"
 Unquoted, the call aborts with a message rather than sending a query that option parsing has cut individual words out of.
 Without that check, `… what does --thinking high mean …` would have run as `what does mean …`: a query that looks plausible, returns a plausible answer, and is quietly not the question you asked.
 
+A long question with line breaks and quotes is easier to write into a file and pipe in.
+A single `-` in place of the query reads it from stdin:
+
+```powershell
+Get-Content question.txt | gemini-grounding -
+```
+
+On Windows this is more than convenience.
+Called through npm's `.cmd` wrapper - from `cmd.exe`, Windows PowerShell 5.1 or another program - a multi-line argument is cut at its first line break and loses its quotes, without any message.
+stdin arrives intact on every route.
+The same check for an empty query applies, and without anything piped in, `-` aborts instead of waiting for input.
+
 Unknown options (`--al` instead of `--all`) and surplus arguments are errors with exit code 1 as well.
 None of it is silently ignored.
 
@@ -169,6 +181,44 @@ Thirty seconds after the deadline the server stops waiting by itself, in case th
 Without a deadline there is no such brake either.
 Why both exist and what they cost: [specs.md, "The deadline this server does send"](./specs.md#the-deadline-this-server-does-send).
 
+## Checking the setup
+
+`doctor` checks everything a search depends on, one line each, and exits with code 1 if any check fails:
+
+```console
+$ gemini-grounding doctor
+Node:     ok - v24.15.0
+Config:   ok - readable, every value valid
+API key:  ok - accepted, 60 models listed
+Default:  problem - "gemini-3-flsh" is not in the model list of this API key - a search with it will most likely fail.
+Backup:   ok - not set
+```
+
+The key is checked through `models.list`, which is free and proves that Google accepts the key, not only that it is set.
+The output names no path, so it can go into a bug report as it is; `config` shows where the file lives.
+
+The same model check runs after every `set-model` and `set-backup`.
+A model the key does not list, that cannot run here, or that is on the exclusion list is saved all the same, followed by a `Warning:` line on stderr.
+Offline or without a key there is no warning.
+
+## Back to the defaults
+
+`reset` returns a saved value to its built-in default by removing it from `config.json`:
+
+```console
+$ gemini-grounding reset backup
+Reset - backup is back to its built-in default
+
+Default:  gemini-flash-latest · medium
+Backup:   not set
+Deadline: 300 s
+```
+
+The targets are `model`, `thinking`, `backup` (model and level together, as with `set-backup`) and `deadline`.
+`reset all` deletes the file, which also works when it is broken and every other write refuses.
+A reset that would make the built-in default model the saved backup is refused, like the same collision on `set-model`.
+There is no MCP counterpart; a reset is rare, and `gemini-set-config` would need another kind of parameter for it.
+
 ## Errors in one readable line
 
 When a request fails, the CLI prints Google's status code, status name and message on one line and exits with code 1:
@@ -180,6 +230,14 @@ Run again with --debug for the full stack trace.
 ```
 
 A `503 UNAVAILABLE` tells you the request did not get through to Google, which is a different problem from a broken installation - and one you can do nothing about except try again later.
+
+A `429` keeps the waiting time Google sends along, rounded up to whole seconds:
+
+```console
+Error: 429 RESOURCE_EXHAUSTED - You exceeded your current quota, ... (retry in 53 s)
+```
+
+The CLI does not wait on its own; it only tells you when another attempt makes sense.
 
 `--debug` adds the full stack trace and the raw error, including Google's complete response body.
 It is off by default because the stack consists of SDK internals and contains absolute paths of your machine, which end up in every bug report the output is pasted into.

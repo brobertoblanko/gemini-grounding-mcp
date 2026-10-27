@@ -140,11 +140,14 @@ export function formatRuntimeError(error) {
       `backup ${backup.model}: ${formatRuntimeError(backup.error)}`
     );
   }
-  const { statusName, message } = readErrorBody(error);
+  const { statusName, message, retryDelay } = readErrorBody(error);
   if (typeof error?.status !== "number" || typeof message !== "string") {
     return describeError(error);
   }
-  return `${error.status}${statusName ? ` ${statusName}` : ""} - ${message}`;
+  // Rounded up: "retry in 0 s" for a "0.4s" would invite a retry that still fails.
+  const seconds = Math.ceil(Number.parseFloat(retryDelay));
+  const retry = Number.isFinite(seconds) ? ` (retry in ${seconds} s)` : "";
+  return `${error.status}${statusName ? ` ${statusName}` : ""} - ${message}${retry}`;
 }
 
 /**
@@ -506,7 +509,7 @@ export function formatFooter({
 /**
  * The API's error body as an object: status ("UNAVAILABLE", "NOT_FOUND", ...),
  * Google's plain-text message and, where present, the machine-readable reason
- * from error.details.
+ * and a 429's waiting time ("53s") from error.details.
  *
  * The message of an ApiError IS the JSON body of the error response, even for a
  * response without JSON - the SDK then builds one itself. In a try all the same:
@@ -520,6 +523,7 @@ export function readErrorBody(error) {
       statusName: body?.status,
       message: body?.message,
       reason: body?.details?.find((detail) => detail.reason)?.reason,
+      retryDelay: body?.details?.find((detail) => detail.retryDelay)?.retryDelay,
     };
   } catch {
     return {};
@@ -621,15 +625,19 @@ export class LocalDeadlineError extends Error {
  * than AbortSignal.timeout(): the tests advance setTimeout with mock.timers and
  * would otherwise have to wait 330 real seconds. Without a deadline there is no
  * brake either - whoever switched the deadline off waits for Google's own limit.
+ *
+ * signal is the client's cancellation and ends the request just like the brake,
+ * but is not reported as a deadline.
  */
-async function generate(ai, { query, model, thinkingLevel, deadlineSeconds }) {
+async function generate(ai, { query, model, thinkingLevel, deadlineSeconds, signal }) {
   const brake = new AbortController();
   const timer =
     deadlineSeconds === false
       ? undefined
       : setTimeout(() => brake.abort(), (deadlineSeconds + LOCAL_BRAKE_MARGIN_SECONDS) * 1000);
+  const abort = signal ? AbortSignal.any([brake.signal, signal]) : brake.signal;
   try {
-    return await requestContent(ai, { query, model, thinkingLevel, signal: brake.signal });
+    return await requestContent(ai, { query, model, thinkingLevel, signal: abort });
   } catch (error) {
     // Checked on the signal, not on the error: what fetch throws on an abort
     // differs between runtimes, the signal's state does not.
@@ -688,6 +696,11 @@ function requestContent(ai, { query, model, thinkingLevel, signal }) {
  *
  * Everything evaluated afterwards runs on the response that won and knows
  * nothing of the fallback - except the footer, which has to name it.
+ *
+ * signal is the MCP client's cancellation. Once it fires, the request, the SDK's
+ * retries and the backup all stop: nobody waits for the answer any more, and a
+ * backup would be a second billed request for it.
+ * Full derivation: docs/specs.md, "Cancellation by the client".
  */
 export async function runSearch({
   query,
@@ -696,6 +709,7 @@ export async function runSearch({
   backupModel,
   backupThinkingLevel,
   deadlineSeconds = DEFAULT_DEADLINE_SECONDS,
+  signal,
 }) {
   const ai = getClient({ deadlineSeconds });
 
@@ -705,11 +719,11 @@ export async function runSearch({
   let fallback;
 
   try {
-    response = await generate(ai, { query, model, thinkingLevel, deadlineSeconds });
+    response = await generate(ai, { query, model, thinkingLevel, deadlineSeconds, signal });
   } catch (error) {
     // Without a configured backup nothing changes: the error goes out unaltered,
     // as it did before this feature.
-    if (!backupModel) throw error;
+    if (!backupModel || signal?.aborted) throw error;
 
     const { statusName, reason } = readErrorBody(error);
     const refusal = fallbackRefusal({ error, model, backupModel, reason });
@@ -723,7 +737,7 @@ export async function runSearch({
     thinkingLevel = backupThinkingLevel ?? thinkingLevel;
 
     try {
-      response = await generate(ai, { query, model, thinkingLevel, deadlineSeconds });
+      response = await generate(ai, { query, model, thinkingLevel, deadlineSeconds, signal });
     } catch (backupError) {
       // Both errors, each with its model in front of it. With only the second
       // one here, you would go looking at the wrong model; describeError() on
@@ -828,6 +842,43 @@ function isOfferedModel(model) {
 }
 
 /**
+ * Entries of the exclusion list that no model in models.list matches any more,
+ * because Google retired it. Harmless at runtime - nothing ever looks an entry
+ * up unless the API named the model first - but the reason is dead weight, and a
+ * reused id would attach it to something else.
+ *
+ * Reported by scripts/probe-models.js and scripts/model-drift.js because nothing
+ * else can: the test in test/models.test.js reads the stored response, which
+ * keeps a retired model until somebody renews the file, and a test may not call
+ * the live API. Needs the full models.list: without liveIds it reports nothing
+ * rather than guessing from a partial list.
+ */
+export function staleEntries(liveIds) {
+  if (!liveIds) return [];
+  return Object.keys(EXCLUDED_MODELS).filter((id) => !liveIds.has(id));
+}
+
+/**
+ * What changed in the key's model list since knownIds was recorded, for the
+ * weekly check in scripts/model-drift.js:
+ * - stale: exclusion entries whose model is gone (see staleEntries)
+ * - unprobed: models offered here that knownIds does not contain - a new model
+ *   passes isUsableModel() and is offered at once, untried, which is how two
+ *   models that fail with 400 reached the short list in August 2026
+ */
+export function findModelDrift(models, knownIds) {
+  const liveIds = new Set(models.map(modelId));
+  return {
+    stale: staleEntries(liveIds),
+    unprobed: models
+      .filter(isOfferedModel)
+      .map(modelId)
+      .filter((id) => !knownIds.has(id))
+      .sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+/**
  * Why a model is not in the default list - for the --all view only. An excluded
  * model shows the kind of its exclusion, everything before the first dash of its
  * reason: the reason itself runs to three lines for the "unsuitable" entries,
@@ -846,6 +897,47 @@ function modelStatus(model) {
   if (model.thinking !== true) return "no thinking";
   if (!isExcludedModel(model)) return "offered";
   return EXCLUDED_MODELS[modelId(model)].split(" - ")[0];
+}
+
+/** Every model the current API key exposes, across all pages. models.list is free. */
+export async function fetchModels() {
+  const ai = getClient();
+  const pager = await ai.models.list({ config: { pageSize: 50 } });
+  const models = [];
+  for await (const model of pager) models.push(model);
+  return models;
+}
+
+/**
+ * Why each of the given model ids is unlikely to work here, as plain text - an
+ * empty list when all of them look fine. Advice after a save, never a refusal:
+ * the short list decides what is shown, not what is allowed, and an id the key
+ * does not list today may be listed tomorrow.
+ *
+ * A failed models.list (offline, no key) yields no advice rather than an error,
+ * so a save never fails on it. Pass models when they are already fetched.
+ * No command name in the text: the CLI and gemini-set-config share it.
+ */
+export async function checkModelIds(ids, models) {
+  if (!models) {
+    try {
+      models = await fetchModels();
+    } catch {
+      return [];
+    }
+  }
+  const advice = [];
+  for (const id of ids) {
+    const model = models.find((candidate) => modelId(candidate) === id);
+    if (!model) {
+      advice.push(`"${id}" is not in the model list of this API key - a search with it will most likely fail.`);
+    } else if (!isUsableModel(model)) {
+      advice.push(`"${id}" cannot run here: ${modelStatus(model)}.`);
+    } else if (isExcludedModel(model)) {
+      advice.push(`"${id}" is on this server's exclusion list: ${EXCLUDED_MODELS[id]}.`);
+    }
+  }
+  return advice;
 }
 
 /**
@@ -869,11 +961,7 @@ function modelStatus(model) {
  * response and answer with 404. A field indicating that does not exist.
  */
 export async function listModels({ all = false, allOption = "--all" } = {}) {
-  const ai = getClient();
-  const pager = await ai.models.list({ config: { pageSize: 50 } });
-
-  const models = [];
-  for await (const model of pager) models.push(model);
+  const models = await fetchModels();
   if (models.length === 0) return "No models available for this API key.";
 
   const usable = models.filter(isUsableModel);

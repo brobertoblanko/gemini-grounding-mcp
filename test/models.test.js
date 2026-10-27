@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { isExcludedModel, isUsableModel, listModels, modelId } from "../gemini.js";
+import {
+  checkModelIds,
+  findModelDrift,
+  isExcludedModel,
+  isUsableModel,
+  listModels,
+  modelId,
+} from "../gemini.js";
 import { EXCLUDED_MODELS } from "../models-excluded.js";
 import { mockFetch } from "./helpers.js";
 
@@ -150,4 +157,43 @@ test("falls back to the usable models when the exclusion list covers them all", 
   for (const id of Object.keys(EXCLUDED_MODELS)) {
     assert.ok(output.includes(`${id} `), `${id} must be shown when nothing else is left`);
   }
+});
+
+test("names why a saved model id is unlikely to work, and stays quiet on a good one", async () => {
+  mockFetch(listResponse);
+
+  const advice = await checkModelIds([
+    "gemini-flash-latest",
+    "gemini-typo",
+    "aqa",
+    "antigravity-preview-05-2026",
+    "gemma-4-31b-it",
+  ]);
+
+  assert.deepEqual(advice, [
+    '"gemini-typo" is not in the model list of this API key - a search with it will most likely fail.',
+    '"aqa" cannot run here: no text (generateAnswer).',
+    '"antigravity-preview-05-2026" cannot run here: no thinking.',
+    `"gemma-4-31b-it" is on this server's exclusion list: ${EXCLUDED_MODELS["gemma-4-31b-it"]}.`,
+  ]);
+});
+
+test("gives no advice when the model list cannot be fetched", async () => {
+  globalThis.fetch = async () => {
+    throw new TypeError("fetch failed");
+  };
+  assert.deepEqual(await checkModelIds(["gemini-typo"]), []);
+});
+
+test("finds retired exclusions and offered models nobody has probed", () => {
+  const known = new Set(ids);
+  const sdkModels = FIXTURE.models.map(asSdkModel);
+  assert.deepEqual(findModelDrift(sdkModels, known), { stale: [], unprobed: [] });
+
+  // A new usable model appears, and an excluded one is retired.
+  const template = FIXTURE.models.find((model) => modelId(model) === "gemini-flash-latest");
+  const newcomer = { ...asSdkModel(template), name: "models/gemini-9-flash" };
+  const retired = "gemma-4-31b-it";
+  const live = [...sdkModels.filter((model) => modelId(model) !== retired), newcomer];
+  assert.deepEqual(findModelDrift(live, known), { stale: [retired], unprobed: ["gemini-9-flash"] });
 });
