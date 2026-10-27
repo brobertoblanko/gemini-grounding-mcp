@@ -22,16 +22,10 @@ import {
   THINKING_LEVELS,
 } from "./config.js";
 
-// The version comes from package.json so it is maintained in one place only - a
-// second number kept in step by hand sooner or later reports a release to the
-// client that is not the one shipped.
-//
-// createRequire instead of import ... with { type: "json" }: both run from the
-// supported Node version on, but Import Attributes would be a syntax error when
-// invoked under an older one - and a syntax error aborts the file while parsing,
-// before any version check could take effect. createRequire has always run. The
-// package.json sits next to this file, in the clone as in the installed package:
-// npm always packs it along, regardless of files.
+// The version comes from package.json, so it is maintained in one place only.
+// createRequire instead of import ... with { type: "json" }: under an older Node
+// the Import Attributes are a syntax error that aborts the file before any
+// version check. npm always packs package.json along, regardless of files.
 const { version } = createRequire(import.meta.url)("./package.json");
 
 function createServer() {
@@ -102,14 +96,9 @@ function createServer() {
       // Full derivation: docs/specs.md, "Tool annotations".
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    // The defaults are resolved here in the handler, NOT as a Zod .default() in
-    // the schema: a schema default is evaluated once when the tool is registered
-    // and then frozen, so gemini-set-config would only take effect after a server
-    // restart.
-    //
-    // resolveCallConfig instead of two ?? in this place, because the CLI has to
-    // answer the same question and is to arrive at the same answer - including the
-    // rule that a named model gets no backup.
+    // The defaults are resolved per call, NOT as a Zod .default(): that is
+    // evaluated once at registration, so gemini-set-config would only take effect
+    // after a restart. resolveCallConfig, so the CLI arrives at the same answer.
     // Full derivation: docs/specs.md, "Resolving the defaults per call".
     async ({ query, model, thinkingLevel }, ctx) => {
       try {
@@ -259,16 +248,11 @@ function createServer() {
         };
       }
 
-      // Write errors are a real possibility here - the target directory is created
-      // on saving and can be unwritable depending on permissions or a relocated
-      // %APPDATA%, and an unreadable existing file refuses the write. Without catch
-      // the error would run out of the handler uncaught; with it, it arrives as a
-      // clean isError response. Both messages name the path themselves.
+      // Write errors are real here: an unwritable directory or an unreadable file.
+      // Without catch they would escape the handler instead of arriving as isError.
       let saved;
       try {
-        // setSavedConfig returns what was actually written, which matters for the
-        // backup it writes as a unit: the confirmation below names a level that
-        // expired instead of concealing it.
+        // What was actually written, so the confirmation names an expired level.
         saved = setSavedConfig({
           model,
           thinkingLevel,
@@ -287,13 +271,8 @@ function createServer() {
           isError: true,
         };
       }
-      // Two pieces of information, and both are needed: the first line names every
-      // written value on its own, because a stored value would otherwise be
-      // indistinguishable from a discarded parameter. The lines below it name the
-      // complete state, so that after the change it is settled without asking what
-      // the next query runs with - exactly the confirmation CLAUDE.md requires
-      // after a model change. Same functions as in the CLI, so the two interfaces
-      // cannot drift apart.
+      // What was written, then the complete state the next query runs with - the
+      // confirmation CLAUDE.md requires after a model change.
       // Full derivation: docs/specs.md, "Reporting what was saved".
       //
       // A doubtful model warns after the save instead of refusing it, as in the
