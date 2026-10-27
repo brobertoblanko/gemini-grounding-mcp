@@ -110,9 +110,13 @@ function createServer() {
     // answer the same question and is to arrive at the same answer - including the
     // rule that a named model gets no backup.
     // Full derivation: docs/specs.md, "Resolving the defaults per call".
-    async ({ query, model, thinkingLevel }) => {
+    async ({ query, model, thinkingLevel }, ctx) => {
       try {
-        const text = await runSearch({ query, ...resolveCallConfig({ model, thinkingLevel }) });
+        const text = await runSearch({
+          query,
+          ...resolveCallConfig({ model, thinkingLevel }),
+          signal: ctx.mcpReq.signal,
+        });
         return { content: [{ type: "text", text }] };
       } catch (error) {
         return {

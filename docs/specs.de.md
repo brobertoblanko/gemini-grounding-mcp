@@ -1559,6 +1559,23 @@ Weder `ApiError` noch die erfolgreiche `HttpResponse` trägt eine Versuchszahl, 
 Sie zu zählen hieße, das globale `fetch` zu umhüllen und einen Kontext pro Aufruf über `AsyncLocalStorage` zu propagieren, denn mehrere `gemini-search`-Aufrufe können parallel laufen und ein globaler Zähler würde sie vermischen.
 Das stand nicht im Verhältnis zu einer Fußnote, deshalb weist der Footer weiterhin Modell, Thinking-Level und Tokenverbrauch aus - und die möglichen Zusatzsekunden stehen stattdessen hier.
 
+### Abbruch durch den Client
+
+Bricht der Nutzer einen laufenden `gemini-search` ab (Esc in Claude Code), schickt der Client `notifications/cancelled`.
+Das MCP-SDK macht daraus das `AbortSignal` unter `ctx.mcpReq.signal`, und der Handler reicht es an `runSearch()` weiter.
+
+- `generate()` verbindet es über `AbortSignal.any()` mit der lokalen Bremse, sodass jedes der beiden die Anfrage beendet.
+  Die Anfrage und jeder Retry des SDK enden sofort, weil das SDK jedem Versuch dasselbe Signal mitgibt.
+- `generate()` prüft für `LocalDeadlineError` nur das Signal der Bremse, ein Abbruch wird also nie als abgelaufene Frist gemeldet.
+- `runSearch()` versucht kein Backup mehr, sobald das Signal des Clients ausgelöst hat.
+  Auf die Antwort wartet niemand mehr, und das Backup wäre eine zweite abgerechnete Anfrage dafür.
+
+Vorher lief eine abgebrochene Suche bis zu 330 s weiter, und scheiterte danach das Standardmodell, startete das Backup eine zweite abgerechnete Anfrage, die nie jemand lesen würde.
+
+Nicht gemessen: ob Google eine bereits laufende Generierung noch abrechnet, wenn die Verbindung getrennt wird.
+Sicher ist, dass Verbindung, Retries und Backup enden.
+Festgenagelt in `test/fallback.test.js` und, über den echten stdio-Transport in beiden Protokollrevisionen, in `test/mcp.test.js`.
+
 ## Wöchentliches Abhängigkeits-Update
 
 Dependabot öffnet nur Pull Requests; nichts mergt sie von selbst.

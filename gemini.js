@@ -625,15 +625,19 @@ export class LocalDeadlineError extends Error {
  * than AbortSignal.timeout(): the tests advance setTimeout with mock.timers and
  * would otherwise have to wait 330 real seconds. Without a deadline there is no
  * brake either - whoever switched the deadline off waits for Google's own limit.
+ *
+ * signal is the client's cancellation and ends the request just like the brake,
+ * but is not reported as a deadline.
  */
-async function generate(ai, { query, model, thinkingLevel, deadlineSeconds }) {
+async function generate(ai, { query, model, thinkingLevel, deadlineSeconds, signal }) {
   const brake = new AbortController();
   const timer =
     deadlineSeconds === false
       ? undefined
       : setTimeout(() => brake.abort(), (deadlineSeconds + LOCAL_BRAKE_MARGIN_SECONDS) * 1000);
+  const abort = signal ? AbortSignal.any([brake.signal, signal]) : brake.signal;
   try {
-    return await requestContent(ai, { query, model, thinkingLevel, signal: brake.signal });
+    return await requestContent(ai, { query, model, thinkingLevel, signal: abort });
   } catch (error) {
     // Checked on the signal, not on the error: what fetch throws on an abort
     // differs between runtimes, the signal's state does not.
@@ -692,6 +696,11 @@ function requestContent(ai, { query, model, thinkingLevel, signal }) {
  *
  * Everything evaluated afterwards runs on the response that won and knows
  * nothing of the fallback - except the footer, which has to name it.
+ *
+ * signal is the MCP client's cancellation. Once it fires, the request, the SDK's
+ * retries and the backup all stop: nobody waits for the answer any more, and a
+ * backup would be a second billed request for it.
+ * Full derivation: docs/specs.md, "Cancellation by the client".
  */
 export async function runSearch({
   query,
@@ -700,6 +709,7 @@ export async function runSearch({
   backupModel,
   backupThinkingLevel,
   deadlineSeconds = DEFAULT_DEADLINE_SECONDS,
+  signal,
 }) {
   const ai = getClient({ deadlineSeconds });
 
@@ -709,11 +719,11 @@ export async function runSearch({
   let fallback;
 
   try {
-    response = await generate(ai, { query, model, thinkingLevel, deadlineSeconds });
+    response = await generate(ai, { query, model, thinkingLevel, deadlineSeconds, signal });
   } catch (error) {
     // Without a configured backup nothing changes: the error goes out unaltered,
     // as it did before this feature.
-    if (!backupModel) throw error;
+    if (!backupModel || signal?.aborted) throw error;
 
     const { statusName, reason } = readErrorBody(error);
     const refusal = fallbackRefusal({ error, model, backupModel, reason });
@@ -727,7 +737,7 @@ export async function runSearch({
     thinkingLevel = backupThinkingLevel ?? thinkingLevel;
 
     try {
-      response = await generate(ai, { query, model, thinkingLevel, deadlineSeconds });
+      response = await generate(ai, { query, model, thinkingLevel, deadlineSeconds, signal });
     } catch (backupError) {
       // Both errors, each with its model in front of it. With only the second
       // one here, you would go looking at the wrong model; describeError() on

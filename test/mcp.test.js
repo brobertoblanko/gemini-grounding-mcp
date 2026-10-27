@@ -30,23 +30,23 @@ const REVISIONS = [
   ["2026-07-28", "auto"],
 ];
 
-async function connect(mode, configHome) {
+async function connect(mode, configHome, { nodeArgs = [], stderr } = {}) {
   const client = new Client({ name: "mcp-test", version: "0" }, { versionNegotiation: { mode } });
-  await client.connect(
-    new StdioClientTransport({
-      command: process.execPath,
-      args: [SERVER],
-      // A fresh config home per connection keeps every case away from this
-      // machine's real configuration; the key is a placeholder that is never sent.
-      env: { ...process.env, XDG_CONFIG_HOME: configHome, GEMINI_API_KEY: "test-key-never-sent" },
-    }),
-  );
-  return client;
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [...nodeArgs, SERVER],
+    // A fresh config home per connection keeps every case away from this
+    // machine's real configuration; the key is a placeholder that is never sent.
+    env: { ...process.env, XDG_CONFIG_HOME: configHome, GEMINI_API_KEY: "test-key-never-sent" },
+    stderr,
+  });
+  await client.connect(transport);
+  return { client, transport };
 }
 
 for (const [revision, mode] of REVISIONS) {
   test(`negotiates ${revision} and lists all tools with their annotations`, async () => {
-    const client = await connect(mode, freshConfigHome());
+    const { client } = await connect(mode, freshConfigHome());
     try {
       assert.equal(client.getNegotiatedProtocolVersion(), revision);
       assert.equal(client.getServerVersion()?.name, "gemini-grounding");
@@ -72,7 +72,7 @@ for (const [revision, mode] of REVISIONS) {
 
   test(`gemini-set-config saves and confirms over ${revision}`, async () => {
     const configHome = freshConfigHome();
-    const client = await connect(mode, configHome);
+    const { client } = await connect(mode, configHome);
     try {
       const empty = await client.callTool({ name: "gemini-set-config", arguments: {} });
       assert.equal(empty.isError, true);
@@ -101,7 +101,7 @@ test("gemini-set-config refuses to overwrite an unreadable config.json", async (
   const file = configFile(configHome);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, '{ "model": "gemini-x", }');
-  const client = await connect("auto", configHome);
+  const { client } = await connect("auto", configHome);
   try {
     const result = await client.callTool({
       name: "gemini-set-config",
@@ -119,7 +119,7 @@ test("rejects empty strings for query, model and backupModel", async () => {
   // An empty query costs a billed request for nothing, and an empty model is
   // saved and sent to the API on every search after it.
   const configHome = freshConfigHome();
-  const client = await connect("auto", configHome);
+  const { client } = await connect("auto", configHome);
   try {
     const calls = [
       ["gemini-search", { query: "   " }],
@@ -139,7 +139,7 @@ test("rejects empty strings for query, model and backupModel", async () => {
 
 test("gemini-set-config rejects a deadline above 600 s", async () => {
   const configHome = freshConfigHome();
-  const client = await connect("auto", configHome);
+  const { client } = await connect("auto", configHome);
   try {
     const result = await client.callTool({
       name: "gemini-set-config",
@@ -151,3 +151,39 @@ test("gemini-set-config rejects a deadline above 600 s", async () => {
     await client.close();
   }
 });
+
+// Replaces fetch inside the server process with a line that never answers and
+// reports on stderr once its request is aborted.
+const SILENT_LINE =
+  "data:text/javascript," +
+  encodeURIComponent(
+    "globalThis.fetch = (url, init) => new Promise((_, reject) => " +
+      "init.signal.addEventListener('abort', () => { " +
+      "process.stderr.write('request aborted'); reject(init.signal.reason); }));",
+  );
+
+for (const [revision, mode] of REVISIONS) {
+  test(`a cancelled gemini-search ends its request over ${revision}`, { timeout: 10_000 }, async () => {
+    const { client, transport } = await connect(mode, freshConfigHome(), {
+      nodeArgs: [`--import=${SILENT_LINE}`],
+      stderr: "pipe",
+    });
+    try {
+      const aborted = new Promise((resolve) =>
+        transport.stderr.on("data", (chunk) => {
+          if (String(chunk).includes("request aborted")) resolve();
+        }),
+      );
+      const caller = new AbortController();
+      const call = client
+        .callTool({ name: "gemini-search", arguments: { query: "x" } }, { signal: caller.signal })
+        .catch(() => {});
+      // Long enough for the request to be out; the brake would need 330 s.
+      setTimeout(() => caller.abort(), 500);
+      await aborted;
+      await call;
+    } finally {
+      await client.close();
+    }
+  });
+}

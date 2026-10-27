@@ -1311,6 +1311,23 @@ Neither `ApiError` nor the successful `HttpResponse` carries an attempt count, a
 Counting them would mean wrapping the global `fetch` and propagating a per-call context through `AsyncLocalStorage`, because several `gemini-search` calls can run in parallel and a global counter would mix them up.
 That was judged out of proportion to a footnote, so the footer reports model, thinking level and token usage as before - and the possible extra seconds are documented here instead.
 
+### Cancellation by the client
+
+When the user cancels a running `gemini-search` (Esc in Claude Code), the client sends `notifications/cancelled`.
+The MCP SDK turns that into the `AbortSignal` at `ctx.mcpReq.signal`, and the handler passes it to `runSearch()`.
+
+- `generate()` combines it with the local brake through `AbortSignal.any()`, so either one ends the request.
+  The request and every SDK retry stop at once, because the SDK hands the same signal to each attempt.
+- `generate()` checks only the brake's own signal for `LocalDeadlineError`, so a cancellation is never reported as an expired deadline.
+- `runSearch()` tries no backup once the client's signal has fired.
+  Nobody waits for the answer any more, and the backup would be a second billed request for it.
+
+Before this, a cancelled search ran on for up to 330 s, and if the default model then failed, the backup started a second billed request that nobody would ever read.
+
+Not measured: whether Google still bills a generation that is already running when the connection is cut.
+What is certain is that the connection, the retries and the backup stop.
+Pinned by `test/fallback.test.js` and, over the real stdio transport in both protocol revisions, by `test/mcp.test.js`.
+
 ## Weekly dependency update
 
 Dependabot only opens pull requests; nothing merges them on its own.
