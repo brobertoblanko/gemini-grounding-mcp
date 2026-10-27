@@ -98,13 +98,34 @@ function modelStatus(model) {
   return EXCLUDED_MODELS[modelId(model)].split(" - ")[0];
 }
 
-/** Every model the current API key exposes, across all pages. models.list is free. */
+/**
+ * How long models.list may take, across all pages. Since @google/genai 2.29
+ * nothing else ends a silent line, and every save checks its model with it: the
+ * confirmation would wait until the MCP client gives up after 1800 s.
+ */
+export const MODELS_LIST_TIMEOUT_SECONDS = 15;
+
+/**
+ * Every model the current API key exposes, across all pages. models.list is free.
+ * setTimeout rather than AbortSignal.timeout(), as in generate() in gemini.js.
+ */
 export async function fetchModels() {
   const ai = getClient();
-  const pager = await ai.models.list({ config: { pageSize: 50 } });
-  const models = [];
-  for await (const model of pager) models.push(model);
-  return models;
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), MODELS_LIST_TIMEOUT_SECONDS * 1000);
+  try {
+    const pager = await ai.models.list({ config: { pageSize: 50, abortSignal: abort.signal } });
+    const models = [];
+    for await (const model of pager) models.push(model);
+    return models;
+  } catch (error) {
+    if (abort.signal.aborted) {
+      throw new Error(`the model list did not arrive within ${MODELS_LIST_TIMEOUT_SECONDS} s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

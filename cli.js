@@ -21,6 +21,7 @@ import {
   isValidDeadline,
   loadConfig,
   MAX_DEADLINE_SECONDS,
+  MIN_DEADLINE_SECONDS,
   resolveCallConfig,
   setSavedConfig,
   THINKING_LEVELS,
@@ -343,8 +344,8 @@ async function main() {
       else if (/^\d+$/.test(rest[0])) deadlineSeconds = Number(rest[0]);
       if (!isValidDeadline(deadlineSeconds)) {
         fail(
-          `Invalid deadline "${rest[0]}" - a whole number of seconds from 1 to ` +
-            `${MAX_DEADLINE_SECONDS} (Google's own limit), or "off".`,
+          `Invalid deadline "${rest[0]}" - a whole number of seconds from ${MIN_DEADLINE_SECONDS} to ` +
+            `${MAX_DEADLINE_SECONDS} (Google's own limits), or "off".`,
         );
       }
       await saveAndReport({ deadlineSeconds });

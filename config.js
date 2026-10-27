@@ -52,13 +52,23 @@ export const DEFAULT_DEADLINE_SECONDS = 300;
 export const MAX_DEADLINE_SECONDS = 600;
 
 /**
- * Whether a value may be stored as the deadline: a positive whole number of
- * seconds up to MAX_DEADLINE_SECONDS, or false for "send none". false and not 0
- * or null, the same convention as backupModel: false - a switch that is
- * deliberately off, kept apart from "never set".
+ * Google's lower limit for X-Server-Timeout. Measured 2026-10-27, a smaller one
+ * fails every request with 400 "Manually set deadline 1s is too short. Minimum
+ * allowed deadline is 10s." - and the backup with it, because a 400 falls back.
+ */
+export const MIN_DEADLINE_SECONDS = 10;
+
+/**
+ * Whether a value may be stored as the deadline: a whole number of seconds from
+ * MIN_DEADLINE_SECONDS to MAX_DEADLINE_SECONDS, or false for "send none". false
+ * and not 0 or null, the same convention as backupModel: false - a switch that
+ * is deliberately off, kept apart from "never set".
  */
 export function isValidDeadline(value) {
-  return value === false || (Number.isInteger(value) && value > 0 && value <= MAX_DEADLINE_SECONDS);
+  return (
+    value === false ||
+    (Number.isInteger(value) && value >= MIN_DEADLINE_SECONDS && value <= MAX_DEADLINE_SECONDS)
+  );
 }
 
 /**
@@ -190,9 +200,18 @@ function savedDeadline({ deadlineSeconds }) {
     );
     return MAX_DEADLINE_SECONDS;
   }
+  // The floor for the same reason: whoever wrote 5 wanted the shortest one.
+  if (Number.isInteger(deadlineSeconds) && deadlineSeconds > 0 && deadlineSeconds < MIN_DEADLINE_SECONDS) {
+    warnOnce(
+      "deadlineSeconds",
+      `deadlineSeconds in ${CONFIG_PATH} is ${deadlineSeconds}, but Google rejects a deadline ` +
+        `below ${MIN_DEADLINE_SECONDS} s - using ${MIN_DEADLINE_SECONDS}.`,
+    );
+    return MIN_DEADLINE_SECONDS;
+  }
   warnOnce(
     "deadlineSeconds",
-    `deadlineSeconds in ${CONFIG_PATH} must be a whole number from 1 to ${MAX_DEADLINE_SECONDS} or false, ` +
+    `deadlineSeconds in ${CONFIG_PATH} must be a whole number from ${MIN_DEADLINE_SECONDS} to ${MAX_DEADLINE_SECONDS} or false, ` +
       `not ${JSON.stringify(deadlineSeconds)} - using ${DEFAULT_DEADLINE_SECONDS}.`,
   );
   return DEFAULT_DEADLINE_SECONDS;
@@ -203,16 +222,28 @@ function savedDeadline({ deadlineSeconds }) {
  * together. disabled (false in the file) behaves like "never configured"
  * and exists for the output of "config" alone: "off" and "not set" are two
  * different statements. Invalid values count as unset, so they never reach the
- * API on the very path that is meant to catch an error.
+ * API on the very path that is meant to catch an error - and warn, because
+ * "High" for "high" would otherwise leave the backup on the inherited level
+ * unseen.
  */
 function savedBackup({ backupModel, backupThinkingLevel }) {
-  return {
-    model: typeof backupModel === "string" && backupModel !== "" ? backupModel : undefined,
-    thinkingLevel: THINKING_LEVELS.includes(backupThinkingLevel)
-      ? backupThinkingLevel
-      : undefined,
-    disabled: backupModel === false,
-  };
+  const model = typeof backupModel === "string" && backupModel.trim() !== "" ? backupModel : undefined;
+  if (backupModel !== undefined && backupModel !== false && !model) {
+    warnOnce(
+      "backupModel",
+      `backupModel in ${CONFIG_PATH} must be a non-empty string or false, ` +
+        `not ${JSON.stringify(backupModel)} - no backup is used.`,
+    );
+  }
+  const thinkingLevel = THINKING_LEVELS.includes(backupThinkingLevel) ? backupThinkingLevel : undefined;
+  if (backupThinkingLevel !== undefined && !thinkingLevel) {
+    warnOnce(
+      "backupThinkingLevel",
+      `backupThinkingLevel in ${CONFIG_PATH} must be one of ${THINKING_LEVELS.join(", ")}, ` +
+        `not ${JSON.stringify(backupThinkingLevel)} - the backup inherits the level of the call.`,
+    );
+  }
+  return { model, thinkingLevel, disabled: backupModel === false };
 }
 
 /**

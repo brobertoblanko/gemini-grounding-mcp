@@ -939,6 +939,7 @@ After every write of a default or backup model, `checkModelIds()` in `models.js`
 The model is saved all the same, and the warning follows the confirmation: on stderr in the CLI, as a `Warning:` paragraph in the MCP response.
 The short list decides what is shown, not what is allowed, and an id the key does not list today may be listed tomorrow.
 When the list cannot be fetched - offline, no key - there is no warning at all, so a save never fails on the check.
+A silent line counts as such after `MODELS_LIST_TIMEOUT_SECONDS` (15 s): since `@google/genai` 2.29 nothing else ends it, and the confirmation of a save that already happened would wait until the MCP client gives up after 1800 s.
 The text names no command, because both interfaces share it.
 
 `gemini-grounding doctor` runs the same check on the saved models, next to the Node version, the readability of `config.json` and a `models.list` call that proves the key is accepted rather than only set.
@@ -1036,6 +1037,7 @@ A module-level set of the warnings already given limits each to one occurrence p
 
 A readable file can still hold unusable values, and each one is checked on reading: the default model has to be a non-empty string, the default thinking level one of `THINKING_LEVELS`, and backup and deadline have their own checks.
 An unusable value warns once and is replaced by its default.
+For the backup that is no backup at all for the model and the inherited level for its thinking level.
 An unknown level would otherwise come back as a 400, trigger the fallback, and hand the same unusable level on to the backup.
 
 ## MCP interface
@@ -1188,13 +1190,16 @@ export const DEFAULT_DEADLINE_SECONDS = 300; // config.js
 Google honours the header as an execution deadline and does abort the generation server-side; the value goes out in whole seconds.
 Up to `@google/genai` 2.28 the value was 290 s, just below Node's limit; with that limit gone, there is nothing left to stay under, and the round number applies.
 
-**Configurable.** `deadlineSeconds` in `config.json` holds a whole number of seconds from 1 to `MAX_DEADLINE_SECONDS` (600), or `false` for no header at all - Google's own limit applies then.
+**Configurable.** `deadlineSeconds` in `config.json` holds a whole number of seconds from `MIN_DEADLINE_SECONDS` (10) to `MAX_DEADLINE_SECONDS` (600), or `false` for no header at all - Google's own limit applies then.
 It is set via `gemini-set-config` or `gemini-grounding set-deadline <seconds|off>`, and `false` is stored rather than deleted for the same reason as `backupModel: false`: deleting would bring back the default, the opposite of "off".
 There is deliberately no per-call parameter: a call that could raise the deadline turns a `504` into an invitation to retry longer, and the deadline is an operating setting rather than part of a question.
 For the same reason the tool description and the server instructions tell an agent to report a `504` instead of raising the deadline on its own.
 An unusable value in a hand-edited file produces one warning on stderr and the default applies - unlike an unknown model, which comes back from the API as an error, a deadline nobody applies would show nowhere.
 The cap is Google's own limit for a unary request: above it the value promises a limit that does not exist, while the local brake would only fire after it and the MCP client gives up after 1800 s.
 A hand-edited whole number above 600 therefore warns and is read as 600, not as the default - whoever wrote 3600 wanted the longest deadline there is.
+The floor is Google's as well, measured on 2026-10-27: a shorter deadline fails every request with `400 INVALID_ARGUMENT` and `Manually set deadline 1s is too short. Minimum allowed deadline is 10s.`
+Because a 400 falls back, a backup then fails the same way, with the same header.
+A hand-edited whole number from 1 to 9 warns and is read as 10, by the same reasoning as the cap.
 
 **The local brake.** Without Node's limit, a request that runs into nothing - a silent line, no answer, no error - waited until the MCP client gave up after 1800 s.
 `generate()` therefore arms an `AbortController` at the deadline plus `LOCAL_BRAKE_MARGIN_SECONDS` (30 s) and passes its signal as `config.abortSignal`.

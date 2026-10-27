@@ -175,6 +175,7 @@ Deadline: 600 s
 
 Angenommen werden nur Ziffern: `300.5`, `1e3` oder `0` brechen mit `Invalid deadline` ab, weil sonst jeweils etwas gespeichert würde, das niemand eingegeben hat.
 Der größte Wert ist 600, Googles eigene Grenze für eine Anfrage; alles darüber verspräche eine Frist, die es nicht gibt.
+Der kleinste ist 10: Eine kürzere Frist lehnt Google bei jeder Anfrage mit `400 INVALID_ARGUMENT` ab, das Backup eingeschlossen.
 Eine Option pro Aufruf gibt es nicht - die Frist ist eine Betriebseinstellung, und sie nach einem `504` anzuheben kostet eine zweite volle Generierung.
 
 Dreißig Sekunden nach der Frist hört der Server von sich aus auf zu warten, falls die Leitung verstummt ist, statt dass Google antwortet.
@@ -268,14 +269,15 @@ Die ersten drei Zeilen sind dieselben, die jedes Speichern ausgibt - es gibt dam
 `config` ergänzt die drei Angaben, die nur hier interessieren - Key-Status, Konfigurationspfad und die installierte Version, sodass ein Bugreport ohne zweiten Befehl auskommt.
 
 Beim Key wird nur geprüft, ob überhaupt einer in der Umgebung ankommt; ausgegeben wird seine Länge - **niemals der Wert selbst**, auch nicht gekürzt.
-Ob der Key tatsächlich gültig ist, kann nur eine echte Anfrage zeigen; ein erfolgreiches `config` ist also eine notwendige, keine hinreichende Bedingung.
+Ob der Key tatsächlich gültig ist, kann `config` nicht zeigen; ein erfolgreiches `config` ist also eine notwendige, keine hinreichende Bedingung.
+`doctor` prüft den Key kostenlos mit einem Aufruf von `models.list`.
 
 ## Aus einem Klon heraus arbeiten
 
 Statt `gemini-grounding` wird `node cli.js` verwendet:
 
 ```bash
-node cli.js "deine Anfrage"
+node cli.js "Ihre Anfrage"
 node cli.js config
 ```
 
