@@ -181,6 +181,14 @@ Run again with --debug for the full stack trace.
 
 Ein `503 UNAVAILABLE` sagt, dass die Anfrage nicht bei Google angekommen ist - ein anderes Problem als eine kaputte Installation, und eines, gegen das nichts hilft außer einem späteren Versuch.
 
+Ein `429` behält die Wartezeit, die Google mitschickt, auf ganze Sekunden aufgerundet:
+
+```console
+Error: 429 RESOURCE_EXHAUSTED - You exceeded your current quota, ... (retry in 53 s)
+```
+
+Die CLI wartet nicht selbst, sie sagt nur, wann ein neuer Versuch Sinn hat.
+
 `--debug` gibt zusätzlich den vollständigen Stacktrace und den rohen Fehler aus, samt Googles kompletter Antwort.
 Standardmäßig ist das aus, weil der Stack aus SDK-Interna besteht und absolute Pfade Ihres Rechners enthält, die in jedem Bug-Report landen, in den die Ausgabe kopiert wird.
 Angenommen wird die Option überall, wo ein Laufzeitfehler auftreten kann: bei einer Suche, bei `models` und bei jedem `set-*`-Befehl.

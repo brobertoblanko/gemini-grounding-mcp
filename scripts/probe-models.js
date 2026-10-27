@@ -93,15 +93,10 @@ const MAX_RETRY_DELAY_MS = 90_000;
  * backs off blindly against a quota window it cannot guess.
  */
 function retryDelayMs(error, attempt) {
-  try {
-    const details = JSON.parse(error.message)?.error?.details ?? [];
-    const delay = details.find((detail) => detail.retryDelay)?.retryDelay;
-    const seconds = Number.parseFloat(delay);
-    if (Number.isFinite(seconds) && seconds > 0) {
-      return Math.min(seconds * 1000 + 1000, MAX_RETRY_DELAY_MS);
-    }
-  } catch {
-    // Not an ApiError, or a body that is not JSON. Fall through to the fixed backoff.
+  // Not an ApiError, or a body that is not JSON, gives NaN and the fixed backoff.
+  const seconds = Number.parseFloat(readErrorBody(error).retryDelay);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.min(seconds * 1000 + 1000, MAX_RETRY_DELAY_MS);
   }
   return Math.min(5000 * 2 ** (attempt - 1), MAX_RETRY_DELAY_MS);
 }

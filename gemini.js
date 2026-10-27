@@ -140,11 +140,14 @@ export function formatRuntimeError(error) {
       `backup ${backup.model}: ${formatRuntimeError(backup.error)}`
     );
   }
-  const { statusName, message } = readErrorBody(error);
+  const { statusName, message, retryDelay } = readErrorBody(error);
   if (typeof error?.status !== "number" || typeof message !== "string") {
     return describeError(error);
   }
-  return `${error.status}${statusName ? ` ${statusName}` : ""} - ${message}`;
+  // Rounded up: "retry in 0 s" for a "0.4s" would invite a retry that still fails.
+  const seconds = Math.ceil(Number.parseFloat(retryDelay));
+  const retry = Number.isFinite(seconds) ? ` (retry in ${seconds} s)` : "";
+  return `${error.status}${statusName ? ` ${statusName}` : ""} - ${message}${retry}`;
 }
 
 /**
@@ -506,7 +509,7 @@ export function formatFooter({
 /**
  * The API's error body as an object: status ("UNAVAILABLE", "NOT_FOUND", ...),
  * Google's plain-text message and, where present, the machine-readable reason
- * from error.details.
+ * and a 429's waiting time ("53s") from error.details.
  *
  * The message of an ApiError IS the JSON body of the error response, even for a
  * response without JSON - the SDK then builds one itself. In a try all the same:
@@ -520,6 +523,7 @@ export function readErrorBody(error) {
       statusName: body?.status,
       message: body?.message,
       reason: body?.details?.find((detail) => detail.reason)?.reason,
+      retryDelay: body?.details?.find((detail) => detail.retryDelay)?.retryDelay,
     };
   } catch {
     return {};
