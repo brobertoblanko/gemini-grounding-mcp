@@ -167,10 +167,9 @@ export async function listModels({ all = false, allOption = "--all" } = {}) {
   // In the full view the offered models come first: they are what somebody
   // picking a model is looking for, and alphabetically they scatter among 50
   // others.
-  const name = modelId;
   const rank = (model) => (showAll && !isOfferedModel(model) ? 1 : 0);
-  shown.sort((a, b) => rank(a) - rank(b) || name(a).localeCompare(name(b)));
-  const width = Math.max("MODEL".length, ...shown.map((model) => name(model).length));
+  shown.sort((a, b) => rank(a) - rank(b) || modelId(a).localeCompare(modelId(b)));
+  const width = Math.max("MODEL".length, ...shown.map((model) => modelId(model).length));
 
   const row = (id, input, output, status) =>
     `${id.padEnd(width)}  ${input.padStart(5)}  ${output.padStart(6)}` +
@@ -179,7 +178,7 @@ export async function listModels({ all = false, allOption = "--all" } = {}) {
     row("MODEL", "INPUT", "OUTPUT", "STATUS"),
     ...shown.map((model) =>
       row(
-        name(model),
+        modelId(model),
         formatTokenLimit(model.inputTokenLimit),
         formatTokenLimit(model.outputTokenLimit),
         modelStatus(model),
