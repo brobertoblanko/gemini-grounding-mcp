@@ -528,3 +528,13 @@ test("doctor names a broken config file and a doubtful model without the path", 
   assert.equal(result.stderr, "", "collected, not printed twice");
   assert.ok(!result.stdout.includes(configHome), "no local path in the output");
 });
+
+test("doctor counts an unusable backup thinking level as a problem", () => {
+  const configHome = freshConfigHome();
+  mkdirSync(path.dirname(configFile(configHome)), { recursive: true });
+  writeFileSync(configFile(configHome), '{"backupModel": "gemini-b", "backupThinkingLevel": "High"}');
+
+  const result = runCli(["doctor"], { configHome, nodeArgs: [MODELS_LIST] });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /^Config: {3}problem - backupThinkingLevel in config.json must be one of/m);
+});

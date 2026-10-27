@@ -222,16 +222,28 @@ function savedDeadline({ deadlineSeconds }) {
  * together. disabled (false in the file) behaves like "never configured"
  * and exists for the output of "config" alone: "off" and "not set" are two
  * different statements. Invalid values count as unset, so they never reach the
- * API on the very path that is meant to catch an error.
+ * API on the very path that is meant to catch an error - and warn, because
+ * "High" for "high" would otherwise leave the backup on the inherited level
+ * unseen.
  */
 function savedBackup({ backupModel, backupThinkingLevel }) {
-  return {
-    model: typeof backupModel === "string" && backupModel !== "" ? backupModel : undefined,
-    thinkingLevel: THINKING_LEVELS.includes(backupThinkingLevel)
-      ? backupThinkingLevel
-      : undefined,
-    disabled: backupModel === false,
-  };
+  const model = typeof backupModel === "string" && backupModel.trim() !== "" ? backupModel : undefined;
+  if (backupModel !== undefined && backupModel !== false && !model) {
+    warnOnce(
+      "backupModel",
+      `backupModel in ${CONFIG_PATH} must be a non-empty string or false, ` +
+        `not ${JSON.stringify(backupModel)} - no backup is used.`,
+    );
+  }
+  const thinkingLevel = THINKING_LEVELS.includes(backupThinkingLevel) ? backupThinkingLevel : undefined;
+  if (backupThinkingLevel !== undefined && !thinkingLevel) {
+    warnOnce(
+      "backupThinkingLevel",
+      `backupThinkingLevel in ${CONFIG_PATH} must be one of ${THINKING_LEVELS.join(", ")}, ` +
+        `not ${JSON.stringify(backupThinkingLevel)} - the backup inherits the level of the call.`,
+    );
+  }
+  return { model, thinkingLevel, disabled: backupModel === false };
 }
 
 /**

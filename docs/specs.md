@@ -1036,6 +1036,7 @@ A module-level set of the warnings already given limits each to one occurrence p
 
 A readable file can still hold unusable values, and each one is checked on reading: the default model has to be a non-empty string, the default thinking level one of `THINKING_LEVELS`, and backup and deadline have their own checks.
 An unusable value warns once and is replaced by its default.
+For the backup that is no backup at all for the model and the inherited level for its thinking level.
 An unknown level would otherwise come back as a 400, trigger the fallback, and hand the same unusable level on to the backup.
 
 ## MCP interface

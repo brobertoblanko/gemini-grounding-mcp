@@ -101,6 +101,24 @@ test("replaces an unusable default model and thinking level with a warning each"
   assert.equal((result.stderr.match(/Warning:/g) ?? []).length, 2);
 });
 
+test("warns about an unusable backup model and backup thinking level", () => {
+  // "High" for "high" would otherwise leave the backup on the inherited level
+  // unseen, and a blank model would leave it off.
+  const level = runCli(["config"], {
+    configHome: withBrokenConfig('{ "backupModel": "gemini-b", "backupThinkingLevel": "High" }'),
+  });
+  assert.match(level.stdout, /^Backup: +gemini-b · medium \(inherited\)$/m);
+  assert.match(level.stderr, /backupThinkingLevel in .* not "High" - the backup inherits the level of the call/);
+
+  const model = runCli(["config"], { configHome: withBrokenConfig('{ "backupModel": "  " }') });
+  assert.match(model.stdout, /^Backup: +not set$/m);
+  assert.match(model.stderr, /backupModel in .* must be a non-empty string or false, not " {2}" - no backup is used/);
+
+  // false is the switched-off backup, not an unusable value.
+  const off = runCli(["config"], { configHome: withBrokenConfig('{ "backupModel": false }') });
+  assert.equal(off.stderr, "");
+});
+
 test("leaves no temporary file behind after a write", () => {
   const configHome = freshConfigHome();
   const result = runCli(["set-thinking", "high"], { configHome });

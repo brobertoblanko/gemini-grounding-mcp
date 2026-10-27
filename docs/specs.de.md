@@ -1285,6 +1285,7 @@ Eine Menge der schon ausgegebenen Warnungen auf Modulebene begrenzt jede auf ein
 
 Auch eine lesbare Datei kann unbrauchbare Werte enthalten, und jeder wird beim Lesen geprüft: Das Standardmodell muss ein nicht leerer String sein, das Standard-Thinking-Level eines aus `THINKING_LEVELS`, und Backup und Frist haben ihre eigenen Prüfungen.
 Ein unbrauchbarer Wert warnt einmal und wird durch seinen Standard ersetzt.
+Beim Backup ist das für das Modell gar kein Backup und für sein Thinking-Level das geerbte Level.
 Ein unbekanntes Level käme sonst als 400 zurück, löste den Fallback aus und gäbe dasselbe unbrauchbare Level an das Backup weiter.
 
 ## MCP-Schnittstelle
