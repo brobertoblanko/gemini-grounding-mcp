@@ -926,6 +926,22 @@ On the backup, the inherited level is printed as its value rather than as the ba
 The suffix says the value is not its own but travels along - a call carrying its own `thinkingLevel` is inherited instead.
 The middle dot separates as it does in `formatSearchQueries`: model names contain hyphens and digits of their own, between which another hyphen would disappear.
 
+#### A doubtful model warns after the save
+
+After every write of a default or backup model, `checkModelIds()` in `gemini.js` looks the id up in `models.list`, which is free:
+
+- not in the list - `"<id>" is not in the model list of this API key - a search with it will most likely fail.`
+- in the list but unusable - `"<id>" cannot run here: <status>`, the same status as in `gemini-list-models` with `all: true`
+- on the exclusion list - the reason from `models-excluded.js`
+
+The model is saved all the same, and the warning follows the confirmation: on stderr in the CLI, as a `Warning:` paragraph in the MCP response.
+The short list decides what is shown, not what is allowed, and an id the key does not list today may be listed tomorrow.
+When the list cannot be fetched - offline, no key - there is no warning at all, so a save never fails on the check.
+The text names no command, because both interfaces share it.
+
+`gemini-grounding doctor` runs the same check on the saved models, next to the Node version, the readability of `config.json` and a `models.list` call that proves the key is accepted rather than only set.
+Its config line comes from `configProblems()` in `config.js`, which collects the warnings of the very getters a search runs, so `doctor` cannot disagree with what a search actually does.
+
 ### Configuration file location
 
 Not `./config.json`: the working directory of an MCP server started over stdio is not guaranteed to be the project folder.

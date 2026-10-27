@@ -7,15 +7,25 @@
 
 import { createRequire } from "node:module";
 
-import { runSearch, listModels, formatRuntimeError, API_KEY_MISSING_MESSAGE } from "./gemini.js";
+import {
+  runSearch,
+  listModels,
+  fetchModels,
+  checkModelIds,
+  formatRuntimeError,
+  API_KEY_MISSING_MESSAGE,
+} from "./gemini.js";
 import {
   CONFIG_PATH,
+  configProblems,
   DEFAULT_DEADLINE_SECONDS,
   deleteSavedConfig,
   findBackupLevelProblem,
   findModelCollision,
   formatConfigState,
   formatSavedValues,
+  getSavedBackup,
+  getSavedModel,
   isValidDeadline,
   MAX_DEADLINE_SECONDS,
   resolveCallConfig,
@@ -25,7 +35,7 @@ import {
 
 // Read the same way index.js does; the reasoning for createRequire over
 // Import Attributes sits there.
-const { version } = createRequire(import.meta.url)("./package.json");
+const { version, engines } = createRequire(import.meta.url)("./package.json");
 
 const HELP = `gemini-grounding - Google search through Gemini, from the command line
 
@@ -44,6 +54,8 @@ Commands:
   set-backup --thinking <level>  Change only the backup's thinking level
   set-deadline <seconds|off>     Save after how many seconds Google aborts a
                                  search (default ${DEFAULT_DEADLINE_SECONDS}); "off" sends none
+  doctor                         Check Node, config file, API key and the
+                                 saved models, one line each
   reset <model|thinking|backup|deadline|all>
                                  Return a saved value to its built-in default;
                                  "all" deletes the config file
@@ -147,9 +159,10 @@ function takeSwitch(args, name) {
  *
  * The second half is the reason for this function: without it every set command
  * would need a "config" behind it to see what the next search actually runs
- * with.
+ * with. A model written here is then checked against the key's model list, and
+ * a doubtful one warns after the save rather than blocking it.
  */
-function saveAndReport(values) {
+async function saveAndReport(values) {
   // Default and backup must not become the same model - silently there would be
   // nothing left to fall back to. The check sits here and not in the individual
   // branches so it cannot miss a write path: "set-model x", "set-thinking low
@@ -164,6 +177,9 @@ function saveAndReport(values) {
 
   console.log(`Saved - ${formatSavedValues(setSavedConfig(values))}`);
   console.log(`\n${formatConfigState()}`);
+
+  const ids = [values.model, values.backupModel].filter((id) => typeof id === "string");
+  for (const advice of await checkModelIds(ids)) console.error(`Warning: ${advice}`);
 }
 
 async function main() {
@@ -284,7 +300,7 @@ async function main() {
           "Usage: gemini-grounding set-model <id> [--thinking <level>]",
         );
       }
-      saveAndReport({ model: requireModelId(rest[0], "set-model"), thinkingLevel: thinkingFlag });
+      await saveAndReport({ model: requireModelId(rest[0], "set-model"), thinkingLevel: thinkingFlag });
       break;
     }
 
@@ -297,7 +313,7 @@ async function main() {
         );
       }
       const level = requireThinkingLevel(rest[0], "set-thinking");
-      saveAndReport({ model: modelFlag, thinkingLevel: level });
+      await saveAndReport({ model: modelFlag, thinkingLevel: level });
       break;
     }
 
@@ -316,7 +332,7 @@ async function main() {
       // rejected by findBackupLevelProblem() in saveAndReport, in the same
       // wording as for the MCP handler, which does not run through this branch.
       if (rest.length === 0 && thinkingFlag !== undefined) {
-        saveAndReport({ backupThinkingLevel: thinkingFlag });
+        await saveAndReport({ backupThinkingLevel: thinkingFlag });
         break;
       }
 
@@ -331,7 +347,7 @@ async function main() {
       // caught by saveAndReport as well - a switched-off backup has no level, and
       // the option does not expire silently.
       const backupModel = rest[0] === "off" ? false : requireModelId(rest[0], "set-backup");
-      saveAndReport({ backupModel, backupThinkingLevel: thinkingFlag });
+      await saveAndReport({ backupModel, backupThinkingLevel: thinkingFlag });
       break;
     }
 
@@ -355,7 +371,59 @@ async function main() {
             `${MAX_DEADLINE_SECONDS} (Google's own limit), or "off".`,
         );
       }
-      saveAndReport({ deadlineSeconds });
+      await saveAndReport({ deadlineSeconds });
+      break;
+    }
+
+    // One line per check, so a failure points at its cause: key, file or
+    // model. No path in the output - it is meant for bug reports, and "config"
+    // names the path.
+    case "doctor": {
+      allowFlags();
+      requireNoArgs();
+      let failed = false;
+      const row = (label, problem, detail) => {
+        if (problem) failed = true;
+        console.log(`${label.padEnd(9)} ${problem ? `problem - ${problem}` : `ok - ${detail}`}`);
+      };
+
+      const minimum = Number(engines.node.match(/\d+/)[0]);
+      const major = Number(process.versions.node.split(".")[0]);
+      row(
+        "Node:",
+        major < minimum ? `${process.version}, needs ${engines.node}` : undefined,
+        process.version,
+      );
+
+      const problems = configProblems();
+      row("Config:", problems.join(" "), "readable, every value valid");
+
+      // models.list is free and proves the key works, not only that it is set.
+      let models;
+      if (!process.env.GEMINI_API_KEY) {
+        row("API key:", "not set - set the GEMINI_API_KEY environment variable");
+      } else {
+        try {
+          models = await fetchModels();
+          row("API key:", undefined, `accepted, ${models.length} models listed`);
+        } catch (error) {
+          row("API key:", formatRuntimeError(error));
+        }
+      }
+
+      if (!models) {
+        console.log("Models:   skipped - needs a working API key");
+      } else {
+        const model = getSavedModel();
+        row("Default:", (await checkModelIds([model], models))[0], model);
+        const backup = getSavedBackup();
+        if (backup.model) {
+          row("Backup:", (await checkModelIds([backup.model], models))[0], backup.model);
+        } else {
+          row("Backup:", undefined, backup.disabled ? "off" : "not set");
+        }
+      }
+      if (failed) process.exitCode = 1;
       break;
     }
 

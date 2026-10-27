@@ -862,6 +862,47 @@ function modelStatus(model) {
   return EXCLUDED_MODELS[modelId(model)].split(" - ")[0];
 }
 
+/** Every model the current API key exposes, across all pages. models.list is free. */
+export async function fetchModels() {
+  const ai = getClient();
+  const pager = await ai.models.list({ config: { pageSize: 50 } });
+  const models = [];
+  for await (const model of pager) models.push(model);
+  return models;
+}
+
+/**
+ * Why each of the given model ids is unlikely to work here, as plain text - an
+ * empty list when all of them look fine. Advice after a save, never a refusal:
+ * the short list decides what is shown, not what is allowed, and an id the key
+ * does not list today may be listed tomorrow.
+ *
+ * A failed models.list (offline, no key) yields no advice rather than an error,
+ * so a save never fails on it. Pass models when they are already fetched.
+ * No command name in the text: the CLI and gemini-set-config share it.
+ */
+export async function checkModelIds(ids, models) {
+  if (!models) {
+    try {
+      models = await fetchModels();
+    } catch {
+      return [];
+    }
+  }
+  const advice = [];
+  for (const id of ids) {
+    const model = models.find((candidate) => modelId(candidate) === id);
+    if (!model) {
+      advice.push(`"${id}" is not in the model list of this API key - a search with it will most likely fail.`);
+    } else if (!isUsableModel(model)) {
+      advice.push(`"${id}" cannot run here: ${modelStatus(model)}.`);
+    } else if (isExcludedModel(model)) {
+      advice.push(`"${id}" is on this server's exclusion list: ${EXCLUDED_MODELS[id]}.`);
+    }
+  }
+  return advice;
+}
+
 /**
  * Lists the models available to the current API key, with token limits. By
  * default only those this server offers - usable and not excluded; with
@@ -883,11 +924,7 @@ function modelStatus(model) {
  * response and answer with 404. A field indicating that does not exist.
  */
 export async function listModels({ all = false, allOption = "--all" } = {}) {
-  const ai = getClient();
-  const pager = await ai.models.list({ config: { pageSize: 50 } });
-
-  const models = [];
-  for await (const model of pager) models.push(model);
+  const models = await fetchModels();
   if (models.length === 0) return "No models available for this API key.";
 
   const usable = models.filter(isUsableModel);

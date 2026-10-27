@@ -1151,6 +1151,22 @@ Beim Backup steht das geerbte Level als Wert und nicht als bloßes Wort „inher
 Der Zusatz sagt dazu, dass der Wert nicht ihm gehört, sondern mitwandert - ein Aufruf mit eigenem `thinkingLevel` wird stattdessen geerbt.
 Der Mittelpunkt trennt wie in `formatSearchQueries`: Modellnamen enthalten selbst Bindestriche und Ziffern, zwischen denen ein weiterer Bindestrich untergeht.
 
+#### Ein zweifelhaftes Modell warnt nach dem Speichern
+
+Nach jedem Schreiben eines Standard- oder Backup-Modells sucht `checkModelIds()` in `gemini.js` die ID in `models.list`, das kostenlos ist:
+
+- nicht in der Liste - `"<id>" is not in the model list of this API key - a search with it will most likely fail.`
+- in der Liste, aber nicht nutzbar - `"<id>" cannot run here: <Status>`, derselbe Status wie in `gemini-list-models` mit `all: true`
+- auf der Ausschlussliste - der Grund aus `models-excluded.js`
+
+Gespeichert wird das Modell trotzdem, und die Warnung folgt der Bestätigung: in der CLI auf stderr, in der MCP-Antwort als Absatz `Warning:`.
+Die Kurzliste entscheidet über die Anzeige, nicht über die Erlaubnis, und eine ID, die der Key heute nicht listet, kann er morgen listen.
+Lässt sich die Liste nicht abrufen - offline, kein Key -, gibt es gar keine Warnung, sodass ein Speichern nie an der Prüfung scheitert.
+Der Text nennt keinen Befehl, weil beide Schnittstellen ihn teilen.
+
+`gemini-grounding doctor` führt dieselbe Prüfung für die gespeicherten Modelle aus, neben der Node-Version, der Lesbarkeit der `config.json` und einem Aufruf von `models.list`, der zeigt, dass der Key angenommen wird und nicht nur gesetzt ist.
+Seine Config-Zeile kommt aus `configProblems()` in `config.js`, das die Warnungen genau der Getter sammelt, die auch eine Suche durchläuft, sodass `doctor` nicht anderer Meinung sein kann als eine Suche.
+
 ### Speicherort der Konfiguration
 
 Nicht `./config.json`: Das Arbeitsverzeichnis eines per stdio gestarteten

@@ -181,6 +181,26 @@ Thirty seconds after the deadline the server stops waiting by itself, in case th
 Without a deadline there is no such brake either.
 Why both exist and what they cost: [specs.md, "The deadline this server does send"](./specs.md#the-deadline-this-server-does-send).
 
+## Checking the setup
+
+`doctor` checks everything a search depends on, one line each, and exits with code 1 if any check fails:
+
+```console
+$ gemini-grounding doctor
+Node:     ok - v24.15.0
+Config:   ok - readable, every value valid
+API key:  ok - accepted, 60 models listed
+Default:  problem - "gemini-3-flsh" is not in the model list of this API key - a search with it will most likely fail.
+Backup:   ok - not set
+```
+
+The key is checked through `models.list`, which is free and proves that Google accepts the key, not only that it is set.
+The output names no path, so it can go into a bug report as it is; `config` shows where the file lives.
+
+The same model check runs after every `set-model` and `set-backup`.
+A model the key does not list, that cannot run here, or that is on the exclusion list is saved all the same, followed by a `Warning:` line on stderr.
+Offline or without a key there is no warning.
+
 ## Back to the defaults
 
 `reset` returns a saved value to its built-in default by removing it from `config.json`:

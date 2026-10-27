@@ -88,7 +88,8 @@ export const THINKING_LEVELS = ["minimal", "low", "medium", "high"];
 // and every getter runs again after a write. Without remembering what was
 // already said, the same warning would stand there several times over and look
 // like several separate faults.
-const warned = new Set();
+const warned = new Map();
+let collecting = false;
 
 /**
  * console.error and not console.log: the MCP server speaks JSON-RPC over
@@ -97,8 +98,27 @@ const warned = new Set();
  */
 function warnOnce(key, message) {
   if (warned.has(key)) return;
-  warned.add(key);
-  console.error(`Warning: ${message}`);
+  warned.set(key, message);
+  if (!collecting) console.error(`Warning: ${message}`);
+}
+
+/**
+ * Everything wrong with config.json, through the same checks the getters run
+ * on every call - so "doctor" in cli.js cannot disagree with what a search
+ * actually does. Collected instead of printed, and with the path shortened to
+ * the file name: the output is meant to be pasted into a bug report.
+ */
+export function configProblems() {
+  collecting = true;
+  try {
+    getSavedModel();
+    getSavedThinkingLevel();
+    getSavedDeadline();
+    getSavedBackup();
+  } finally {
+    collecting = false;
+  }
+  return [...warned.values()].map((message) => message.replaceAll(CONFIG_PATH, "config.json"));
 }
 
 /**

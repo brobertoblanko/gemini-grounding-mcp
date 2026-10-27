@@ -181,6 +181,26 @@ Dreißig Sekunden nach der Frist hört der Server von sich aus auf zu warten, fa
 Ohne Frist gibt es auch diese Bremse nicht.
 Warum es beides gibt und was es kostet: [specs.de.md, „Die Frist, die dieser Server mitschickt"](./specs.de.md#die-frist-die-dieser-server-mitschickt).
 
+## Die Einrichtung prüfen
+
+`doctor` prüft alles, wovon eine Suche abhängt, eine Zeile pro Prüfung, und endet mit Exit-Code 1, wenn eine davon scheitert:
+
+```console
+$ gemini-grounding doctor
+Node:     ok - v24.15.0
+Config:   ok - readable, every value valid
+API key:  ok - accepted, 60 models listed
+Default:  problem - "gemini-3-flsh" is not in the model list of this API key - a search with it will most likely fail.
+Backup:   ok - not set
+```
+
+Der Key wird über `models.list` geprüft, das kostenlos ist und zeigt, dass Google den Key annimmt, nicht nur, dass er gesetzt ist.
+Die Ausgabe nennt keinen Pfad, damit sie unverändert in einen Bug-Report passt; `config` zeigt, wo die Datei liegt.
+
+Dieselbe Modellprüfung läuft nach jedem `set-model` und `set-backup`.
+Ein Modell, das der Key nicht listet, das hier nicht laufen kann oder das auf der Ausschlussliste steht, wird trotzdem gespeichert, gefolgt von einer Zeile `Warning:` auf stderr.
+Offline oder ohne Key gibt es keine Warnung.
+
 ## Zurück zu den Standardwerten
 
 `reset` setzt einen gespeicherten Wert auf seinen eingebauten Standard zurück, indem es ihn aus der `config.json` entfernt:

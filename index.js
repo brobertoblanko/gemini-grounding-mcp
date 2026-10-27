@@ -8,7 +8,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
-import { runSearch, listModels, describeError } from "./gemini.js";
+import { runSearch, listModels, describeError, checkModelIds } from "./gemini.js";
 import {
   CONFIG_PATH,
   findBackupLevelProblem,
@@ -294,12 +294,19 @@ function createServer() {
       // after a model change. Same functions as in the CLI, so the two interfaces
       // cannot drift apart.
       // Full derivation: docs/specs.md, "Reporting what was saved".
+      //
+      // A doubtful model warns after the save instead of refusing it, as in the
+      // CLI: the short list decides what is shown, not what is allowed.
+      const ids = [model, backupModel].filter((id) => typeof id === "string");
+      const warnings = (await checkModelIds(ids)).map((advice) => `\n\nWarning: ${advice}`);
       return {
         content: [
           {
             type: "text",
             text:
-              `Saved to ${CONFIG_PATH} - ${formatSavedValues(saved)}\n\n` + formatConfigState(),
+              `Saved to ${CONFIG_PATH} - ${formatSavedValues(saved)}\n\n` +
+              formatConfigState() +
+              warnings.join(""),
           },
         ],
       };

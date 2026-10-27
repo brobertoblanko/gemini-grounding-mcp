@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { configFile, freshConfigHome } from "./helpers.js";
+import { MODELS_LIST, OFFLINE, configFile, freshConfigHome, preload } from "./helpers.js";
 
 const SERVER = fileURLToPath(new URL("../index.js", import.meta.url));
 
@@ -30,13 +30,14 @@ const REVISIONS = [
   ["2026-07-28", "auto"],
 ];
 
-async function connect(mode, configHome, { nodeArgs = [], stderr } = {}) {
+async function connect(mode, configHome, { nodeArgs = [OFFLINE], stderr } = {}) {
   const client = new Client({ name: "mcp-test", version: "0" }, { versionNegotiation: { mode } });
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [...nodeArgs, SERVER],
     // A fresh config home per connection keeps every case away from this
-    // machine's real configuration; the key is a placeholder that is never sent.
+    // machine's real configuration; the key is a placeholder, and fetch is
+    // OFFLINE unless a case replaces the preload.
     env: { ...process.env, XDG_CONFIG_HOME: configHome, GEMINI_API_KEY: "test-key-never-sent" },
     stderr,
   });
@@ -154,18 +155,16 @@ test("gemini-set-config rejects a deadline above 600 s", async () => {
 
 // Replaces fetch inside the server process with a line that never answers and
 // reports on stderr once its request is aborted.
-const SILENT_LINE =
-  "data:text/javascript," +
-  encodeURIComponent(
-    "globalThis.fetch = (url, init) => new Promise((_, reject) => " +
-      "init.signal.addEventListener('abort', () => { " +
-      "process.stderr.write('request aborted'); reject(init.signal.reason); }));",
-  );
+const SILENT_LINE = preload(
+  "globalThis.fetch = (url, init) => new Promise((_, reject) => " +
+    "init.signal.addEventListener('abort', () => { " +
+    "process.stderr.write('request aborted'); reject(init.signal.reason); }));",
+);
 
 for (const [revision, mode] of REVISIONS) {
   test(`a cancelled gemini-search ends its request over ${revision}`, { timeout: 10_000 }, async () => {
     const { client, transport } = await connect(mode, freshConfigHome(), {
-      nodeArgs: [`--import=${SILENT_LINE}`],
+      nodeArgs: [SILENT_LINE],
       stderr: "pipe",
     });
     try {
@@ -187,3 +186,21 @@ for (const [revision, mode] of REVISIONS) {
     }
   });
 }
+
+test("gemini-set-config saves a doubtful model and warns about it", async () => {
+  const configHome = freshConfigHome();
+  const { client } = await connect("auto", configHome, { nodeArgs: [MODELS_LIST] });
+  try {
+    const result = await client.callTool({
+      name: "gemini-set-config",
+      arguments: { model: "gemini-typo", backupModel: "gemma-4-31b-it" },
+    });
+    assert.notEqual(result.isError, true, result.content[0].text);
+    const text = result.content[0].text;
+    assert.match(text, /Warning: "gemini-typo" is not in the model list of this API key/);
+    assert.match(text, /Warning: "gemma-4-31b-it" is on this server's exclusion list: 400/);
+    assert.equal(JSON.parse(readFileSync(configFile(configHome), "utf8")).model, "gemini-typo");
+  } finally {
+    await client.close();
+  }
+});

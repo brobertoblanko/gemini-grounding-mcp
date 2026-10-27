@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { configFile, freshConfigHome, runCli } from "./helpers.js";
+import { MODELS_LIST, configFile, freshConfigHome, runCli } from "./helpers.js";
 
 const { version } = createRequire(import.meta.url)("../package.json");
 
@@ -458,4 +458,48 @@ test("reset takes exactly one known target", () => {
     assert.equal(result.status, 1, args.join(" "));
     assert.match(result.stderr, /^Error: "reset" takes exactly one of/);
   }
+});
+
+test("saves a doubtful model and warns about it afterwards", () => {
+  const result = runCli(["set-model", "gemini-typo"], { nodeArgs: [MODELS_LIST] });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /^Saved - Model: gemini-typo/);
+  assert.equal(
+    result.stderr,
+    'Warning: "gemini-typo" is not in the model list of this API key - a search with it will most likely fail.\n',
+  );
+  assert.equal(result.savedConfig().model, "gemini-typo");
+
+  // Offline, the save goes through without a word.
+  const offline = runCli(["set-model", "gemini-typo"]);
+  assert.equal(offline.status, 0);
+  assert.equal(offline.stderr, "");
+});
+
+test("doctor reports every check on its own line", () => {
+  const healthy = runCli(["doctor"], { nodeArgs: [MODELS_LIST] });
+  assert.equal(healthy.status, 0, healthy.stdout);
+  assert.match(healthy.stdout, /^Node: {5}ok - v\d+/m);
+  assert.match(healthy.stdout, /^Config: {3}ok - /m);
+  assert.match(healthy.stdout, /^API key: {2}ok - accepted, 60 models listed$/m);
+  assert.match(healthy.stdout, /^Default: {2}ok - gemini-flash-latest$/m);
+  assert.match(healthy.stdout, /^Backup: {3}ok - not set$/m);
+
+  const noKey = runCli(["doctor"], { apiKey: null });
+  assert.equal(noKey.status, 1);
+  assert.match(noKey.stdout, /^API key: {2}problem - not set/m);
+  assert.match(noKey.stdout, /^Models: {3}skipped/m);
+});
+
+test("doctor names a broken config file and a doubtful model without the path", () => {
+  const configHome = freshConfigHome();
+  mkdirSync(path.dirname(configFile(configHome)), { recursive: true });
+  writeFileSync(configFile(configHome), '{"model": "gemini-typo", "thinkingLevel": "ultra"}');
+
+  const result = runCli(["doctor"], { configHome, nodeArgs: [MODELS_LIST] });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /^Config: {3}problem - thinkingLevel in config.json must be one of/m);
+  assert.match(result.stdout, /^Default: {2}problem - "gemini-typo" is not in the model list/m);
+  assert.equal(result.stderr, "", "collected, not printed twice");
+  assert.ok(!result.stdout.includes(configHome), "no local path in the output");
 });

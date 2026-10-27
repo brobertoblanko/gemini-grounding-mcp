@@ -63,6 +63,26 @@ export function freshConfigHome() {
   return dir;
 }
 
+/** A node option that runs code in a child process before its entry point. */
+export const preload = (code) => `--import=data:text/javascript,${encodeURIComponent(code)}`;
+
+/**
+ * fetch in a child process fails as if offline. The default for every child, so
+ * that no case reaches the API by accident - the placeholder key alone would
+ * still send a request, and a set command now asks for the model list.
+ */
+export const OFFLINE = preload(
+  "globalThis.fetch = async () => { throw new TypeError('fetch failed'); };",
+);
+
+/** fetch in a child process answers every request with fixtures/models-list.json. */
+export const MODELS_LIST = preload(
+  `import { readFileSync } from "node:fs";
+  const body = readFileSync(${JSON.stringify(fileURLToPath(new URL("fixtures/models-list.json", import.meta.url)))});
+  globalThis.fetch = async () =>
+    new Response(body, { status: 200, headers: { "content-type": "application/json" } });`,
+);
+
 /** Where config.js creates its file below a given XDG_CONFIG_HOME. */
 export function configFile(configHome) {
   return path.join(configHome, "gemini-grounding-mcp", "config.json");
@@ -73,15 +93,16 @@ export function configFile(configHome) {
  * stderr.
  *
  * The separate process is required, not a convenience: config.js fixes its path
- * once at import time, and so does the set that limits every warning about the
+ * once at import time, and so does the map that limits every warning about the
  * file to a single occurrence. Every case therefore needs a fresh
  * process.
  *
  * XDG_CONFIG_HOME points at a temp directory; without that isolation every set
  * case would write into this machine's real configuration. The API key is
- * replaced by a placeholder so that no case can reach the API by accident;
- * apiKey: null removes the variable instead, for the cases about a missing key.
- * env overrides any of these last; input is piped to the CLI's stdin.
+ * replaced by a placeholder and fetch is OFFLINE, so that no case can reach the
+ * API by accident; apiKey: null removes the variable instead, for the cases
+ * about a missing key, and nodeArgs replaces the preload. env overrides any of
+ * these last; input is piped to the CLI's stdin.
  */
 export function runCli(
   args,
@@ -90,6 +111,7 @@ export function runCli(
     apiKey = "test-key-never-sent",
     env: extraEnv = {},
     input,
+    nodeArgs = [OFFLINE],
   } = {},
 ) {
   const env = {
@@ -102,7 +124,7 @@ export function runCli(
   // so null would reach the CLI as the four characters "null" and pass the check.
   if (apiKey === null) delete env.GEMINI_API_KEY;
 
-  const result = spawnSync(process.execPath, [CLI, ...args], {
+  const result = spawnSync(process.execPath, [...nodeArgs, CLI, ...args], {
     encoding: "utf8",
     env,
     input,
