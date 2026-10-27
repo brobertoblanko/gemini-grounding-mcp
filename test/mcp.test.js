@@ -3,7 +3,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -92,3 +93,24 @@ for (const [revision, mode] of REVISIONS) {
     }
   });
 }
+
+test("gemini-set-config refuses to overwrite an unreadable config.json", async () => {
+  // Nobody sees the warning on stderr behind an MCP client, so the refusal has
+  // to arrive as the tool's answer.
+  const configHome = freshConfigHome();
+  const file = configFile(configHome);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, '{ "model": "gemini-x", }');
+  const client = await connect("auto", configHome);
+  try {
+    const result = await client.callTool({
+      name: "gemini-set-config",
+      arguments: { thinkingLevel: "high" },
+    });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /^Error in gemini-set-config: could not save - .*nothing was saved/);
+    assert.equal(readFileSync(file, "utf8"), '{ "model": "gemini-x", }');
+  } finally {
+    await client.close();
+  }
+});

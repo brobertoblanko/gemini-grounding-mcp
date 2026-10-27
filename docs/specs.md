@@ -1000,6 +1000,12 @@ Actually implemented (including `setSavedConfig` and `getSavedBackup`) in `confi
 Before the first stored value there is no file, and the defaults are exactly what is wanted then.
 Everything else - broken JSON after an interrupted write, missing read permissions - renders a stored setting ineffective, and without a word the server would simply keep running on the defaults while the setting had silently vanished.
 Such a case therefore produces one warning naming the path and the original message.
+A file that parses but holds no JSON object - `null`, an array, a number - counts as unreadable too: `null` would crash every getter, and an array swallows a write silently, because `JSON.stringify` drops properties set on it.
+
+Writing is stricter than reading.
+`setSavedConfig()` refuses with an error when the file exists but cannot be read, and nothing is saved.
+Writing on top of the defaults would replace every stored value with the single one just set - from a hand-edited file with one surplus comma, model, backup and deadline would be gone.
+Behind an MCP client nobody sees the warning on stderr, so the refusal arrives as the tool's error answer.
 
 It goes to **stderr**, never to stdout: the MCP server speaks JSON-RPC over stdout, where a single stray line breaks the connection to the client.
 A module-level flag limits it to one occurrence, because `readConfig()` runs four times per call - once for the model, once for the thinking level, once for the backup, once for the deadline. Without the flag the same warning would stand there four times over and look like four separate faults.

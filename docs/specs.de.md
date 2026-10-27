@@ -1247,6 +1247,12 @@ Tatsächlich implementiert (inkl. `setSavedConfig` und `getSavedBackup`) in `con
 Vor dem ersten gespeicherten Wert gibt es keine Datei, und die Standardwerte sind dann genau das Gewollte.
 Alles andere - kaputtes JSON nach einem abgebrochenen Schreibvorgang, fehlende Leserechte - macht eine gespeicherte Einstellung wirkungslos, und ohne ein Wort liefe der Server einfach mit den Standardwerten weiter, während die Einstellung stillschweigend verschwunden wäre.
 Ein solcher Fall erzeugt deshalb eine Warnung, die den Pfad und die Originalmeldung nennt.
+Eine Datei, die sich parsen lässt, aber kein JSON-Objekt enthält - `null`, ein Array, eine Zahl -, gilt ebenfalls als unlesbar: `null` würde jeden Getter abstürzen lassen, und ein Array schluckt einen Schreibvorgang stillschweigend, weil `JSON.stringify` daran gesetzte Eigenschaften verwirft.
+
+Das Schreiben ist strenger als das Lesen.
+`setSavedConfig()` verweigert mit einem Fehler, wenn die Datei existiert, aber nicht lesbar ist, und speichert nichts.
+Auf die Standardwerte zu schreiben würde jeden gespeicherten Wert durch den einen gerade gesetzten ersetzen - aus einer von Hand bearbeiteten Datei mit einem überzähligen Komma wären Modell, Backup und Frist verschwunden.
+Hinter einem MCP-Client sieht niemand die Warnung auf stderr, deshalb kommt die Verweigerung als Fehlerantwort des Tools an.
 
 Sie geht nach **stderr**, nie nach stdout: Der MCP-Server spricht über stdout JSON-RPC, wo eine einzelne verirrte Zeile die Verbindung zum Client zerstört.
 Ein Flag auf Modulebene begrenzt sie auf ein Vorkommen, denn `readConfig()` läuft pro Aufruf viermal - einmal für das Modell, einmal für das Thinking-Level, einmal für das Backup, einmal für die Frist. Ohne das Flag stünde dieselbe Warnung viermal da und sähe nach vier Fehlern aus.

@@ -249,8 +249,9 @@ function createServer() {
 
       // Write errors are a real possibility here - the target directory is created
       // on saving and can be unwritable depending on permissions or a relocated
-      // %APPDATA%. Without catch the error would run out of the handler uncaught;
-      // with it, it arrives as a clean isError response naming the path.
+      // %APPDATA%, and an unreadable existing file refuses the write. Without catch
+      // the error would run out of the handler uncaught; with it, it arrives as a
+      // clean isError response. Both messages name the path themselves.
       let saved;
       try {
         // setSavedConfig returns what was actually written, which matters for the
@@ -268,7 +269,7 @@ function createServer() {
           content: [
             {
               type: "text",
-              text: `Error in gemini-set-config: could not write ${CONFIG_PATH} - ${error.message}`,
+              text: `Error in gemini-set-config: could not save - ${error.message}`,
             },
           ],
           isError: true,

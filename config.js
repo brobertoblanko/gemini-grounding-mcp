@@ -82,10 +82,26 @@ let warned = false;
 // search and after every write.
 let warnedDeadline = false;
 
-function readConfig() {
+/**
+ * strict is for the write path: there an unreadable file must stop the write,
+ * because writing on top of the defaults would replace every stored value with
+ * the one just set.
+ */
+function readConfig({ strict = false } = {}) {
   try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+    const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+    // null would crash every getter, and an array swallows the write silently:
+    // JSON.stringify drops properties set on it.
+    if (typeof config !== "object" || config === null || Array.isArray(config)) {
+      throw new Error("not a JSON object");
+    }
+    return config;
   } catch (error) {
+    if (strict && error.code !== "ENOENT") {
+      throw new Error(
+        `${CONFIG_PATH} could not be read (${error.message}) - fix or delete it; nothing was saved.`,
+      );
+    }
     // The missing file is the normal case and no error: before the first stored
     // value it does not exist, and the defaults are exactly what is wanted then.
     // Everything else - broken JSON after an interrupted write, missing read
@@ -316,7 +332,7 @@ export function setSavedConfig({
     backupThinkingLevel = null;
   }
 
-  const config = readConfig();
+  const config = readConfig({ strict: true });
   const apply = (key, value) => {
     if (value === undefined) return;
     if (value === null) delete config[key];
